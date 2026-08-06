@@ -1,6 +1,7 @@
 # Known limitation: the contract suite against a live simulator
 
-**Status:** open. Does not block Phase 1. Affects `pytest -m sim` only — never CI.
+**Status:** open — tracked as [#2](https://github.com/Santisoutoo/open-instructor-station/issues/2).
+Does not block Phase 1. Affects `pytest -m sim` only — never CI.
 
 ## What works
 
