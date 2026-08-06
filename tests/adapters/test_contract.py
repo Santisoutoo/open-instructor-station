@@ -7,6 +7,19 @@ X-Plane adapter runs only under ``pytest -m sim`` against a live simulator.
 below maps every flag on :class:`~core.sim_adapter.Capabilities` to the test
 that pins its behaviour; :func:`test_every_capability_is_covered` fails as soon
 as a flag is added without a decision about how it is tested.
+
+**Writing a test that runs against a live simulator has three rules**, because
+a simulator — unlike the Fake — is a single, shared, persistent thing:
+
+1. *Never assume a starting state.* The ``adapter`` fixture stabilises the
+   aircraft into level flight before every test, but where it is and what it is
+   flying is whatever the user left loaded.
+2. *Never use an absolute position or altitude.* Work relative to the
+   aircraft's current state — see :data:`HOP_DISTANCE_NM`.
+3. *Restore anything you move, in a ``finally``.* The session-scoped
+   ``live_aircraft_home`` fixture is the safety net, not the plan.
+
+The history behind those rules is in ``docs/designs/live-contract-suite.md``.
 """
 
 from collections.abc import AsyncIterator
@@ -15,7 +28,11 @@ import pytest
 from pydantic import ValidationError
 
 from adapters.fake import FakeSimAdapter
-from core.geodesy import METRES_PER_NAUTICAL_MILE, distance_and_bearing
+from core.geodesy import (
+    METRES_PER_NAUTICAL_MILE,
+    distance_and_bearing,
+    point_at_distance_and_bearing,
+)
 from core.models import AircraftSetup, AircraftState, GeoPosition, LightsSetup
 from core.sim_adapter import Capabilities, SimAdapter
 
@@ -30,12 +47,42 @@ ADAPTER_PARAMS = [
 
 #: How far a teleported aircraft may end up from its target, in metres. The
 #: fake is exact; a live simulator keeps flying between the write and the
-#: read-back, and X-Plane may reload scenery around a long teleport.
+#: read-back. :data:`STABILISED_IAS_KT` is chosen to keep that drift well
+#: inside this budget, so the number below has not had to move.
 POSITION_TOLERANCE_M = {"fake": 1.0, "xplane": 250.0}
 
 #: Stream tick used by the contract tests. Short enough to keep the suite fast,
 #: long enough that a REST-polling adapter can keep up.
 STREAM_INTERVAL_S = 0.05
+
+#: How far the position tests move the aircraft, in nautical miles, measured
+#: from wherever it already is.
+#:
+#: Every position test is **relative and self-restoring**. An absolute target is
+#: a landmine against a live simulator: from an arbitrary starting position it
+#: can turn into a transcontinental jump, and X-Plane relocates its local frame
+#: origin during the scenery reload that provokes, so the read-back races the
+#: loader. The contract under test is "the aircraft ends up where you asked" —
+#: the distance is not part of it. Long-haul repositioning across a scenery
+#: reload is an *adapter* concern, tracked separately; see
+#: ``docs/designs/live-contract-suite.md``.
+HOP_DISTANCE_NM = 5.0
+
+#: Vertical displacement used by the tests that assert an altitude was written.
+#: Relative, for the same reason as :data:`HOP_DISTANCE_NM`: an absolute MSL
+#: altitude can be underground depending on where the user parked.
+HOP_CLIMB_FT = 2000.0
+
+#: Airspeed the aircraft is stabilised at before every contract test, in knots.
+#: Fast enough that a stream tick moves it observably, slow enough that the
+#: second or so a live simulator spends flying between a teleport and the
+#: read-back stays comfortably inside :data:`POSITION_TOLERANCE_M`.
+STABILISED_IAS_KT = 140.0
+
+#: How far a grounded aircraft is lifted before the tests run. Vertical only —
+#: the horizontal position is untouched, so this never triggers a scenery
+#: reload.
+GROUND_CLEARANCE_FT = 1500.0
 
 #: Which test pins each capability. ``PENDING`` marks a flag whose manager
 #: arrives in a later phase: the contract is not written yet, and that is a
@@ -66,22 +113,65 @@ def _build(name: str) -> SimAdapter:
     raise ValueError(f"Unknown adapter {name!r}")
 
 
+async def _stabilise(adapter: SimAdapter) -> None:
+    """Put the aircraft into a known, level, flying state — without teleporting it.
+
+    ``FakeSimAdapter`` is constructed fresh for every test; a real simulator is
+    not. Each live test therefore inherits whatever the previous one left
+    behind, commonly an aircraft in free fall. This levels the attitude and
+    rewrites the velocity vector — which zeroes the vertical component, so free
+    fall stops — and lifts the aircraft clear of the ground only when it is
+    actually on it. A parked aircraft will not accelerate no matter what
+    velocity is written to it, so leaving it there would test the environment
+    rather than the adapter.
+
+    It deliberately does **not** reposition. Teleporting before every test was
+    tried and reverted: see ``docs/designs/live-contract-suite.md``. This costs
+    a handful of writes and no settle time.
+
+    It runs for every adapter, not just the live one, so CI exercises it too.
+    """
+    if not adapter.capabilities.can_set_aircraft_state:
+        return
+    state = await adapter.get_aircraft_state()
+    await adapter.apply_setup(
+        AircraftSetup(
+            altitude_ft=state.altitude_ft + GROUND_CLEARANCE_FT if state.on_ground else None,
+            heading_deg=state.heading_deg,
+            pitch_deg=0.0,
+            roll_deg=0.0,
+            ias_kt=STABILISED_IAS_KT,
+        )
+    )
+
+
 @pytest.fixture(params=ADAPTER_PARAMS)
 async def adapter(request: pytest.FixtureRequest) -> AsyncIterator[SimAdapter]:
-    """A connected adapter, disconnected again when the test finishes.
+    """A connected, stabilised adapter, disconnected again when the test finishes.
 
-    Note for the ``xplane`` parametrisation: this fixture does **not** reset the
-    simulator between tests, so each live test inherits whatever the previous
-    one left behind. Three tests are known to be unreliable as a result — see
-    ``docs/designs/live-contract-suite.md``. The Fake is constructed fresh every
-    time and is unaffected.
+    The ``xplane`` parametrisation drives a simulator that carries state across
+    tests, so :func:`_stabilise` gives every test the same starting conditions
+    without the cost of a teleport. Whatever position the run started from is
+    snapshotted and restored once by the session-scoped ``live_aircraft_home``
+    fixture in ``tests/conftest.py``; tests that need a *specific* position set
+    it themselves and put it back in a ``finally``.
     """
     instance = _build(request.param)
     await instance.connect()
     try:
+        await _stabilise(instance)
         yield instance
     finally:
         await instance.disconnect()
+
+
+def _position_of(state: AircraftState) -> GeoPosition:
+    """The positional part of a state, as a target you can teleport back to."""
+    return GeoPosition(
+        latitude=state.latitude,
+        longitude=state.longitude,
+        altitude_ft=state.altitude_ft,
+    )
 
 
 async def _take(stream: AsyncIterator[AircraftState], count: int) -> list[AircraftState]:
@@ -204,12 +294,18 @@ async def test_get_aircraft_state_returns_a_valid_state(adapter: SimAdapter) -> 
 
 
 async def test_set_position_moves_the_aircraft(adapter: SimAdapter) -> None:
-    """Teleport, then read back: the aircraft must actually be there."""
+    """Teleport, then read back: the aircraft must actually be there.
+
+    The hop is short and measured from wherever the aircraft already is, and it
+    is undone in ``finally`` — see :data:`HOP_DISTANCE_NM` for why an absolute
+    target is the wrong shape for this assertion.
+    """
     if not adapter.capabilities.can_set_position:
         pytest.skip(f"{adapter.name} does not declare can_set_position")
 
     original = await adapter.get_aircraft_state()
-    target = GeoPosition(latitude=51.4775, longitude=-0.4614, altitude_ft=4500.0)
+    home = _position_of(original)
+    target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 0.0)
     try:
         await adapter.set_position(target, heading_deg=270.0)
         moved = await adapter.get_aircraft_state()
@@ -218,33 +314,43 @@ async def test_set_position_moves_the_aircraft(adapter: SimAdapter) -> None:
         assert error_nm * METRES_PER_NAUTICAL_MILE <= POSITION_TOLERANCE_M[adapter.name]
         assert moved.heading_deg == pytest.approx(270.0, abs=1.0)
     finally:
-        await adapter.set_position(
-            GeoPosition(
-                latitude=original.latitude,
-                longitude=original.longitude,
-                altitude_ft=original.altitude_ft,
-            ),
-            heading_deg=original.heading_deg,
-        )
+        await adapter.set_position(home, heading_deg=original.heading_deg)
 
 
 async def test_set_position_sets_the_altitude(adapter: SimAdapter) -> None:
     if not adapter.capabilities.can_set_position:
         pytest.skip(f"{adapter.name} does not declare can_set_position")
-    target = GeoPosition(latitude=40.0, longitude=-3.0, altitude_ft=7500.0)
-    await adapter.set_position(target, heading_deg=90.0)
-    state = await adapter.get_aircraft_state()
-    assert state.altitude_ft == pytest.approx(7500.0, abs=100.0)
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    horizontal = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 90.0)
+    target = GeoPosition(
+        latitude=horizontal.latitude,
+        longitude=horizontal.longitude,
+        altitude_ft=original.altitude_ft + HOP_CLIMB_FT,
+    )
+    try:
+        await adapter.set_position(target, heading_deg=90.0)
+        state = await adapter.get_aircraft_state()
+        assert state.altitude_ft == pytest.approx(target.altitude_ft, abs=100.0)
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
 
 
 async def test_set_position_normalises_the_heading(adapter: SimAdapter) -> None:
     if not adapter.capabilities.can_set_position:
         pytest.skip(f"{adapter.name} does not declare can_set_position")
-    target = GeoPosition(latitude=40.0, longitude=-3.0, altitude_ft=5000.0)
-    await adapter.set_position(target, heading_deg=450.0)
-    state = await adapter.get_aircraft_state()
-    assert 0.0 <= state.heading_deg <= 360.0
-    assert state.heading_deg == pytest.approx(90.0, abs=1.0)
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 180.0)
+    try:
+        await adapter.set_position(target, heading_deg=450.0)
+        state = await adapter.get_aircraft_state()
+        assert 0.0 <= state.heading_deg <= 360.0
+        assert state.heading_deg == pytest.approx(90.0, abs=1.0)
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
 
 
 # --------------------------------------------------------------------------
@@ -253,16 +359,26 @@ async def test_set_position_normalises_the_heading(adapter: SimAdapter) -> None:
 
 
 async def test_apply_setup_applies_only_the_provided_fields(adapter: SimAdapter) -> None:
-    """Set fields are applied; ``None`` fields are left exactly as they were."""
+    """Set fields are applied; ``None`` fields are left exactly as they were.
+
+    The target altitude is relative to where the aircraft is. Against a live
+    simulator that matters twice over: an absolute MSL altitude can be
+    underground, and the ``adapter`` fixture has just arrested any inherited
+    free fall, so the 100 ft window measures the write rather than the seconds
+    of descent that used to happen between it and the read-back.
+    """
     if not adapter.capabilities.can_set_aircraft_state:
         pytest.skip(f"{adapter.name} does not declare can_set_aircraft_state")
 
     before = await adapter.get_aircraft_state()
-    await adapter.apply_setup(AircraftSetup(altitude_ft=8500.0, heading_deg=123.0, pitch_deg=4.0))
+    target_altitude_ft = before.altitude_ft + HOP_CLIMB_FT
+    await adapter.apply_setup(
+        AircraftSetup(altitude_ft=target_altitude_ft, heading_deg=123.0, pitch_deg=4.0)
+    )
     after = await adapter.get_aircraft_state()
 
     # Provided fields moved.
-    assert after.altitude_ft == pytest.approx(8500.0, abs=100.0)
+    assert after.altitude_ft == pytest.approx(target_altitude_ft, abs=100.0)
     assert after.heading_deg == pytest.approx(123.0, abs=1.0)
     assert after.pitch_deg == pytest.approx(4.0, abs=1.0)
     # Fields left as None were not touched.
@@ -301,23 +417,18 @@ async def test_stream_state_yields_several_states(adapter: SimAdapter) -> None:
 async def test_stream_state_tracks_a_moving_aircraft(adapter: SimAdapter) -> None:
     """A stream must reflect movement, not repeat a frozen snapshot.
 
-    The aircraft is lifted clear of the ground first. A real simulator will not
-    accelerate a parked aircraft no matter what velocity is written to it —
-    brakes and ground friction win — so on the ground this would be testing the
-    environment rather than the adapter.
+    The ``adapter`` fixture has already put the aircraft into level flight at
+    :data:`STABILISED_IAS_KT`, clear of the ground, so there is nothing to set
+    up here and — deliberately — nothing to skip over. A stationary aircraft
+    used to make this test skip itself; that hid a broken harness behind a green
+    run. If the aircraft is not moving now, the stabilisation is broken, and
+    that is the finding.
     """
-    if adapter.capabilities.can_set_aircraft_state:
-        state = await adapter.get_aircraft_state()
-        await adapter.apply_setup(
-            AircraftSetup(
-                altitude_ft=state.altitude_ft + 5000.0 if state.on_ground else None,
-                ias_kt=250.0,
-                heading_deg=90.0,
-            )
-        )
     states = await _take(adapter.stream_state(STREAM_INTERVAL_S), 4)
-    if states[0].ias_kt <= 0.0 or states[0].on_ground:
-        pytest.skip("aircraft is stationary on the ground; movement cannot be observed")
+    assert states[0].ias_kt > 0.0, (
+        "the aircraft has no airspeed: the stabilisation in the `adapter` fixture "
+        "did not take effect, so movement cannot be observed"
+    )
     positions = {(state.latitude, state.longitude) for state in states}
     assert len(positions) > 1, "stream_state repeated the same position on every tick"
 
