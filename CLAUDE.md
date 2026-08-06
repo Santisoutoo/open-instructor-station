@@ -154,6 +154,21 @@ per-task decision.
   5. Clear the crash state (`sim/operation/fix_all_systems`) — X-Plane reads a teleport as an
      impact and renders the aircraft wrecked otherwise. Skipping this ends a training session.
 
+  **`set_position` preserves the aircraft's *current* speed, which is the wrong default for a
+  placement — RESOLVED in `core/`.** Right for moving an aeroplane that is already flying, wrong
+  for a placement: a parked aircraft put on a 10 NM final is handed 0 kt and falls out of the sky.
+  Observed at LEMD 32L with the geometry perfect — 0.2 m placement error, 10.000 NM out, on the
+  extended centreline — and the aircraft in terrain regardless, simply below stall speed. The same
+  placement with `ias_kt=90` commanded held 89.3 kt and −651 fpm, which is a real approach.
+  **A placement now commands its own speed** (issue #39): `core.geodesy.Placement` carries a
+  **required** `ias_kt` — no default, so a new placement type cannot be written without answering
+  the question — and `Placement.to_setup()` yields the `AircraftSetup` to apply *before* the
+  teleport. The default is per placement type and per aircraft **ICAO approach category**
+  (`APPROACH_CATEGORY_VAT_KT` on a final, `APPROACH_CATEGORY_CIRCLING_IAS_KT` on a circuit,
+  category B when the caller states nothing, 0 kt only on the ground); an explicit `ias_kt` always
+  wins. Speed is only half of it — the flaps and gear that make it a *stabilised* approach are the
+  full pre-teleport setup (#8), which extends `to_setup()` rather than replacing it.
+
   **Never trust `lat_ref`/`lon_ref`.** They advertised an origin 200 km from the real one on the
   validation run. The local frame origin is *measured* from the aircraft, which is known in both
   coordinate systems at once — `core.local_frame.origin_from_observation`. The world→local

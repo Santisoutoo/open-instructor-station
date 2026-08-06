@@ -17,11 +17,25 @@ raw numbers and answer with raw numbers.
 **Placements.** Every runway-relative position the Position Manager offers has a
 name — ``"final_10nm"``, ``"left_downwind"``, ``"short_final"`` — and resolving
 one yields a :class:`Placement`: *where* to put the aircraft, at *what*
-altitude, pointing *which* way. :data:`RUNWAY_PLACEMENTS` is the whole
-catalogue and :func:`resolve_runway_placement` is the single entry point, so an
-API layer enumerates and dispatches without knowing any geometry.
+altitude, pointing *which* way and at *what speed*. :data:`RUNWAY_PLACEMENTS` is
+the whole catalogue and :func:`resolve_runway_placement` is the single entry
+point, so an API layer enumerates and dispatches without knowing any geometry.
 :func:`coordinate_placement` and :func:`waypoint_placement` cover the two
 placements that need no runway.
+
+**A placement commands its own speed.** Carrying the aircraft's *current* speed
+onto the new position is the right rule for moving an aeroplane that is already
+flying and the wrong one for a placement: a parked aircraft put on a 10 NM final
+arrives at 0 kt and falls out of the sky. That was measured, not theorised — the
+geometry was perfect (0.2 m from the target, 10.000 NM out, on the extended
+centreline) and the aircraft still flew into terrain, simply below stall speed.
+So :class:`Placement` carries a **required** ``ias_kt``: a placement cannot be
+built without someone deciding how fast the aircraft is meant to be going.
+
+The default comes from the aircraft's **ICAO approach category**
+(:data:`ApproachCategory`) rather than from a single number, because a C172 and
+a 737 do not fly the same final. See :data:`APPROACH_CATEGORY_VAT_KT` for what
+the defaults are worth and where they stop being trustworthy.
 
 Holding entries and procedure (SID/STAR/approach) legs are deliberately absent:
 both resolve against published navdata — ``earth_hold.dat`` and the CIFP — and
@@ -39,19 +53,24 @@ from typing import Literal, assert_never
 from geographiclib.geodesic import Geodesic
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.models import GeoPosition, Runway
+from core.models import AircraftSetup, GeoPosition, Runway
 
 __all__ = [
+    "APPROACH_CATEGORY_CIRCLING_IAS_KT",
+    "APPROACH_CATEGORY_VAT_KT",
+    "DEFAULT_APPROACH_CATEGORY",
     "DEFAULT_GLIDESLOPE_DEG",
     "DEFAULT_PATTERN_ALTITUDE_AGL_FT",
     "DEFAULT_PATTERN_LEG_DISTANCE_NM",
     "DEFAULT_PATTERN_WIDTH_NM",
     "FEET_PER_NAUTICAL_MILE",
     "FINAL_DISTANCES_NM",
+    "GROUND_IAS_KT",
     "METRES_PER_NAUTICAL_MILE",
     "PATTERN_PLACEMENTS",
     "RUNWAY_PLACEMENTS",
     "SHORT_FINAL_DISTANCE_NM",
+    "ApproachCategory",
     "FinalPlacement",
     "PatternLeg",
     "PatternPlacement",
@@ -124,6 +143,75 @@ DEFAULT_PATTERN_WIDTH_NM: float = 1.0
 #: before the threshold the base leg sits, nautical miles.
 DEFAULT_PATTERN_LEG_DISTANCE_NM: float = 1.5
 
+#: ICAO approach categories. PANS-OPS (Doc 8168) sorts aircraft into five
+#: categories by ``Vat`` — the indicated airspeed at the threshold at maximum
+#: certificated landing mass — and publishes the speeds each category flies a
+#: procedure at. It is the coarsest classification that still separates a
+#: trainer from an airliner, and unlike a performance table it is a *published*
+#: property of the aeroplane rather than something this project would have to
+#: invent.
+ApproachCategory = Literal["A", "B", "C", "D", "E"]
+
+#: Upper bound of each category's ``Vat`` band, in knots indicated. The bands
+#: are A: below 91, B: 91 to 120, C: 121 to 140, D: 141 to 165, E: 166 to 210,
+#: so these are the threshold speeds of the *fastest* aeroplane each category
+#: admits.
+#:
+#: Taking the top of the band rather than its middle is deliberate, because the
+#: two ways of being wrong are not symmetric. An aircraft handed too much speed
+#: decelerates and the student flies on; an aircraft handed too little stalls
+#: and the training session is over — which is the whole reason this table
+#: exists. The top of the band is by construction at or above the threshold
+#: speed of every aeroplane in the category.
+#:
+#: **What these numbers are not.** They are approach speeds, not cruise speeds,
+#: and they are per *category*, not per airframe: within category C a light
+#: business jet and a 737 land 15 kt apart and neither is exactly 140. A caller
+#: that knows the aircraft should pass ``ias_kt`` and ignore all of this.
+#: Speed is also only half of the problem — a jet placed clean at 140 kt is
+#: still near its stall, because the flaps and gear that make that speed safe
+#: are part of the full pre-teleport setup (issue #8), not of the geometry here.
+APPROACH_CATEGORY_VAT_KT: Mapping[ApproachCategory, float] = MappingProxyType(
+    {
+        "A": 90.0,
+        "B": 120.0,
+        "C": 140.0,
+        "D": 165.0,
+        "E": 210.0,
+    }
+)
+
+#: Maximum indicated airspeed for visual manoeuvring (circling) in each
+#: category, knots — published alongside the ``Vat`` bands, and the speed a
+#: circuit is flown at rather than the speed it is landed at. Used for circuit
+#: legs and, as a generic manoeuvring speed, for a bare waypoint. Same caveats
+#: as :data:`APPROACH_CATEGORY_VAT_KT`.
+APPROACH_CATEGORY_CIRCLING_IAS_KT: Mapping[ApproachCategory, float] = MappingProxyType(
+    {
+        "A": 100.0,
+        "B": 135.0,
+        "C": 180.0,
+        "D": 205.0,
+        "E": 240.0,
+    }
+)
+
+#: The category assumed when the caller does not state one.
+#:
+#: **B, not A.** A caller who says nothing is most likely to be wrong on the
+#: slow side, and slow is the failure that kills: category A speeds put a jet
+#: below its stall, while category B speeds (120 kt on final) are merely a fast
+#: approach in a trainer — still under a C172's never-exceed speed. A heavy
+#: aircraft placed without a category is under-speeded even so. That is a
+#: limitation of guessing, not something a different constant would fix; it is
+#: why ``category`` is a parameter.
+DEFAULT_APPROACH_CATEGORY: ApproachCategory = "B"
+
+#: The speed of a placement that is not flying: a gate, a stand, a runway
+#: threshold for a takeoff brief. Zero is the right answer exactly here and
+#: nowhere else.
+GROUND_IAS_KT: float = 0.0
+
 #: Distance out from the threshold, in nautical miles, for each named final.
 FINAL_DISTANCES_NM: Mapping[FinalPlacement, float] = MappingProxyType(
     {
@@ -158,11 +246,15 @@ _WGS84: Geodesic = Geodesic.WGS84
 
 
 class Placement(BaseModel):
-    """A resolved placement: where to put the aircraft and which way to face it.
+    """A resolved placement: where to put the aircraft, facing where, doing what speed.
 
     Everything an instructor station needs to reposition, and nothing about how
-    the repositioning happens — building the aircraft state around it is the
-    Position Manager's job, writing it is the adapter's.
+    the repositioning happens — writing it is the adapter's job.
+
+    ``ias_kt`` has **no default on purpose**. It is the one field of this model
+    that cannot be inferred from geometry, and leaving it out is precisely the
+    defect that put an aircraft on a perfect 10 NM final at 0 kt, so a new
+    placement type cannot be written without answering the question.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -173,6 +265,13 @@ class Placement(BaseModel):
     heading_deg: float = Field(
         ge=0.0, lt=360.0, description="True heading to fly at that point, degrees."
     )
+    ias_kt: float = Field(
+        ge=0.0,
+        description=(
+            "Indicated airspeed to command at that point, knots. Zero only for a "
+            "placement that is not flying — a gate, a stand, a runway threshold."
+        ),
+    )
     label: str = Field(
         min_length=1,
         description='Human-readable description, e.g. "LEMD 32L 10 NM final".',
@@ -182,6 +281,26 @@ class Placement(BaseModel):
     def altitude_ft(self) -> float:
         """Target altitude in feet MSL — the same value as ``position.altitude_ft``."""
         return self.position.altitude_ft
+
+    def to_setup(self) -> AircraftSetup:
+        """The aircraft state to apply **before** the reposition is written.
+
+        Only the three fields the geometry of a placement actually determines
+        are set — altitude, heading and speed. Every other field is left
+        ``None``, which an adapter reads as *leave that aspect untouched*.
+
+        The remaining thirteen fields of :class:`~core.models.AircraftSetup` —
+        mass, flaps, gear, spoilers, autobrake, lights, radios — are the full
+        pre-teleport setup, and they depend on the placement *profile* (a short
+        final is not configured like a 20 NM one) rather than on where the point
+        is. That is issue #8's, and it extends this method rather than replacing
+        it.
+        """
+        return AircraftSetup(
+            altitude_ft=self.position.altitude_ft,
+            heading_deg=self.heading_deg,
+            ias_kt=self.ias_kt,
+        )
 
 
 def _normalise_bearing(bearing_deg: float) -> float:
@@ -420,30 +539,52 @@ def _runway_label(runway: Runway, what: str) -> str:
     return f"{runway.airport_icao} {runway.ident} {what}"
 
 
+def _resolve_ias_kt(
+    ias_kt: float | None,
+    table: Mapping[ApproachCategory, float],
+    category: ApproachCategory,
+) -> float:
+    """The caller's speed when it stated one, the category's default otherwise.
+
+    An explicit value always wins: only the caller can know the airframe, and a
+    category is a coarse stand-in for it.
+    """
+    return table[category] if ias_kt is None else ias_kt
+
+
 def final_placement(
     runway: Runway,
     placement: FinalPlacement,
     *,
     glideslope_deg: float = DEFAULT_GLIDESLOPE_DEG,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
 ) -> Placement:
-    """Place the aircraft on a named final, on the glidepath.
+    """Place the aircraft on a named final, on the glidepath, at approach speed.
 
     Args:
         runway: The runway being approached.
         placement: Which named final — see :data:`FINAL_DISTANCES_NM` for the
             distance out, in nautical miles, that each name resolves to.
         glideslope_deg: Glidepath angle in degrees.
+        ias_kt: Indicated airspeed to command, knots. ``None`` takes the
+            ``category``'s threshold speed from :data:`APPROACH_CATEGORY_VAT_KT`.
+        category: The aircraft's ICAO approach category, used only when
+            ``ias_kt`` is ``None``.
 
     Returns:
         A :class:`Placement` on the extended centreline at the glidepath
         altitude for that distance (feet MSL), heading down the runway
-        centreline in true degrees.
+        centreline in true degrees, at an approach speed. **Never at 0 kt** —
+        a final is by definition flown, and the speed is commanded here rather
+        than inherited from whatever the aircraft happened to be doing.
     """
     distance_nm = FINAL_DISTANCES_NM[placement]
     what = "short final" if placement == "short_final" else f"{distance_nm:g} NM final"
     return Placement(
         position=final_approach_point(runway, distance_nm, glideslope_deg),
         heading_deg=_normalise_bearing(runway.true_bearing_deg),
+        ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_VAT_KT, category),
         label=_runway_label(runway, what),
     )
 
@@ -455,8 +596,10 @@ def pattern_placement(
     pattern_altitude_ft: float | None = None,
     pattern_width_nm: float = DEFAULT_PATTERN_WIDTH_NM,
     leg_distance_nm: float = DEFAULT_PATTERN_LEG_DISTANCE_NM,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
 ) -> Placement:
-    """Place the aircraft on a named circuit leg.
+    """Place the aircraft on a named circuit leg, at circuit speed.
 
     Args:
         runway: The runway the pattern is flown around.
@@ -470,11 +613,17 @@ def pattern_placement(
         leg_distance_nm: How far beyond the departure end the upwind/crosswind
             legs sit, and how far before the threshold the base leg sits,
             nautical miles.
+        ias_kt: Indicated airspeed to command, knots. ``None`` takes the
+            ``category``'s circling speed from
+            :data:`APPROACH_CATEGORY_CIRCLING_IAS_KT` — a circuit is flown
+            faster than it is landed, so this is not the final approach speed.
+        category: The aircraft's ICAO approach category, used only when
+            ``ias_kt`` is ``None``.
 
     Returns:
-        A :class:`Placement` at pattern altitude, heading down that leg. The
-        right-hand pattern is the mirror image of the left-hand one about the
-        runway centreline.
+        A :class:`Placement` at pattern altitude and circuit speed, heading down
+        that leg. The right-hand pattern is the mirror image of the left-hand
+        one about the runway centreline.
     """
     leg, side = PATTERN_PLACEMENTS[placement]
     altitude_ft = (
@@ -493,6 +642,7 @@ def pattern_placement(
     return Placement(
         position=position,
         heading_deg=heading_deg,
+        ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
         label=_runway_label(runway, f"{side}-hand {leg}"),
     )
 
@@ -505,6 +655,8 @@ def resolve_runway_placement(
     pattern_altitude_ft: float | None = None,
     pattern_width_nm: float = DEFAULT_PATTERN_WIDTH_NM,
     leg_distance_nm: float = DEFAULT_PATTERN_LEG_DISTANCE_NM,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
 ) -> Placement:
     """Resolve any name in :data:`RUNWAY_PLACEMENTS` against a runway.
 
@@ -522,9 +674,14 @@ def resolve_runway_placement(
             leg, nautical miles. Circuit legs only.
         leg_distance_nm: Upwind/crosswind and base leg offsets, nautical miles.
             Circuit legs only.
+        ias_kt: Indicated airspeed to command, knots, for either kind of
+            placement. ``None`` defers to ``category``, which resolves to an
+            approach speed on a final and a circling speed on a circuit leg.
+        category: The aircraft's ICAO approach category, used only when
+            ``ias_kt`` is ``None``.
 
     Returns:
-        The resolved :class:`Placement`.
+        The resolved :class:`Placement`, always with a flying speed.
     """
     match placement:
         case (
@@ -536,7 +693,13 @@ def resolve_runway_placement(
             | "final_3nm"
             | "short_final"
         ):
-            return final_placement(runway, placement, glideslope_deg=glideslope_deg)
+            return final_placement(
+                runway,
+                placement,
+                glideslope_deg=glideslope_deg,
+                ias_kt=ias_kt,
+                category=category,
+            )
         case (
             "left_upwind"
             | "left_crosswind"
@@ -553,25 +716,40 @@ def resolve_runway_placement(
                 pattern_altitude_ft=pattern_altitude_ft,
                 pattern_width_nm=pattern_width_nm,
                 leg_distance_nm=leg_distance_nm,
+                ias_kt=ias_kt,
+                category=category,
             )
         case _:  # pragma: no cover - exhaustive over RunwayPlacement
             assert_never(placement)
 
 
-def coordinate_placement(position: GeoPosition, heading_deg: float = 0.0) -> Placement:
+def coordinate_placement(
+    position: GeoPosition,
+    heading_deg: float = 0.0,
+    *,
+    ias_kt: float = GROUND_IAS_KT,
+) -> Placement:
     """Place the aircraft at an arbitrary coordinate.
 
     Args:
         position: Where to put it. ``altitude_ft`` is the target altitude,
             feet MSL.
         heading_deg: True heading in degrees; folded into ``[0, 360)``.
+        ias_kt: Indicated airspeed to command, knots. Defaults to
+            :data:`GROUND_IAS_KT`.
 
     Returns:
-        The placement, verbatim — nothing about a free coordinate is derived.
+        The placement, verbatim — nothing about a free coordinate is derived,
+        and that includes its speed. A bare latitude/longitude is as likely a
+        parking stand as a cruise level, so guessing would be inventing: the
+        default is *stationary*, and a caller putting the aircraft **airborne**
+        must state ``ias_kt`` or it will arrive below stall speed. That is why
+        this is the only placement in the module whose default is 0 kt.
     """
     return Placement(
         position=position,
         heading_deg=_normalise_bearing(heading_deg),
+        ias_kt=ias_kt,
         label=f"{position.latitude:.4f}, {position.longitude:.4f}",
     )
 
@@ -584,6 +762,8 @@ def waypoint_placement(
     heading_deg: float | None = None,
     next_fix: GeoPosition | None = None,
     previous_fix: GeoPosition | None = None,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
 ) -> Placement:
     """Place the aircraft over a waypoint at a chosen altitude.
 
@@ -608,9 +788,18 @@ def waypoint_placement(
         heading_deg: Explicit true heading in degrees, or ``None``.
         next_fix: The fix the aircraft would fly to next, or ``None``.
         previous_fix: The fix the aircraft would be coming from, or ``None``.
+        ias_kt: Indicated airspeed to command, knots. ``None`` takes the
+            ``category``'s circling speed from
+            :data:`APPROACH_CATEGORY_CIRCLING_IAS_KT`, used here as a generic
+            manoeuvring speed: enough to fly, and not a cruise speed. A caller
+            dropping the aircraft into the cruise should pass its cruise speed.
+        category: The aircraft's ICAO approach category, used only when
+            ``ias_kt`` is ``None``.
 
     Returns:
-        The placement over the waypoint at ``altitude_ft``.
+        The placement over the waypoint at ``altitude_ft``, flying. Unlike a
+        free coordinate, a waypoint is always airborne — it is a navdata fix
+        with a stated altitude — so a speed is defaulted rather than withheld.
     """
     if heading_deg is not None:
         heading = _normalise_bearing(heading_deg)
@@ -627,5 +816,6 @@ def waypoint_placement(
             altitude_ft=altitude_ft,
         ),
         heading_deg=heading,
+        ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
         label=f"over {ident}",
     )

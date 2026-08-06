@@ -9,18 +9,27 @@ import math
 from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
+from adapters.fake import FakeSimAdapter
 from core.geodesy import (
+    APPROACH_CATEGORY_CIRCLING_IAS_KT,
+    APPROACH_CATEGORY_VAT_KT,
+    DEFAULT_APPROACH_CATEGORY,
     DEFAULT_PATTERN_ALTITUDE_AGL_FT,
     FEET_PER_NAUTICAL_MILE,
     FINAL_DISTANCES_NM,
+    GROUND_IAS_KT,
     METRES_PER_NAUTICAL_MILE,
     PATTERN_PLACEMENTS,
     RUNWAY_PLACEMENTS,
     SHORT_FINAL_DISTANCE_NM,
+    ApproachCategory,
     FinalPlacement,
     PatternLeg,
     PatternPlacement,
+    Placement,
+    RunwayPlacement,
     coordinate_placement,
     distance_and_bearing,
     final_approach_point,
@@ -32,7 +41,7 @@ from core.geodesy import (
     traffic_pattern_point,
     waypoint_placement,
 )
-from core.models import GeoPosition
+from core.models import AircraftState, GeoPosition
 from tests.conftest import NORTH_RUNWAY, SAMPLE_RUNWAY
 
 MADRID = GeoPosition(latitude=40.4168, longitude=-3.7038, altitude_ft=2000.0)
@@ -693,3 +702,218 @@ def test_next_fix_beats_previous_fix() -> None:
         waypoint_placement(WAYPOINT, 5000.0, next_fix=TEN_DEGREES_EAST).heading_deg
     )
     assert placement.heading_deg < 90.0
+
+
+def test_waypoint_placement_flies() -> None:
+    """A waypoint is airborne by construction, so it gets a manoeuvring speed."""
+    assert waypoint_placement(WAYPOINT, 5000.0).ias_kt == 135.0
+    assert waypoint_placement(WAYPOINT, 5000.0, category="A").ias_kt == 100.0
+    assert waypoint_placement(WAYPOINT, 5000.0, ias_kt=210.0).ias_kt == 210.0
+
+
+# --------------------------------------------------------------------------
+# Speed
+#
+# The regression these cover: a placement that carries the aircraft's current
+# speed hands a parked aeroplane 0 kt, and a 10 NM final at 0 kt ends in
+# terrain with the geometry perfect. Measured, not theorised.
+# --------------------------------------------------------------------------
+
+
+#: The aeroplane the instructor starts from: sitting on a stand at LEMD, not
+#: moving at all. Every number below has to survive contact with this state.
+PARKED = AircraftState(
+    latitude=40.4936,
+    longitude=-3.5668,
+    altitude_ft=2000.0,
+    heading_deg=140.0,
+    ias_kt=0.0,
+    vertical_speed_fpm=0.0,
+    pitch_deg=0.0,
+    roll_deg=0.0,
+    on_ground=True,
+)
+
+
+def test_a_placement_cannot_be_built_without_a_speed() -> None:
+    """``ias_kt`` is required: forgetting it is a ValidationError, not a 0."""
+    with pytest.raises(ValidationError):
+        Placement.model_validate({"position": MADRID, "heading_deg": 0.0, "label": "nowhere"})
+
+
+def test_a_placement_rejects_a_negative_speed() -> None:
+    with pytest.raises(ValidationError):
+        Placement(position=MADRID, heading_deg=0.0, ias_kt=-1.0, label="nowhere")
+
+
+def test_the_category_tables_cover_every_category() -> None:
+    categories = get_args(ApproachCategory)
+    assert categories == ("A", "B", "C", "D", "E")
+    assert tuple(APPROACH_CATEGORY_VAT_KT) == categories
+    assert tuple(APPROACH_CATEGORY_CIRCLING_IAS_KT) == categories
+    assert DEFAULT_APPROACH_CATEGORY in categories
+
+
+def test_the_published_category_speeds() -> None:
+    """The tops of the ICAO PANS-OPS Vat bands, and the circling maxima.
+
+    Pinned as literals because they are the whole defence against the defect:
+    if someone edits them, they should have to say so.
+    """
+    assert dict(APPROACH_CATEGORY_VAT_KT) == {
+        "A": 90.0,
+        "B": 120.0,
+        "C": 140.0,
+        "D": 165.0,
+        "E": 210.0,
+    }
+    assert dict(APPROACH_CATEGORY_CIRCLING_IAS_KT) == {
+        "A": 100.0,
+        "B": 135.0,
+        "C": 180.0,
+        "D": 205.0,
+        "E": 240.0,
+    }
+
+
+def test_every_category_speed_is_a_flying_speed() -> None:
+    """Even the slowest category is 90 kt: no table entry can produce a stall."""
+    for category in get_args(ApproachCategory):
+        assert APPROACH_CATEGORY_VAT_KT[category] >= 90.0, category
+        assert APPROACH_CATEGORY_CIRCLING_IAS_KT[category] >= 100.0, category
+
+
+def test_heavier_categories_fly_faster() -> None:
+    speeds = [APPROACH_CATEGORY_VAT_KT[c] for c in get_args(ApproachCategory)]
+    assert speeds == sorted(speeds)
+    assert speeds[0] < speeds[-1]
+
+
+def test_a_circuit_is_flown_faster_than_it_is_landed() -> None:
+    for category in get_args(ApproachCategory):
+        assert APPROACH_CATEGORY_CIRCLING_IAS_KT[category] > APPROACH_CATEGORY_VAT_KT[category]
+
+
+@pytest.mark.parametrize("name", list(FINAL_DISTANCES_NM))
+def test_every_final_commands_an_approach_speed(name: FinalPlacement) -> None:
+    """120 kt, not 0 — the default category is B and B's Vat band tops at 120."""
+    assert DEFAULT_APPROACH_CATEGORY == "B"
+    assert final_placement(SAMPLE_RUNWAY, name).ias_kt == 120.0
+
+
+@pytest.mark.parametrize("name", list(PATTERN_PLACEMENTS))
+def test_every_circuit_leg_commands_a_circling_speed(name: PatternPlacement) -> None:
+    assert pattern_placement(SAMPLE_RUNWAY, name).ias_kt == 135.0
+
+
+@pytest.mark.parametrize("name", list(RUNWAY_PLACEMENTS))
+def test_no_runway_placement_is_ever_stationary(name: RunwayPlacement) -> None:
+    """The acceptance criterion, stated over the whole catalogue."""
+    assert resolve_runway_placement(SAMPLE_RUNWAY, name).ias_kt >= 90.0
+
+
+def test_a_trainer_and_an_airliner_do_not_fly_the_same_final() -> None:
+    """The reason the default is a category and not a number."""
+    trainer = final_placement(SAMPLE_RUNWAY, "final_10nm", category="A")
+    airliner = final_placement(SAMPLE_RUNWAY, "final_10nm", category="D")
+    assert trainer.ias_kt == 90.0
+    assert airliner.ias_kt == 165.0
+    # Same point in space, different speed: only the speed depends on the type.
+    assert trainer.position == airliner.position
+    assert trainer.heading_deg == airliner.heading_deg
+
+
+def test_an_explicit_speed_beats_the_category() -> None:
+    """The 90 kt that flew a real approach at LEMD, commanded over a category D."""
+    placement = final_placement(SAMPLE_RUNWAY, "final_10nm", ias_kt=90.0, category="D")
+    assert placement.ias_kt == 90.0
+    assert pattern_placement(SAMPLE_RUNWAY, "left_downwind", ias_kt=75.0).ias_kt == 75.0
+
+
+def test_resolve_forwards_the_speed_and_the_category() -> None:
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "final_5nm", ias_kt=131.0).ias_kt == 131.0
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "final_5nm", category="C").ias_kt == 140.0
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "left_base", category="C").ias_kt == 180.0
+
+
+def test_a_free_coordinate_is_stationary_until_told_otherwise() -> None:
+    """Nothing is inferred from a bare lat/lon, including whether it is flying."""
+    assert GROUND_IAS_KT == 0.0
+    assert coordinate_placement(MADRID, 137.0).ias_kt == 0.0
+    assert coordinate_placement(MADRID, 137.0, ias_kt=250.0).ias_kt == 250.0
+
+
+def test_to_setup_carries_the_three_fields_a_placement_determines() -> None:
+    placement = final_placement(SAMPLE_RUNWAY, "final_10nm")
+    setup = placement.to_setup()
+    assert setup.ias_kt == 120.0
+    assert setup.heading_deg == pytest.approx(320.0)
+    assert setup.altitude_ft == pytest.approx(
+        2000.0 + 10.0 * FT_PER_NM_ON_A_THREE_DEGREE_PATH, abs=0.1
+    )
+
+
+def test_to_setup_leaves_everything_else_untouched() -> None:
+    """A placement configures altitude, heading and speed. The other thirteen
+    fields belong to the full pre-teleport setup (#8) and must stay ``None``,
+    which an adapter reads as *do not touch*."""
+    setup = final_placement(SAMPLE_RUNWAY, "short_final").to_setup()
+    set_fields = {name for name, value in setup.model_dump().items() if value is not None}
+    assert set_fields == {"altitude_ft", "heading_deg", "ias_kt"}
+
+
+async def test_a_parked_aircraft_placed_on_a_ten_nm_final_ends_up_flying() -> None:
+    """The regression, end to end against the reference adapter.
+
+    A stationary aeroplane is placed on a 10 NM final and then left to fly: one
+    minute later it is 2 NM closer to the threshold. Before this change it was
+    still at 0 kt and 10 NM out, sinking.
+    """
+    adapter = FakeSimAdapter(initial_state=PARKED)
+    await adapter.connect()
+    assert (await adapter.get_aircraft_state()).ias_kt == 0.0
+
+    placement = resolve_runway_placement(SAMPLE_RUNWAY, "final_10nm")
+    # The Position Manager pipeline: configure, then move.
+    await adapter.apply_setup(placement.to_setup())
+    await adapter.set_position(placement.position, placement.heading_deg)
+
+    placed = await adapter.get_aircraft_state()
+    assert placed.ias_kt == 120.0
+    assert placed.altitude_ft == pytest.approx(
+        2000.0 + 10.0 * FT_PER_NM_ON_A_THREE_DEGREE_PATH, abs=0.1
+    )
+    at_placement_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=placed.latitude, longitude=placed.longitude),
+        SAMPLE_RUNWAY.threshold,
+    )
+    assert at_placement_nm == pytest.approx(10.0, abs=1e-6)
+
+    # One minute of flight at 120 kt is 2 NM, and it is 2 NM towards the runway.
+    flown = await anext(adapter.stream_state(60.0))
+    after_a_minute_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=flown.latitude, longitude=flown.longitude),
+        SAMPLE_RUNWAY.threshold,
+    )
+    assert after_a_minute_nm == pytest.approx(8.0, abs=0.01)
+
+
+async def test_the_defect_reproduced_when_the_speed_is_not_commanded() -> None:
+    """Teleporting without applying the setup is exactly the old behaviour.
+
+    Kept as the counter-example: it pins what ``to_setup`` is for, so nobody
+    "simplifies" the pipeline back into the crash.
+    """
+    adapter = FakeSimAdapter(initial_state=PARKED)
+    await adapter.connect()
+    placement = resolve_runway_placement(SAMPLE_RUNWAY, "final_10nm")
+    await adapter.set_position(placement.position, placement.heading_deg)
+
+    stalled = await adapter.get_aircraft_state()
+    assert stalled.ias_kt == 0.0
+    drifted = await anext(adapter.stream_state(60.0))
+    still_out_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=drifted.latitude, longitude=drifted.longitude),
+        SAMPLE_RUNWAY.threshold,
+    )
+    assert still_out_nm == pytest.approx(10.0, abs=1e-6)
