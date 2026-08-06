@@ -1,51 +1,155 @@
-# Known limitation: the contract suite against a live simulator
+# The contract suite against a live simulator
 
-**Status:** open — tracked as [#2](https://github.com/Santisoutoo/open-instructor-station/issues/2).
-Does not block Phase 1. Affects `pytest -m sim` only — never CI.
+**Status:** fixed in `bug/live-contract-suite` — closes
+[#2](https://github.com/Santisoutoo/open-instructor-station/issues/2).
+Affects `pytest -m sim` only — never CI.
 
-## What works
+## The problem
 
-Against a live X-Plane 12, `pytest -m sim` passes 19 of 22 checks, and everything that matters
-for Phase 0 is green:
-
-- `tests/sim/test_live_xplane.py` — all of it, including the teleport, the local-frame
-  calibration residual, and the assertion that a teleport does not leave the aircraft wrecked.
-- `spikes/xplane_connection.py` — exits 0. Measured on the validation run: 5.000 NM placement,
-  restore within 0.08 m, crash flag clear throughout.
-- Every read-path and capability-declaration test in the contract suite.
-
-## What does not
-
-Three parametrisations of `tests/adapters/test_contract.py` are unreliable against a live sim:
+Three parametrisations of `tests/adapters/test_contract.py` were unreliable against a live
+X-Plane 12:
 
 | Test | Why |
 |---|---|
-| `test_set_position_moves_the_aircraft[xplane]` | Teleports Madrid → Heathrow, ~1250 km. That triggers a scenery reload, during which X-Plane relocates the local frame origin and the derived world coordinates are in transit. `set_position` now polls for arrival (30 s budget) instead of assuming a fixed settle, which is the right shape, but long-haul convergence is still not reliable. |
-| `test_apply_setup_applies_only_the_provided_fields[xplane]` | Asserts altitude within 100 ft of the requested value. If the previous test left the aircraft in free fall, it loses more than that between the write and the read-back. |
-| `test_stream_state_tracks_a_moving_aircraft[xplane]` | Needs an aircraft that is actually moving. A parked one with brakes set will not accelerate no matter what velocity vector is written. |
+| `test_set_position_moves_the_aircraft[xplane]` | Teleported Madrid → Heathrow, ~1250 km. That triggers a scenery reload, during which X-Plane relocates the local frame origin and the derived world coordinates are in transit. |
+| `test_apply_setup_applies_only_the_provided_fields[xplane]` | Asserted altitude within 100 ft. If the previous test left the aircraft in free fall, it lost more than that between the write and the read-back. |
+| `test_stream_state_tracks_a_moving_aircraft[xplane]` | Needed an aircraft that is actually moving. A parked one with brakes set will not accelerate no matter what velocity vector is written. |
 
-## Root cause
+### Root cause
 
 The contract suite was designed against `FakeSimAdapter`, which is constructed fresh for every
-test. A real simulator carries state across tests, so each one inherits whatever the previous
-left behind — commonly an aircraft in free fall in a field, at a position that depends on test
-execution order. **The failures describe the test harness, not the adapter.**
+test. A real simulator carries state across tests, so each one inherited whatever the previous
+left behind — commonly an aircraft in free fall in a field, at a position that depended on test
+execution order. **The failures described the test harness, not the adapter.**
 
-## Rejected fix
+### Rejected fix (tried, reverted, still rejected)
 
-A fixture resetting the aircraft to a known airborne state before each test. Tried and reverted:
-teleporting before all 22 tests pushed the suite past 165 s and introduced fixture errors of its
-own. Repositioning before every test is too blunt an instrument.
+A fixture resetting the aircraft to a known airborne state before *each* test. Teleporting before
+all 22 tests pushed the suite past 165 s and introduced fixture errors of its own. Repositioning
+before every test is too blunt an instrument.
 
-## Proposed fix
+## What was done
 
-A session-scoped `sim_state` fixture that snapshots the aircraft once at the start of the run and
-restores it once at the end, plus a lightweight per-test stabilisation that does **not** teleport:
-level the attitude, set a speed, and lift clear of the ground only when the aircraft is on it.
-Tests needing a specific position should set it themselves and restore it in a `finally`, as
-`tests/sim/test_live_xplane.py` already does.
+### 1. Snapshot once, restore once — `live_aircraft_home` (`tests/conftest.py`)
 
-## Warning for anyone running the suite today
+A session-scoped, autouse fixture that reads the aircraft's position before the first live test
+and teleports it back after the last, clearing the crash state on the way out. It is inert unless
+tests carrying the `sim` marker were actually collected, so CI never opens a socket. Setup and
+teardown run on their own `asyncio.run` loop, which keeps them independent of the per-test event
+loop pytest-asyncio manages.
 
-`pytest -m sim` moves the user aircraft and does **not** put it back. Reload your flight
-afterwards.
+This also closes the side effect the old document warned about: `pytest -m sim` used to abandon
+the user's aircraft wherever the last test dropped it.
+
+### 2. Stabilise before each test, without teleporting — `_stabilise` (`tests/adapters/test_contract.py`)
+
+Levels the attitude, rewrites the velocity vector and lifts the aircraft clear of the ground
+**only when it is actually on it**. Rewriting the velocity vector is what does the real work: the
+adapter writes `local_vy = 0` as part of it, so free fall stops. No teleport, no settle time, a
+handful of writes.
+
+It runs for *every* adapter, not just the live one, so CI exercises the helper rather than
+leaving it as untested sim-only code.
+
+The stabilised speed is 140 kt. That is deliberately modest: fast enough that a stream tick moves
+the aircraft observably, slow enough that the ~1.3 s a live sim spends flying between a teleport
+and the read-back stays well inside `POSITION_TOLERANCE_M`. **No tolerance in the suite was
+loosened to make this pass.**
+
+### 3. Every position test is now relative and self-restoring
+
+The suite no longer contains a single absolute latitude, longitude or MSL altitude. Each position
+test measures a short hop (`HOP_DISTANCE_NM = 5.0`) from wherever the aircraft already is, and
+undoes it in a `finally`.
+
+This is a **departure from the issue's framing**, and worth being explicit about. The issue treats
+the Madrid → Heathrow distance as incidental. It is not incidental — it is the whole failure:
+
+- An absolute target is unbounded. From an arbitrary starting position it can be a
+  transcontinental jump, and it was not only `test_set_position_moves_the_aircraft` that had one —
+  `test_set_position_sets_the_altitude` and `test_set_position_normalises_the_heading` both
+  teleported to a hard-coded 40.0N/3.0W and never restored. They were landmines waiting for a user
+  who starts somewhere other than Madrid.
+- An absolute MSL altitude can be underground depending on where the user parked. Those are now
+  relative too (`HOP_CLIMB_FT`).
+
+The contract being asserted is "the aircraft ends up where you asked". The distance is not part of
+it, and a 5 NM hop pins it exactly as well as 1250 km — the same distance
+`tests/sim/test_live_xplane.py` has been teleporting reliably all along.
+
+### 4. A skip removed, not added
+
+`test_stream_state_tracks_a_moving_aircraft` used to skip itself when it found the aircraft
+stationary. That is precisely the green-wash this issue exists to remove: it hid a broken harness
+behind a passing run. The stabilisation now guarantees a moving aircraft, so the skip has become
+an assertion — if the aircraft is not moving, the stabilisation is broken and the suite says so.
+
+### 5. A latent race in `test_local_frame_origin_reproduces_the_aircraft_position`
+
+Not in the issue, and found while validating. The test read the world coordinates and the local
+frame coordinates in *separate* requests and compared them to within 1 m. The Web API serves each
+read from whichever frame is current and offers no way to ask for a consistent snapshot, so a
+moving aircraft slides between the reads: at 140 kt a handful of frames is tens of metres. The
+test only ever passed because the aircraft happened to be parked — and stabilisation, by making
+the aircraft reliably move, would have turned that latent flakiness into a deterministic failure.
+
+It now stops the aircraft first (`ias_kt = 0.0`) so the reads describe one instant. The horizontal
+assertions stayed at 1 m and are now genuinely tight; the up axis carries a 5 m budget for the
+free fall that resumes the moment the velocity write lands — still four orders of magnitude
+tighter than the 200 km error the test exists to catch.
+
+## Known gap: long-haul repositioning is an *adapter* problem
+
+Making the contract tests distance-agnostic removes the flakiness, but it does not make a 1250 km
+teleport work. That failure is not in the harness:
+
+> X-Plane relocates the local frame origin during a scenery reload. The `local_x/y/z` written
+> before the reload then denote a *different* world position, and `_await_arrival` polls for up to
+> 30 s against a target the aircraft can no longer converge on.
+
+The fix belongs in `XPlaneSimAdapter.set_position`: detect that the frame origin has moved and
+re-measure and re-write after the reload settles, rather than polling a stale target. That is an
+adapter change and out of scope for this issue, which is about the harness. **It needs its own
+issue before the Position Manager ships "reposition to another airport".**
+
+## Verification
+
+`pytest`, `ruff check`, `ruff format --check` and `mypy` are all green — see the PR.
+
+**`pytest -m sim` was *not* run against a real X-Plane 12.** The simulator was not running on the
+machine during this work and nothing was listening on `localhost:8086`, so the live run in the
+definition of done could not be performed. Rather than guess, the whole suite was validated
+against a purpose-built stand-in X-Plane Web API that reproduces the exact conditions the issue
+blames:
+
+- the aircraft starts **parked on the ground with the brakes on**, so writing a velocity to it
+  does nothing;
+- gravity is integrated, so an aircraft left in the air **free-falls** and keeps accelerating;
+- world coordinates are *derived* from the local frame every tick, as in the real sim.
+
+Against that stand-in:
+
+| Check | Result |
+|---|---|
+| Old suite | 2 failed, 22 passed — reproduces the reported breakage |
+| New suite | **24 passed** |
+| New suite, file order reversed | 24 passed — order-independent |
+| Each formerly-failing test run alone | passes |
+| New suite, started from a violent free fall (−85 m/s, 60° bank) | 24 passed |
+| Aircraft position after a full run | restored to within ~0.2 mm, heading and altitude identical, crash flag clear, `override_planepath` released |
+
+That covers the harness logic — fixture ordering and scoping, relative hops, restore-in-`finally`,
+session snapshot/restore, and the stabilisation. It does **not** cover X-Plane's real physics or
+Web API timing. A `sim-validator` run against a live X-Plane 12 is still required before this is
+considered closed on the sim side.
+
+## Rules for anyone adding a live test
+
+A simulator, unlike the Fake, is a single shared persistent thing:
+
+1. **Never assume a starting state.** The `adapter` fixture stabilises the aircraft, but where it
+   is and what it is flying is whatever the user left loaded.
+2. **Never use an absolute position or altitude.** Work relative to the aircraft's current state.
+3. **Restore anything you move, in a `finally`.** `live_aircraft_home` is the safety net, not the
+   plan.
+4. **Never skip.** A test that cannot observe what it needs is a broken harness, not a skip.
