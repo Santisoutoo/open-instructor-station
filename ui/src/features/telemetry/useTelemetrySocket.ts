@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { isAircraftState } from '../../api/types';
+import { isAircraftState } from '../../api/models';
 import {
   connectionEstablished,
   connectionFailed,
