@@ -115,15 +115,82 @@ class AircraftSetup(BaseModel):
 
 
 class Runway(BaseModel):
-    """A single runway end, as read from the user's own navdata."""
+    """A single runway end, as read from the user's own navdata.
+
+    **A runway end has two distinct anchor points and they are not
+    interchangeable.** The paved surface starts at the *pavement end*; the
+    *landing threshold* is where an aircraft on final aims, and on a runway with
+    a displaced threshold it sits some way down the pavement from that end. The
+    two navdata sources this model is populated from disagree on which one they
+    publish:
+
+    * the CIFP ``RWY:`` record gives the **displaced landing threshold**;
+    * ``apt.dat`` gives the **pavement end**, plus the displacement separately.
+
+    At LEMD 18L those points are ~496 m apart — 0.27 NM of error on a 10 NM
+    final if the two are conflated. So the convention is pinned here, once:
+
+    * :attr:`threshold` is **always the displaced landing threshold**, and it is
+      the origin every approach placement is measured from.
+    * :attr:`pavement_end` is the other point, carried separately.
+    * :attr:`length_m` is **always the pavement length**, because that is what
+      traffic-pattern geometry is built on. Landing distance available is the
+      separate :attr:`landing_distance_m`.
+
+    A source that only knows the pavement end must walk it forward along the
+    runway axis by :attr:`displaced_threshold_m` before filling
+    :attr:`threshold` — it must never assign the pavement end to it.
+    """
 
     model_config = ConfigDict(frozen=True)
 
     airport_icao: str = Field(min_length=2, max_length=7, description='ICAO code, e.g. "LEMD".')
     ident: str = Field(min_length=1, max_length=3, description='Runway identifier, e.g. "32L".')
-    threshold: GeoPosition = Field(description="Landing threshold position.")
+    threshold: GeoPosition = Field(
+        description=(
+            "The displaced landing threshold — the point an aircraft on final aims at, NOT the "
+            "start of the pavement (see pavement_end). This is the origin a final approach is "
+            "measured back from."
+        )
+    )
     true_bearing_deg: float = Field(
         ge=0.0, le=360.0, description="Runway centreline bearing, true degrees."
     )
-    length_m: float = Field(gt=0.0, description="Usable length in metres.")
-    elevation_ft: float = Field(description="Threshold elevation in feet MSL.")
+    length_m: float = Field(
+        gt=0.0,
+        description=(
+            "Pavement length in metres, from one physical runway end to the other. This is the "
+            "full paved length, NOT the landing distance available (see landing_distance_m)."
+        ),
+    )
+    elevation_ft: float = Field(
+        description="Elevation of the landing threshold, in feet above mean sea level."
+    )
+
+    # --- Optional, source-dependent detail --------------------------------
+    # Every field below defaults, so a caller that only knows the six above
+    # keeps working unchanged.
+    pavement_end: GeoPosition | None = Field(
+        default=None,
+        description=(
+            "Undisplaced start of the paved surface. Equal to the threshold when nothing is "
+            "displaced; None when the source does not publish it."
+        ),
+    )
+    displaced_threshold_m: float = Field(
+        default=0.0,
+        ge=0.0,
+        description=(
+            "Distance in metres from pavement_end to threshold, along the runway centreline. "
+            "0.0 means the threshold is not displaced. apt.dat publishes this in metres and the "
+            "CIFP RWY: record publishes it in feet; both are converted to metres here."
+        ),
+    )
+    landing_distance_m: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Landing distance available in metres, i.e. length_m minus displaced_threshold_m. "
+            "None when the displacement is unknown."
+        ),
+    )
