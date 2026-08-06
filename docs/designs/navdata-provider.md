@@ -259,7 +259,7 @@ class NavdataProvider(Protocol):
         airport_icao: str | None = None,
     ) -> list[Hold]: ...
         # Published holds from earth_hold.dat. Procedure holds (HM/HA/HF legs)
-        # arrive through get_procedure() and are deliberately NOT merged (§5.9).
+        # arrive through get_procedure() and are deliberately NOT merged (§5.10).
 ```
 
 ### 4.1 Naming conventions
@@ -595,6 +595,22 @@ class Procedure(BaseModel, frozen=True):
     approach_type: ApproachType | None = None
     legs: tuple[ProcedureLeg, ...]
 ```
+
+**Runway-transition expansion, which is a real trap.** A CIFP transition ident is not always a
+runway: it may be a named transition (`ADUXO`), a runway (`RW14R`), `ALL`, or a **parallel group**
+ending in `B` (`RW32B`, `RW14B`) meaning "both parallels". `runway_idents` is the expanded, real
+list, resolved against the airport's actual runways at parse time:
+
+| Transition | `runway_idents` |
+|---|---|
+| `RW14R` | `("14R",)` |
+| `RW32B` | `("32L", "32R")` — every `32*` runway the airport actually has |
+| `RW18` | `("18",)`, or every `18*` runway if no bare `18` exists |
+| `ALL` or blank | every runway of the airport |
+| `ADUXO` (a named transition) | `()` — and `transition` carries the name |
+
+Expanding against the airport's real runway list, rather than assuming `L`/`R`, is what makes
+`RW32B` correct at an airport with `32L`/`32C`/`32R`.
 
 ```python
 PathTerminator = Literal[
@@ -1286,7 +1302,7 @@ write to):
 | Linux | `${XDG_CACHE_HOME:-~/.cache}/open-instructor-station/navdata/` |
 
 Overridable with `OIS_NAVDATA_CACHE_DIR`. `.gitignore` already excludes `*.sqlite` and
-`navdata_cache/`; §11.3 adds a test that makes that mechanical.
+`navdata_cache/`; §11.4 adds a test that makes that mechanical.
 
 Filename: `navdata-<cycle>-v<SCHEMA_VERSION>.sqlite`. Superseded files are deleted after a
 successful build, so the directory holds exactly one.
