@@ -1,24 +1,15 @@
 name: Release
 
 # Builds the UI, packages a single executable with PyInstaller (bundling ui/dist),
-# uploads it as a workflow artifact and attaches it to a DRAFT GitHub Release.
+# smoke-tests it, uploads it as a workflow artifact and attaches it to a DRAFT
+# GitHub Release.
 #
-# ─────────────────────────────────────────────────────────────────────────────
-# STATUS: NOT YET FUNCTIONAL — the PyInstaller spec does not exist.
-#
-# `packaging/instructor-station.spec` is expected to land with Phase 5 packaging
-# (see docs/roadmap.md). Until then the "PyInstaller" step below will fail if this
-# workflow is ever triggered. That is acceptable and deliberate: the file only fires
-# on `v*` tags, so it cannot run accidentally on a push or a pull request, and it is
-# valid YAML so it will not break workflow parsing in the meantime.
-#
-# When Phase 5 lands: write the spec, verify a clean-machine launch, and remove this
-# notice.
+# The executable is UNSIGNED. Windows SmartScreen will warn on first run. Signing,
+# an installer and auto-update are out of scope here (see #27).
 #
 # Windows is the only enabled target for now (X-Plane's primary platform and the only
 # one MSFS supports). The matrix is written so macOS and Linux can be enabled later by
 # uncommenting their entries — nothing else in the file needs to change.
-# ─────────────────────────────────────────────────────────────────────────────
 
 on:
   push:
@@ -74,16 +65,45 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
 
+      # The dev extra is where the PyInstaller version constraint lives, so the
+      # release build and a local build agree on the packager.
       - name: Install project and PyInstaller
         run: |
           python -m pip install --upgrade pip
-          pip install -e .
-          pip install pyinstaller
+          pip install -e ".[dev]"
 
       # The spec bundles ui/dist as static assets so the packaged executable starts the
       # local server and serves the UI without a Node runtime. See docs/architecture.md.
       - name: PyInstaller — single executable
-        run: pyinstaller packaging/instructor-station.spec --noconfirm --clean
+        run: python -m PyInstaller packaging/instructor-station.spec --noconfirm --clean
+
+      # A tag must not ship a binary nobody launched. Start it, then assert the API
+      # answers AND the bundled UI is really mounted — the failure mode of a naive
+      # bundle is a working API in front of a blank page.
+      - name: Smoke-test the executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          OIS_PORT: "8123"
+          OIS_OPEN_BROWSER: "0" # headless runner: never try to launch a browser
+        run: |
+          $exe = Start-Process -FilePath (Resolve-Path '${{ matrix.binary-path }}') -PassThru
+          try {
+            $ready = $false
+            foreach ($i in 1..60) {
+              try { Invoke-RestMethod 'http://127.0.0.1:8123/api/health' -TimeoutSec 2 | Out-Null; $ready = $true; break }
+              catch { Start-Sleep -Milliseconds 500 }
+            }
+            if (-not $ready) { throw 'The executable never answered on /api/health' }
+            $page = (Invoke-WebRequest 'http://127.0.0.1:8123/' -TimeoutSec 10).Content
+            if ($page -notmatch '<div id="root">') { throw 'The bundled UI was not served at /' }
+            Write-Host 'Smoke test passed: API answered and the bundled UI was served.'
+          } finally {
+            # /T matters: a one-file bundle is a bootloader parent plus the real
+            # Python child, and killing only the parent orphans the server.
+            taskkill /PID $exe.Id /T /F 2>&1 | Out-Null
+            $global:LASTEXITCODE = 0 # teardown must not decide the step's result
+          }
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
