@@ -143,11 +143,24 @@ per-task decision.
 
 ## Known gotchas
 
-- **Repositioning the aircraft externally is the project's key technical risk.** X-Plane's real
-  position lives in `local_x/y/z` (OpenGL frame); `latitude/longitude/elevation` are derived and
-  the world→local conversion (`XPLMWorldToLocal`) is a plugin-only API. If writing lat/lon over
-  the Web API does not stick, fall back to the legacy UDP `VEHX`/`VEH1` packet, which positions
-  the aircraft without a plugin. Long teleports trigger a scenery reload — pause around them.
+- **Repositioning externally is SOLVED — no plugin needed.** Validated against X-Plane 12 at
+  LEMD on 2026-08-06. The five-step procedure, in `adapters/xplane/xplane_adapter.py`:
+  1. Freeze the flight model (`override_planepath[0] = 1`).
+  2. Write `local_x/y/z` — `latitude`/`longitude`/`elevation` are **read-only** and derived, so
+     reading them back is the honest verdict on whether a write took.
+  3. Write the **velocity vector** (`local_vx/vy/vz`) and `psi`. Zeros drop the aircraft out of
+     the sky below stall speed; carry the requested/current speed onto the new heading.
+  4. Release the override.
+  5. Clear the crash state (`sim/operation/fix_all_systems`) — X-Plane reads a teleport as an
+     impact and renders the aircraft wrecked otherwise. Skipping this ends a training session.
+
+  **Never trust `lat_ref`/`lon_ref`.** They advertised an origin 200 km from the real one on the
+  validation run. The local frame origin is *measured* from the aircraft, which is known in both
+  coordinate systems at once — `core.local_frame.origin_from_observation`. The world→local
+  conversion that normally needs the plugin-only `XPLMWorldToLocal` lives in `core/local_frame.py`
+  as a rigid ECEF rotation (not a flat-earth offset: 40 km out, the tangent-plane error is ~120 m,
+  i.e. the difference between arriving at the requested altitude and arriving inside a hill).
+  Long teleports still trigger a scenery reload — expect a pause.
 - **X-Plane 12 "real weather" mode continuously overwrites manual weather datarefs.** The
   Weather Manager must force manual mode before writing anything.
 - **Navdata sources** (user's install, `Custom Data/` wins over `Resources/default data/`):

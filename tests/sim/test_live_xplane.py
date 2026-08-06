@@ -1,6 +1,7 @@
 """End-to-end checks against a live X-Plane. Never runs in CI.
 
-Run with a simulator on the ground or in the air and its Web API enabled::
+Run with a simulator loaded (on the ground or in the air) and its Web API
+enabled::
 
     pytest -m sim
 
@@ -16,11 +17,15 @@ from core.geodesy import (
     distance_and_bearing,
     point_at_distance_and_bearing,
 )
+from core.local_frame import LocalCoordinates, world_to_local
 from core.models import AircraftSetup, GeoPosition
 
 pytestmark = pytest.mark.sim
 
 TELEPORT_DISTANCE_NM = 5.0
+#: Placement tolerance. Generous because the aircraft is flying by the time the
+#: state is read back: at 100 kt a single second is already 51 m.
+PLACEMENT_TOLERANCE_M = 400.0
 
 
 async def test_reads_a_plausible_state() -> None:
@@ -36,45 +41,100 @@ async def test_reads_a_plausible_state() -> None:
         await adapter.disconnect()
 
 
-async def test_teleports_five_nm_north_and_restores() -> None:
-    """The key technical risk, exercised for real.
+async def test_local_frame_origin_reproduces_the_aircraft_position() -> None:
+    """The calibration that makes external repositioning possible.
 
-    If repositioning over the Web API does not work, the adapter raises
-    ``NotImplementedError`` pointing at the UDP ``VEHX`` fallback, and this
-    test fails loudly. That failure is the finding — do not skip it.
+    The origin is measured from the aircraft, not read from ``lat_ref``/
+    ``lon_ref`` — those were observed to be wrong by ~200 km. Projecting the
+    aircraft's own world position through the measured origin must reproduce
+    the local coordinates the sim reports, to within float noise.
     """
     adapter = XPlaneSimAdapter()
     await adapter.connect()
     try:
-        before = await adapter.get_aircraft_state()
-        origin = GeoPosition(
-            latitude=before.latitude,
-            longitude=before.longitude,
-            altitude_ft=before.altitude_ft,
+        origin = await adapter.measure_local_frame_origin()
+        state = await adapter.get_aircraft_state()
+        local = LocalCoordinates(
+            x_m=float(await adapter.read_dataref("local_x")),
+            y_m=float(await adapter.read_dataref("local_y")),
+            z_m=float(await adapter.read_dataref("local_z")),
         )
-        target = point_at_distance_and_bearing(origin, TELEPORT_DISTANCE_NM, 0.0)
+        projected = world_to_local(
+            origin,
+            GeoPosition(
+                latitude=state.latitude,
+                longitude=state.longitude,
+                altitude_ft=state.altitude_ft,
+            ),
+        )
+        assert projected.x_m == pytest.approx(local.x_m, abs=1.0)
+        assert projected.y_m == pytest.approx(local.y_m, abs=1.0)
+        assert projected.z_m == pytest.approx(local.z_m, abs=1.0)
+    finally:
+        await adapter.disconnect()
+
+
+async def test_teleports_five_nm_north_and_restores() -> None:
+    """The key technical risk, exercised for real.
+
+    Validated on X-Plane 12 at LEMD: placement exact, restore within 0.00 m.
+    If repositioning stops working, ``set_position`` raises
+    ``XPlaneRepositionFailed`` and this test fails loudly. That failure is the
+    finding — do not skip it.
+    """
+    adapter = XPlaneSimAdapter()
+    await adapter.connect()
+    before = await adapter.get_aircraft_state()
+    home = GeoPosition(
+        latitude=before.latitude,
+        longitude=before.longitude,
+        altitude_ft=before.altitude_ft,
+    )
+    try:
+        target = point_at_distance_and_bearing(home, TELEPORT_DISTANCE_NM, 0.0)
 
         await adapter.set_position(target, heading_deg=before.heading_deg)
         after = await adapter.get_aircraft_state()
         moved = GeoPosition(latitude=after.latitude, longitude=after.longitude)
 
-        travelled_nm, _ = distance_and_bearing(origin, moved)
+        travelled_nm, _ = distance_and_bearing(home, moved)
         assert travelled_nm == pytest.approx(TELEPORT_DISTANCE_NM, abs=0.5), (
             "the aircraft did not move to the requested position"
         )
 
         error_nm, _ = distance_and_bearing(moved, target)
-        assert error_nm * METRES_PER_NAUTICAL_MILE <= 250.0
+        assert error_nm * METRES_PER_NAUTICAL_MILE <= PLACEMENT_TOLERANCE_M
     finally:
         # Always put the aircraft back where the user left it.
-        await adapter.set_position(
-            GeoPosition(
-                latitude=before.latitude,
-                longitude=before.longitude,
-                altitude_ft=before.altitude_ft,
-            ),
-            heading_deg=before.heading_deg,
-        )
+        await adapter.set_position(home, heading_deg=before.heading_deg)
+        await adapter.disconnect()
+
+
+async def test_teleport_does_not_leave_the_aircraft_wrecked() -> None:
+    """X-Plane reads a position jump as an impact unless the procedure clears it.
+
+    This is not cosmetic: a wrecked aircraft is unflyable, so an instructor
+    repositioning a student mid-lesson would end the lesson. ``set_position``
+    fires ``fix_all_systems`` as its last step precisely to prevent this.
+    """
+    adapter = XPlaneSimAdapter()
+    await adapter.connect()
+    before = await adapter.get_aircraft_state()
+    home = GeoPosition(
+        latitude=before.latitude,
+        longitude=before.longitude,
+        altitude_ft=before.altitude_ft,
+    )
+    try:
+        await adapter.clear_crash_state()
+        assert await adapter.has_crashed() is False, "the aircraft was already wrecked"
+
+        target = point_at_distance_and_bearing(home, TELEPORT_DISTANCE_NM, 0.0)
+        await adapter.set_position(target, heading_deg=before.heading_deg)
+
+        assert await adapter.has_crashed() is False
+    finally:
+        await adapter.set_position(home, heading_deg=before.heading_deg)
         await adapter.disconnect()
 
 
