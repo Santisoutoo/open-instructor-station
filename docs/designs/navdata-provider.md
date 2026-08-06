@@ -157,52 +157,56 @@ class NavdataProvider(Protocol):
     """
 
     # --- Identity and lifecycle -------------------------------------------
+
+    #: "xplane_native" | "in_memory" | "msfs_bgl"
     @property
     def name(self) -> str: ...
-        # "xplane_native" | "in_memory" | "msfs_bgl"
 
+    # Cheap. Never raises. The navdata analogue of GET /api/capabilities:
+    # the UI gates on this, exactly as it gates on Capabilities.
     def status(self) -> NavdataStatus: ...
-        # Cheap. Never raises. The navdata analogue of GET /api/capabilities:
-        # the UI gates on this, exactly as it gates on Capabilities.
 
+    # Build the index if the cache key does not match (or `force`).
+    # Idempotent. Long-running. Safe to call from a worker thread.
     def ensure_index(
         self,
         *,
         progress: Callable[[IndexProgress], None] | None = None,
         force: bool = False,
     ) -> NavdataStatus: ...
-        # Build the index if the cache key does not match (or `force`).
-        # Idempotent. Long-running. Safe to call from a worker thread.
 
     # --- Airports ----------------------------------------------------------
+
     def get_airport(self, icao: str) -> Airport | None: ...
 
+    # Type-ahead over ICAO, IATA and name. Ranked, bounded. See §6.3.
     def search_airports(self, query: str, *, limit: int = 20) -> list[AirportSummary]: ...
-        # Type-ahead over ICAO, IATA and name. Ranked, bounded. See §6.3.
 
     def airports_near(
         self, centre: GeoPosition, radius_nm: float, *, limit: int = 50
     ) -> list[AirportSummary]: ...
 
     # --- Runways -----------------------------------------------------------
-    def get_runways(self, icao: str) -> list[Runway]: ...
-        # One entry per runway END (18L and 36R are two Runways). Sorted by ident.
 
+    # One entry per runway END (18L and 36R are two Runways). Sorted by ident.
+    def get_runways(self, icao: str) -> list[Runway]: ...
+
+    # `ident` in apt.dat form: "18L", not "RW18L". Both accepted, "18L" returned.
     def get_runway(self, icao: str, ident: str) -> Runway | None: ...
-        # `ident` in apt.dat form: "18L", not "RW18L". Both accepted, "18L" returned.
 
     # --- Parking -----------------------------------------------------------
-    def get_parking(
-        self, icao: str, *, kind: ParkingKind | None = None
-    ) -> list[ParkingStand]: ...
-        # Gates and stands are one model with a `kind`. The UI filters; see §5.6.
+
+    # Gates and stands are one model with a `kind`. The UI filters; see §5.6.
+    def get_parking(self, icao: str, *, kind: ParkingKind | None = None) -> list[ParkingStand]: ...
 
     # --- Procedures --------------------------------------------------------
+
+    # Summaries only — LEMD has 100+ procedures and the UI lists before it draws.
     def get_procedures(
         self, icao: str, *, kind: ProcedureKind | None = None
     ) -> list[ProcedureSummary]: ...
-        # Summaries only — LEMD has 100+ procedures and the UI lists before it draws.
 
+    # Legs fully resolved: every positionable leg already carries its fix.
     def get_procedure(
         self,
         icao: str,
@@ -210,9 +214,10 @@ class NavdataProvider(Protocol):
         ident: str,
         transition: str | None = None,
     ) -> Procedure | None: ...
-        # Legs fully resolved: every positionable leg already carries its fix.
 
     # --- Navaids and fixes -------------------------------------------------
+
+    # A list: navaid idents are NOT globally unique. Sorted by ident, then region.
     def get_navaids(
         self,
         ident: str,
@@ -220,8 +225,8 @@ class NavdataProvider(Protocol):
         region: str | None = None,
         kinds: Collection[NavaidKind] | None = None,
     ) -> list[Navaid]: ...
-        # A list: navaid idents are NOT globally unique. Sorted by ident, then region.
 
+    # Sorted by distance ascending.
     def navaids_near(
         self,
         centre: GeoPosition,
@@ -230,10 +235,9 @@ class NavdataProvider(Protocol):
         kinds: Collection[NavaidKind] | None = None,
         limit: int = 50,
     ) -> list[Navaid]: ...
-        # Sorted by distance ascending.
 
+    # Localizer + glideslope + category, ready to feed AircraftSetup.
     def get_ils(self, icao: str, runway_ident: str) -> Ils | None: ...
-        # Localizer + glideslope + category, ready to feed AircraftSetup.
 
     def get_fixes(
         self,
@@ -247,10 +251,13 @@ class NavdataProvider(Protocol):
         self, centre: GeoPosition, radius_nm: float, *, limit: int = 50
     ) -> list[Fix]: ...
 
+    # The single place the 4-part ARINC key becomes a coordinate. See §5.8.
     def resolve_fix(self, ref: FixRef) -> Waypoint | None: ...
-        # The single place the 4-part ARINC key becomes a coordinate. See §5.8.
 
     # --- Holds -------------------------------------------------------------
+
+    # Published holds from earth_hold.dat. Procedure holds (HM/HA/HF legs)
+    # arrive through get_procedure() and are deliberately NOT merged (§5.10).
     def get_holds(
         self,
         *,
@@ -258,8 +265,6 @@ class NavdataProvider(Protocol):
         region: str | None = None,
         airport_icao: str | None = None,
     ) -> list[Hold]: ...
-        # Published holds from earth_hold.dat. Procedure holds (HM/HA/HF legs)
-        # arrive through get_procedure() and are deliberately NOT merged (§5.10).
 ```
 
 ### 4.1 Naming conventions
@@ -297,10 +302,10 @@ Applied at the boundary, once, so no caller ever branches on a source quirk:
 ```python
 class NavdataStatus(BaseModel, frozen=True):
     state: Literal["unavailable", "building", "ready", "error"]
-    reason: str | None            # human-readable, always set when not "ready"
-    provider: str                 # "xplane_native" | "in_memory" | "msfs_bgl"
-    source_root: str | None       # the resolved install path, as a string for JSON
-    airac_cycle: str | None       # "2607"
+    reason: str | None  # human-readable, always set when not "ready"
+    provider: str  # "xplane_native" | "in_memory" | "msfs_bgl"
+    source_root: str | None  # the resolved install path, as a string for JSON
+    airac_cycle: str | None  # "2607"
     cycle_valid_from: date | None
     cycle_valid_to: date | None
     built_at: datetime | None
@@ -308,15 +313,15 @@ class NavdataStatus(BaseModel, frozen=True):
     runway_count: int | None
     navaid_count: int | None
     fix_count: int | None
-    progress: IndexProgress | None   # populated only while state == "building"
+    progress: IndexProgress | None  # populated only while state == "building"
 
 
 class IndexProgress(BaseModel, frozen=True):
     stage: Literal["airports", "runways", "parking", "navaids", "fixes", "holds", "finalising"]
-    stage_index: int              # 1-based
+    stage_index: int  # 1-based
     stage_count: int
-    fraction: float               # 0.0 … 1.0 overall
-    detail: str | None            # "apt.dat — 8.1 M / 12.4 M lines"
+    fraction: float  # 0.0 … 1.0 overall
+    detail: str | None  # "apt.dat — 8.1 M / 12.4 M lines"
 ```
 
 `status()` is to navdata what `GET /api/capabilities` is to the simulator: **the UI disables what
@@ -399,15 +404,15 @@ independent sources agreeing to better than a fiftieth of a degree.
 Everything positionable is a `Waypoint`. Procedure legs point at one; `resolve_fix` returns one.
 
 ```python
-WaypointKind = Literal["fix", "vor", "ndb", "dme", "tacan", "localizer",
-                       "runway", "airport", "gls"]
+WaypointKind = Literal["fix", "vor", "ndb", "dme", "tacan", "localizer", "runway", "airport", "gls"]
+
 
 class Waypoint(BaseModel, frozen=True):
     ident: str
     kind: WaypointKind
     position: GeoPosition
-    region_code: str | None = None      # ICAO region, e.g. "LE"
-    airport_icao: str | None = None     # set for terminal-scoped waypoints
+    region_code: str | None = None  # ICAO region, e.g. "LE"
+    airport_icao: str | None = None  # set for terminal-scoped waypoints
     name: str | None = None
 ```
 
@@ -430,21 +435,21 @@ defaults, so:
 class Runway(BaseModel, frozen=True):
     # --- existing, unchanged ------------------------------------------------
     airport_icao: str = Field(min_length=2, max_length=7)
-    ident: str = Field(min_length=1, max_length=3)      # "18L" — never "RW18L"
-    threshold: GeoPosition          # the LANDING threshold (displaced) — see below
-    true_bearing_deg: float = Field(ge=0.0, le=360.0)   # geodesic, computed
+    ident: str = Field(min_length=1, max_length=3)  # "18L" — never "RW18L"
+    threshold: GeoPosition  # the LANDING threshold (displaced) — see below
+    true_bearing_deg: float = Field(ge=0.0, le=360.0)  # geodesic, computed
     length_m: float = Field(gt=0.0)
     elevation_ft: float
 
     # --- added, all optional with defaults ---------------------------------
-    opposite_ident: str | None = None            # "36R"
-    pavement_end: GeoPosition | None = None      # undisplaced start of pavement
+    opposite_ident: str | None = None  # "36R"
+    pavement_end: GeoPosition | None = None  # undisplaced start of pavement
     displaced_threshold_m: float = 0.0
-    landing_distance_m: float | None = None      # length_m - displaced_threshold_m
+    landing_distance_m: float | None = None  # length_m - displaced_threshold_m
     width_m: float | None = None
-    surface: RunwaySurface | None = None         # asphalt|concrete|grass|gravel|water|snow|…
+    surface: RunwaySurface | None = None  # asphalt|concrete|grass|gravel|water|snow|…
     threshold_crossing_height_ft: float | None = None
-    ils: Ils | None = None                       # populated by the provider — see below
+    ils: Ils | None = None  # populated by the provider — see below
 ```
 
 **Semantics pinned down (these were ambiguous and are now not):**
@@ -474,15 +479,16 @@ class Airport(BaseModel, frozen=True):
     city: str | None = None
     country: str | None = None
     region_code: str | None = None
-    position: GeoPosition                       # airport reference point / datum
+    position: GeoPosition  # airport reference point / datum
     elevation_ft: float
-    transition_altitude_ft: int | None = None   # apt.dat 1302 transition_alt
+    transition_altitude_ft: int | None = None  # apt.dat 1302 transition_alt
     transition_level_ft: int | None = None
     magnetic_variation_deg: float | None = None
     has_tower: bool = False
     runway_count: int = 0
     longest_runway_m: float | None = None
-    has_procedures: bool = False                # a CIFP/<ICAO>.dat file exists
+    has_procedures: bool = False  # a CIFP/<ICAO>.dat file exists
+
 
 class AirportSummary(BaseModel, frozen=True):
     icao: str
@@ -502,36 +508,38 @@ not a parse. It lets the UI grey out the SID/STAR/approach tabs before any lazy 
 ### 5.5 `Navaid` and `Ils`
 
 ```python
-NavaidKind = Literal["vor", "vor_dme", "vortac", "dme", "ndb", "tacan",
-                     "localizer", "glideslope", "gls"]
+NavaidKind = Literal[
+    "vor", "vor_dme", "vortac", "dme", "ndb", "tacan", "localizer", "glideslope", "gls"
+]
+
 
 class Navaid(BaseModel, frozen=True):
     ident: str
     kind: NavaidKind
     name: str | None = None
     position: GeoPosition
-    frequency_khz: int | None = None        # SAME UNIT as AircraftSetup.nav1_freq_khz
-    channel: str | None = None              # TACAN channel, e.g. "112X"
+    frequency_khz: int | None = None  # SAME UNIT as AircraftSetup.nav1_freq_khz
+    channel: str | None = None  # TACAN channel, e.g. "112X"
     range_nm: float | None = None
     magnetic_variation_deg: float | None = None
     region_code: str | None = None
-    airport_icao: str | None = None         # terminal navaids only
-    runway_ident: str | None = None         # localizers / glideslopes
-    usable_for_nav_radio: bool = True       # False for GS, GLS, marker beacons
+    airport_icao: str | None = None  # terminal navaids only
+    runway_ident: str | None = None  # localizers / glideslopes
+    usable_for_nav_radio: bool = True  # False for GS, GLS, marker beacons
 
 
 class Ils(BaseModel, frozen=True):
     airport_icao: str
     runway_ident: str
-    localizer_ident: str                    # "IML"
-    frequency_khz: int                      # 108_000 … 111_950
+    localizer_ident: str  # "IML"
+    frequency_khz: int  # 108_000 … 111_950
     localizer_position: GeoPosition
-    localizer_true_deg: float               # 179.763
-    localizer_mag_deg: float                # 180.0  → feeds AircraftSetup.obs1_deg
+    localizer_true_deg: float  # 179.763
+    localizer_mag_deg: float  # 180.0  → feeds AircraftSetup.obs1_deg
     localizer_width_deg: float | None = None
-    glideslope_deg: float | None = None     # 3.00 → feeds core.geodesy.glideslope_altitude_ft
+    glideslope_deg: float | None = None  # 3.00 → feeds core.geodesy.glideslope_altitude_ft
     glideslope_position: GeoPosition | None = None
-    category: Literal["I", "II", "III"] | None = None   # from CIFP RWY:
+    category: Literal["I", "II", "III"] | None = None  # from CIFP RWY:
     has_dme: bool = False
 ```
 
@@ -551,15 +559,16 @@ placement pipeline is closed here rather than at each call site.
 ParkingKind = Literal["gate", "hangar", "tie_down", "misc"]
 ParkingOperation = Literal["none", "general_aviation", "airline", "cargo", "military"]
 
+
 class ParkingStand(BaseModel, frozen=True):
     airport_icao: str
-    name: str                                    # "La Munoza", "R32"
-    position: GeoPosition                        # altitude_ft = airport elevation
-    heading_true_deg: float                      # heading of the parked aircraft
+    name: str  # "La Munoza", "R32"
+    position: GeoPosition  # altitude_ft = airport elevation
+    heading_true_deg: float  # heading of the parked aircraft
     kind: ParkingKind
-    aircraft_types: tuple[str, ...] = ()         # "heavy"|"jets"|"turboprops"|"props"|"helos"
+    aircraft_types: tuple[str, ...] = ()  # "heavy"|"jets"|"turboprops"|"props"|"helos"
     operation: ParkingOperation | None = None
-    airline_codes: tuple[str, ...] = ()          # ("ibe", "baw", …)
+    airline_codes: tuple[str, ...] = ()  # ("ibe", "baw", …)
 ```
 
 **One model, not two.** The feature spec lists "gate" and "parking stand" as separate placements,
@@ -572,16 +581,31 @@ elevation — harmless, because a stand placement puts the aircraft on the groun
 
 ```python
 ProcedureKind = Literal["sid", "star", "approach"]
-ApproachType = Literal["ils", "loc", "rnav", "gps", "vor", "vor_dme", "ndb",
-                       "ndb_dme", "lda", "sdf", "gls", "mls", "igs", "unknown"]
+ApproachType = Literal[
+    "ils",
+    "loc",
+    "rnav",
+    "gps",
+    "vor",
+    "vor_dme",
+    "ndb",
+    "ndb_dme",
+    "lda",
+    "sdf",
+    "gls",
+    "mls",
+    "igs",
+    "unknown",
+]
+
 
 class ProcedureSummary(BaseModel, frozen=True):
     airport_icao: str
     kind: ProcedureKind
-    ident: str                             # "BARD3B", "I18LY"
-    transition: str | None                 # "RW14R", "ADUXO", None
-    runway_idents: tuple[str, ...]         # ("32L", "32R") — RW32B expanded
-    approach_type: ApproachType | None     # approaches only
+    ident: str  # "BARD3B", "I18LY"
+    transition: str | None  # "RW14R", "ADUXO", None
+    runway_idents: tuple[str, ...]  # ("32L", "32R") — RW32B expanded
+    approach_type: ApproachType | None  # approaches only
     leg_count: int
     positionable_leg_count: int
 
@@ -612,38 +636,50 @@ list, resolved against the airport's actual runways at parse time:
 Expanding against the airport's real runway list, rather than assuming `L`/`R`, is what makes
 `RW32B` correct at an airport with `32L`/`32C`/`32R`.
 
-```python
-PathTerminator = Literal[
-    "IF", "TF", "CF", "DF", "AF", "RF",              # positionable
-    "CA", "VA", "FM", "VM", "CD", "CI", "CR",        # trajectory-dependent
-    "VD", "VI", "VR", "FA", "FC", "FD",
-    "HA", "HF", "HM", "PI",                          # holds and procedure turns
-]
+The recognised path terminators fall into three groups, and the first group is the one the whole
+Position Manager turns on:
 
-#: The only terminators that carry a resolvable fix (CLAUDE.md, architecture.md §4).
+```python
+#: Legs that carry a resolvable fix — the ONLY ones offered as a placement.
+#: (CLAUDE.md; architecture.md, risk 4.)
 POSITIONABLE_TERMINATORS: frozenset[str] = frozenset({"IF", "TF", "CF", "DF", "AF", "RF"})
+
+#: Trajectory-dependent legs: no defensible coordinate without the flown path.
+#: Displayed, never offered.
+TRAJECTORY_TERMINATORS: frozenset[str] = frozenset(
+    {"CA", "VA", "FM", "VM", "CD", "CI", "CR", "VD", "VI", "VR", "FA", "FC", "FD"}
+)
+
+#: Holds and procedure turns. Displayed, never offered.
+MANOEUVRE_TERMINATORS: frozenset[str] = frozenset({"HA", "HF", "HM", "PI"})
+
+PathTerminator = Literal[  # the union of the three sets above
+    "IF", "TF", "CF", "DF", "AF", "RF",
+    "CA", "VA", "FM", "VM", "CD", "CI", "CR", "VD", "VI", "VR", "FA", "FC", "FD",
+    "HA", "HF", "HM", "PI",
+]  # fmt: skip
 
 
 class ProcedureLeg(BaseModel, frozen=True):
-    sequence: int                          # 10, 20, 30 … from the CIFP record
+    sequence: int  # 10, 20, 30 … from the CIFP record
     path_terminator: PathTerminator
 
     # --- Positionability — the whole point --------------------------------
     is_positionable: bool
-    unpositionable_reason: str | None      # set iff is_positionable is False
+    unpositionable_reason: str | None  # set iff is_positionable is False
 
     # --- The fix ----------------------------------------------------------
-    fix_ref: FixRef | None                 # the raw 4-part ARINC key, always kept
-    fix: Waypoint | None                   # resolved; None if unresolvable
+    fix_ref: FixRef | None  # the raw 4-part ARINC key, always kept
+    fix: Waypoint | None  # resolved; None if unresolvable
 
     # --- Geometry ---------------------------------------------------------
     recommended_navaid: Waypoint | None = None
-    theta_mag_deg: float | None = None     # bearing FROM the recommended navaid
-    rho_nm: float | None = None            # distance FROM the recommended navaid
-    arc_radius_nm: float | None = None     # RF legs
+    theta_mag_deg: float | None = None  # bearing FROM the recommended navaid
+    rho_nm: float | None = None  # distance FROM the recommended navaid
+    arc_radius_nm: float | None = None  # RF legs
     outbound_course_mag_deg: float | None = None
     distance_nm: float | None = None
-    time_min: float | None = None          # holding legs use time, not distance
+    time_min: float | None = None  # holding legs use time, not distance
     turn_direction: Literal["L", "R"] | None = None
     vertical_angle_deg: float | None = None
 
@@ -660,7 +696,7 @@ class ProcedureLeg(BaseModel, frozen=True):
     is_missed_approach_leg: bool = False
     is_end_of_procedure: bool = False
 
-    raw: str | None = None                 # the source line, for diagnostics only
+    raw: str | None = None  # the source line, for diagnostics only
 ```
 
 **`is_positionable` is computed by the provider, never by the UI** (`architecture.md`, risk 4):
@@ -690,11 +726,11 @@ not one, because idents are not unique and terminal fixes are scoped to an airpo
 
 ```python
 class FixRef(BaseModel, frozen=True):
-    ident: str                 # "MD800", "NVS", "GOXOL"
-    region_code: str           # "LE"
-    section: str               # "D" | "E" | "P" | "PN"  (ARINC 424 section)
-    subsection: str            # "C" | "A" | "I" | "G" | ""
-    airport_icao: str | None   # the CIFP file's airport, for terminal scoping
+    ident: str  # "MD800", "NVS", "GOXOL"
+    region_code: str  # "LE"
+    section: str  # "D" | "E" | "P" | "PN"  (ARINC 424 section)
+    subsection: str  # "C" | "A" | "I" | "G" | ""
+    airport_icao: str | None  # the CIFP file's airport, for terminal scoping
 ```
 
 Resolution table used by `resolve_fix()` — verified against real records:
@@ -724,9 +760,9 @@ with no second source and no guessing.
 
 ```python
 class AltitudeConstraint(BaseModel, frozen=True):
-    descriptor: str                    # raw ARINC char: "+", "-", "B", "J", "V", …
-    min_ft: float | None = None        # at-or-above bound
-    max_ft: float | None = None        # at-or-below bound
+    descriptor: str  # raw ARINC char: "+", "-", "B", "J", "V", …
+    min_ft: float | None = None  # at-or-above bound
+    max_ft: float | None = None  # at-or-below bound
     min_is_flight_level: bool = False  # so the UI can render "FL140" back
     max_is_flight_level: bool = False
 
@@ -734,11 +770,11 @@ class AltitudeConstraint(BaseModel, frozen=True):
     def suggested_ft(self) -> float | None: ...
 
     @property
-    def display(self) -> str: ...      # "FL140A / 10000B", "at or above 6300", "at 5500"
+    def display(self) -> str: ...  # "FL140A / 10000B", "at or above 6300", "at 5500"
 
 
 class SpeedConstraint(BaseModel, frozen=True):
-    descriptor: str                    # "+", "-", or blank
+    descriptor: str  # "+", "-", or blank
     min_kt: float | None = None
     max_kt: float | None = None
 
@@ -780,7 +816,7 @@ class Fix(BaseModel, frozen=True):
     ident: str
     position: GeoPosition
     region_code: str | None = None
-    terminal_airport_icao: str | None = None   # None == enroute (ENRT)
+    terminal_airport_icao: str | None = None  # None == enroute (ENRT)
     name: str | None = None
 
 
@@ -788,12 +824,12 @@ class Hold(BaseModel, frozen=True):
     fix: Waypoint
     inbound_course_mag_deg: float
     turn_direction: Literal["L", "R"]
-    leg_time_min: float | None = None          # exactly one of time/length is set
+    leg_time_min: float | None = None  # exactly one of time/length is set
     leg_length_nm: float | None = None
     min_altitude_ft: float | None = None
     max_altitude_ft: float | None = None
     speed_kt: float | None = None
-    airport_icao: str | None = None            # None == enroute
+    airport_icao: str | None = None  # None == enroute
 ```
 
 **`inbound_course_mag_deg` is magnetic — verified, not assumed.** Cross-checking
