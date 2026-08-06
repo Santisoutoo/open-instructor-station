@@ -68,7 +68,14 @@ def _build(name: str) -> SimAdapter:
 
 @pytest.fixture(params=ADAPTER_PARAMS)
 async def adapter(request: pytest.FixtureRequest) -> AsyncIterator[SimAdapter]:
-    """A connected adapter, disconnected again when the test finishes."""
+    """A connected adapter, disconnected again when the test finishes.
+
+    Note for the ``xplane`` parametrisation: this fixture does **not** reset the
+    simulator between tests, so each live test inherits whatever the previous
+    one left behind. Three tests are known to be unreliable as a result — see
+    ``docs/designs/live-contract-suite.md``. The Fake is constructed fresh every
+    time and is unaffected.
+    """
     instance = _build(request.param)
     await instance.connect()
     try:
@@ -292,12 +299,25 @@ async def test_stream_state_yields_several_states(adapter: SimAdapter) -> None:
 
 
 async def test_stream_state_tracks_a_moving_aircraft(adapter: SimAdapter) -> None:
-    """A stream must reflect movement, not repeat a frozen snapshot."""
+    """A stream must reflect movement, not repeat a frozen snapshot.
+
+    The aircraft is lifted clear of the ground first. A real simulator will not
+    accelerate a parked aircraft no matter what velocity is written to it —
+    brakes and ground friction win — so on the ground this would be testing the
+    environment rather than the adapter.
+    """
     if adapter.capabilities.can_set_aircraft_state:
-        await adapter.apply_setup(AircraftSetup(ias_kt=250.0, heading_deg=90.0))
+        state = await adapter.get_aircraft_state()
+        await adapter.apply_setup(
+            AircraftSetup(
+                altitude_ft=state.altitude_ft + 5000.0 if state.on_ground else None,
+                ias_kt=250.0,
+                heading_deg=90.0,
+            )
+        )
     states = await _take(adapter.stream_state(STREAM_INTERVAL_S), 4)
-    if states[0].ias_kt <= 0.0:
-        pytest.skip("aircraft is stationary; movement cannot be observed")
+    if states[0].ias_kt <= 0.0 or states[0].on_ground:
+        pytest.skip("aircraft is stationary on the ground; movement cannot be observed")
     positions = {(state.latitude, state.longitude) for state in states}
     assert len(positions) > 1, "stream_state repeated the same position on every tick"
 

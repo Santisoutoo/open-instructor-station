@@ -25,10 +25,11 @@ one tab per phase, next to the manager that tab drives.
 
 ---
 
-## Phase 0 — Foundation *(in progress)*
+## Phase 0 — Foundation *(complete)*
 
 Nothing user-visible. The purpose is to make every later phase cheap and to retire the project's
-biggest technical unknown before any feature work starts.
+biggest technical unknown before any feature work starts. **Both goals met** — see the exit
+criteria below.
 
 ### Scope
 
@@ -46,16 +47,26 @@ biggest technical unknown before any feature work starts.
 
 ### Exit criteria
 
-1. **CI is green on `dev`** — all four checks passing.
-2. **The contract suite passes against `FakeSimAdapter`** (`tests/adapters/test_contract.py`).
-3. **The spike reads live position over the X-Plane WebSocket** and **successfully repositions
-   the aircraft in a real X-Plane 12**.
+1. ✅ **CI is green on `dev`** — all four checks passing.
+2. ✅ **The contract suite passes against `FakeSimAdapter`** (`tests/adapters/test_contract.py`).
+3. ✅ **Live repositioning in a real X-Plane 12** — validated at LEMD on 2026-08-06.
 
-> **Key technical risk gate.** If writing latitude/longitude over the Web API does **not** stick,
-> the legacy **UDP `VEHX`/`VEH1`** fallback must be evaluated **before Phase 1 starts** — not
-> during it. Phase 1 is the Position Manager; committing to it without knowing how the aircraft
-> actually moves would put the entire schedule on an unvalidated assumption. See
-> [architecture.md](architecture.md#known-technical-risks).
+### The key technical risk: retired
+
+Repositioning an aircraft from outside the simulator **works, with no plugin**. The measurements:
+
+| Finding | Consequence |
+|---|---|
+| `latitude`/`longitude`/`elevation` are **read-only** | Write the local OpenGL frame (`local_x/y/z`) instead. The world coordinates are derived from it, which makes reading them back the honest verdict on a write. |
+| `lat_ref`/`lon_ref` advertised an origin **200 km** from the real one (39.0N/6.0W vs 40.5N/4.0W) | Never trust them. The frame origin is *measured* from the aircraft, known in both coordinate systems at once — `core.local_frame.origin_from_observation`. Residual: 0.000000 m. |
+| The world→local conversion normally needs plugin-only `XPLMWorldToLocal` | Done externally in `core/local_frame.py` as a rigid ECEF rotation. Not a flat-earth offset: 40 km out the tangent-plane error is ~120 m. |
+| Writing zero velocity drops the aircraft below stall speed | Write the velocity vector along the target heading, never zeros. |
+| X-Plane reads a teleport as an **impact** and wrecks the aircraft | Clear it with `sim/operation/fix_all_systems` as the last step. Missing this ends a training session. |
+
+Measured on the validation run: placement exact, restore to the original position within **0.00 m**,
+crash flag clear throughout. The UDP `VEHX`/`VEH1` fallback is **not needed** and stays unimplemented.
+
+Phase 1 can therefore commit to the Position Manager knowing exactly how the aircraft moves.
 
 ---
 

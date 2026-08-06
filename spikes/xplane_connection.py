@@ -1,158 +1,167 @@
-"""Spike: can we read *and write* the aircraft position over the X-Plane Web API?
+"""X-Plane connection diagnostic: can this machine drive the simulator?
 
-Answering that is the whole point of Phase 0. Run it against a live X-Plane
-12.1+ and read the verdict at the bottom. Throwaway script: not imported by the
-app, not covered by tests.
+Originally the Phase 0 spike that settled whether an external application can
+reposition the aircraft at all. That question is answered — it can, and the
+adapter does it — so this script now serves as the diagnostic you run when
+something is wrong, or on a new X-Plane build, before trusting any placement.
+
+It exercises the whole chain end to end:
+
+1. Connect and resolve the dataref index.
+2. **Measure** the local frame origin from the aircraft and print the residual.
+   This is the step that matters: ``lat_ref``/``lon_ref`` were observed to
+   advertise an origin 200 km from the real one, so the origin is derived from
+   the aircraft's own position instead of trusted.
+3. Teleport 5 NM north (plus 2000 ft if the aircraft is on the ground, so the
+   result is unambiguous), then read the position back.
+4. Restore the original position and report the error.
+
+Run it with X-Plane loaded into a flight::
 
     python spikes/xplane_connection.py [--host localhost] [--port 8086]
+
+Exit codes: ``0`` everything works, ``1`` X-Plane not reachable, ``2`` the
+simulator answered but repositioning did not work.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import sys
+from pathlib import Path
 
-import httpx
-from websockets.asyncio.client import connect
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from core.geodesy import METRES_PER_NAUTICAL_MILE, distance_and_bearing
-from core.geodesy import point_at_distance_and_bearing as offset
+from adapters.xplane import XPlaneSimAdapter
+from adapters.xplane.xplane_adapter import (
+    XPlaneNotReachable,
+    XPlaneRepositionFailed,
+)
+from core.geodesy import (
+    METRES_PER_NAUTICAL_MILE,
+    distance_and_bearing,
+    point_at_distance_and_bearing,
+)
+from core.local_frame import LocalCoordinates, world_to_local
 from core.models import GeoPosition
 
-WANTED: dict[str, str] = {
-    "latitude": "sim/flightmodel/position/latitude",
-    "longitude": "sim/flightmodel/position/longitude",
-    "elevation": "sim/flightmodel/position/elevation",
-}
 TELEPORT_NM = 5.0
-SETTLE_S = 2.0
-TOLERANCE_M = 250.0
-FEET_PER_METRE = 1.0 / 0.3048
+GROUND_CLEARANCE_FT = 2000.0
+RESIDUAL_WARNING_M = 1.0
 
 
-async def resolve_ids(client: httpx.AsyncClient) -> dict[str, int]:
-    """Step 1: GET the dataref index and pick out the ids we need."""
-    response = await client.get("/api/v2/datarefs")
-    response.raise_for_status()
-    by_name = {entry["name"]: int(entry["id"]) for entry in response.json()["data"]}
-    ids = {key: by_name[path] for key, path in WANTED.items() if path in by_name}
-    missing = sorted(set(WANTED) - set(ids))
-    if missing:
-        raise RuntimeError(f"dataref index has no entry for: {[WANTED[key] for key in missing]}")
-    print(f"[1/4] Resolved dataref ids: {ids}")
-    return ids
-
-
-async def read_position(client: httpx.AsyncClient, ids: dict[str, int]) -> GeoPosition:
-    """Read latitude/longitude/elevation (elevation is metres MSL) as a GeoPosition."""
-    values: dict[str, float] = {}
-    for key, dataref_id in ids.items():
-        response = await client.get(f"/api/v2/datarefs/{dataref_id}/value")
-        response.raise_for_status()
-        values[key] = float(response.json()["data"])
-    return GeoPosition(
-        latitude=values["latitude"],
-        longitude=values["longitude"],
-        altitude_ft=values["elevation"] * FEET_PER_METRE,
-    )
-
-
-async def watch_websocket(ws_url: str, ids: dict[str, int], updates: int = 10) -> None:
-    """Step 2: subscribe over the WebSocket and print live updates."""
-    print(f"[2/4] Opening WebSocket {ws_url}, subscribing to {len(ids)} datarefs")
-    subscription = {
-        "req_id": 1,
-        "type": "dataref_subscribe_values",
-        "params": {"datarefs": [{"id": dataref_id} for dataref_id in ids.values()]},
-    }
-    async with connect(ws_url) as socket:
-        await socket.send(json.dumps(subscription))
-        seen = 0
-        while seen < updates:
-            raw = await asyncio.wait_for(socket.recv(), timeout=10.0)
-            message = json.loads(raw)
-            if message.get("type") != "dataref_update_values":
-                continue
-            seen += 1
-            print(f"      update {seen:>2}: {message['data']}")
-
-
-async def attempt_teleport(client: httpx.AsyncClient, ids: dict[str, int]) -> bool:
-    """Step 3: write a position 5 NM north, read it back, and say whether it stuck."""
-    before = await read_position(client, ids)
-    target = offset(before, TELEPORT_NM, 0.0)
-    print(f"[3/4] BEFORE  lat={before.latitude:.6f} lon={before.longitude:.6f}")
-    print(f"      TARGET  lat={target.latitude:.6f} lon={target.longitude:.6f}")
-
-    writes = (
-        ("latitude", target.latitude),
-        ("longitude", target.longitude),
-        ("elevation", target.altitude_ft / FEET_PER_METRE),
-    )
-    for key, value in writes:
-        response = await client.patch(f"/api/v2/datarefs/{ids[key]}/value", json={"data": value})
-        print(f"      PATCH {WANTED[key]} -> HTTP {response.status_code}")
-
-    await asyncio.sleep(SETTLE_S)
-    after = await read_position(client, ids)
-    print(f"      AFTER   lat={after.latitude:.6f} lon={after.longitude:.6f}")
-
-    moved_nm, _ = distance_and_bearing(before, after)
-    error_nm, _ = distance_and_bearing(after, target)
-    error_m = error_nm * METRES_PER_NAUTICAL_MILE
-    print(f"      moved {moved_nm:.3f} NM; {error_m:.0f} m from the target")
-    return error_m <= TOLERANCE_M
-
-
-def verdict(worked: bool) -> int:
-    """Step 4: print the actionable conclusion and return the process exit code."""
-    print("\n[4/4] VERDICT")
-    if worked:
-        print("      REPOSITIONING OVER THE WEB API WORKS. The aircraft landed on the")
-        print("      requested position; XPlaneSimAdapter.set_position can stay as it is.")
-        return 0
-    print("      REPOSITIONING OVER THE WEB API DOES NOT WORK: X-Plane recomputed")
-    print("      latitude/longitude from local_x/y/z on the next frame.")
-    print("      NEXT THING TO TRY: the legacy UDP VEHX/VEH1 packet on port 49000")
-    print(r"      ('VEHX\0' + int index + double lat/lon/alt + float psi/theta/phi),")
-    print("      which positions the aircraft without a plugin. Pause the sim around")
-    print("      long teleports so the scenery reload does not fight the write.")
-    return 2
+def rule(title: str) -> None:
+    """Print a section header."""
+    print(f"\n--- {title} " + "-" * max(0, 58 - len(title)))
 
 
 async def run(host: str, port: int) -> int:
-    """Run the whole spike and return the process exit code."""
-    async with httpx.AsyncClient(base_url=f"http://{host}:{port}", timeout=10.0) as client:
-        ids = await resolve_ids(client)
-        await watch_websocket(f"ws://{host}:{port}/api/v2", ids)
-        return verdict(await attempt_teleport(client, ids))
+    """Run the diagnostic. Returns the process exit code."""
+    adapter = XPlaneSimAdapter(host=host, port=port)
+
+    rule("CONNECT")
+    try:
+        await adapter.connect()
+    except XPlaneNotReachable as exc:
+        print(f"  FAILED: {exc}\n")
+        print("  Checklist:")
+        print("    * X-Plane 12.1 or newer is running and loaded into a flight")
+        print("      (the main menu is not enough - the datarefs mean nothing there)")
+        print("    * Settings > Network: the web server / Web API is enabled")
+        print(f"    * Nothing else is holding {adapter.base_url}")
+        return 1
+    print(f"  connected to {adapter.base_url}")
+
+    try:
+        state = await adapter.get_aircraft_state()
+        home = GeoPosition(
+            latitude=state.latitude,
+            longitude=state.longitude,
+            altitude_ft=state.altitude_ft,
+        )
+        rule("CURRENT STATE")
+        print(f"  lat {state.latitude:.8f}  lon {state.longitude:.8f}")
+        print(f"  alt {state.altitude_ft:9.1f} ft   heading {state.heading_deg:5.1f}")
+        print(f"  IAS {state.ias_kt:9.1f} kt   on ground: {state.on_ground}")
+        print(f"  crash flag: {await adapter.has_crashed()}")
+
+        rule("LOCAL FRAME CALIBRATION")
+        origin = await adapter.measure_local_frame_origin()
+        local = LocalCoordinates(
+            x_m=float(await adapter.read_dataref("local_x")),
+            y_m=float(await adapter.read_dataref("local_y")),
+            z_m=float(await adapter.read_dataref("local_z")),
+        )
+        projected = world_to_local(origin, home)
+        residual = max(
+            abs(projected.x_m - local.x_m),
+            abs(projected.y_m - local.y_m),
+            abs(projected.z_m - local.z_m),
+        )
+        print(f"  origin measured : {origin.latitude:.6f}, {origin.longitude:.6f}")
+        print(f"  vertical offset : {origin.vertical_offset_m:.3f} m")
+        print(f"  aircraft local  : x {local.x_m:.1f}  y {local.y_m:.1f}  z {local.z_m:.1f}")
+        print(f"  residual        : {residual:.6f} m")
+        if residual > RESIDUAL_WARNING_M:
+            print("  WARNING: the residual should be ~0. The local axis convention may")
+            print("           differ on this build; placement cannot be trusted.")
+
+        rule(f"TELEPORT {TELEPORT_NM:.0f} NM NORTH")
+        target_ll = point_at_distance_and_bearing(home, TELEPORT_NM, 0.0)
+        target = GeoPosition(
+            latitude=target_ll.latitude,
+            longitude=target_ll.longitude,
+            altitude_ft=home.altitude_ft + (GROUND_CLEARANCE_FT if state.on_ground else 0.0),
+        )
+        print(
+            f"  target: {target.latitude:.8f}, {target.longitude:.8f} @ {target.altitude_ft:.0f} ft"
+        )
+
+        try:
+            await adapter.set_position(target, heading_deg=state.heading_deg)
+        except XPlaneRepositionFailed as exc:
+            print(f"\n  VERDICT: REPOSITIONING FAILED\n  {exc}\n")
+            print("  Next thing to try: the legacy UDP VEHX/VEH1 packet on port 49000,")
+            print("  which positions the aircraft without a plugin.")
+            return 2
+
+        after = await adapter.get_aircraft_state()
+        travelled_nm, bearing = distance_and_bearing(
+            home, GeoPosition(latitude=after.latitude, longitude=after.longitude)
+        )
+        print(
+            f"  arrived: {after.latitude:.8f}, {after.longitude:.8f} @ {after.altitude_ft:.0f} ft"
+        )
+        print(f"  moved {travelled_nm:.3f} NM on bearing {bearing:.1f}")
+        print(f"  crash flag after teleport: {await adapter.has_crashed()}")
+
+        rule("RESTORE")
+        await adapter.set_position(home, heading_deg=state.heading_deg)
+        restored = await adapter.get_aircraft_state()
+        error_nm, _ = distance_and_bearing(
+            home, GeoPosition(latitude=restored.latitude, longitude=restored.longitude)
+        )
+        print(f"  back at {restored.latitude:.8f}, {restored.longitude:.8f}")
+        print(f"  error vs original: {error_nm * METRES_PER_NAUTICAL_MILE:.2f} m")
+        print(f"  crash flag: {await adapter.has_crashed()}")
+
+        rule("VERDICT")
+        print("  Repositioning WORKS over the Web API. No plugin required.")
+        print("  The instructor station can drive this simulator.")
+        return 0
+    finally:
+        await adapter.disconnect()
 
 
 def main() -> int:
-    """Parse arguments, run the spike, and turn every failure into advice."""
-    parser = argparse.ArgumentParser(description="X-Plane Web API connection spike")
+    """Parse arguments and run the diagnostic."""
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=8086)
     args = parser.parse_args()
-
-    print(f"X-Plane connection spike -> http://{args.host}:{args.port}\n")
-    try:
-        return asyncio.run(run(args.host, args.port))
-    except (httpx.HTTPError, OSError) as exc:
-        print(f"\nCANNOT REACH X-PLANE at {args.host}:{args.port}")
-        print(f"  ({type(exc).__name__}: {exc})")
-        print("  1. Start X-Plane 12.1 or newer.")
-        print("  2. Settings > Network > enable the Web API (default port 8086).")
-        print("  3. Load an aircraft and a location, then run this script again.")
-        return 1
-    except (RuntimeError, TimeoutError, KeyError) as exc:
-        print(f"\nSPIKE FAILED: {type(exc).__name__}: {exc}")
-        print("  The Web API answered but not in the shape this script expects.")
-        print("  Check the X-Plane version (the /api/v2 schema needs 12.1 or newer).")
-        return 1
+    return asyncio.run(run(args.host, args.port))
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())
