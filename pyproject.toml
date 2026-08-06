@@ -86,9 +86,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# Default run excludes tests that need a live simulator. `pytest -m sim`
-# overrides this (command-line -m wins over addopts).
-addopts = ["-m", "not sim", "--strict-markers"]
+# The default run excludes everything CI can never have: a live simulator, and the
+# user's own X-Plane navdata install (hard rule 4 — navdata is never redistributed,
+# so it cannot be committed as a fixture either). An explicit command-line -m wins
+# over addopts, so `pytest -m sim` and `pytest -m navdata` remain the escape hatches.
+addopts = ["-m", "not sim and not navdata", "--strict-markers"]
 markers = [
     "sim: requires a live simulator (X-Plane Web API on localhost:8086). Never runs in CI.",
+    "navdata: requires the user's own X-Plane navdata installation. Never runs in CI.",
 ]
