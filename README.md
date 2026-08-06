@@ -127,6 +127,47 @@ using the station from a **tablet is a first-class scenario**, not an afterthoug
 
 ---
 
+## The double-clickable executable
+
+A single `.exe` that starts the server and opens a browser — no Python, no Node, no terminal.
+It exists this early for **dogfooding**, not distribution: every phase from here on can be
+tested the way a user will actually run it.
+
+### Build
+
+The UI must be built first — the spec bundles `ui/dist` into the executable and refuses to
+build without it.
+
+```powershell
+pip install -e .[dev]
+cd ui; npm ci; npm run build; cd ..
+python -m PyInstaller packaging\instructor-station.spec --noconfirm --clean
+```
+
+The result is `dist/instructor-station.exe` (~18 MB, one file). It is **unsigned**, so Windows
+SmartScreen warns on first run — code signing and an installer are separate work.
+
+### Run
+
+Double-click it. A console window opens, the server starts on `0.0.0.0:8000` with the fake
+adapter, and the default browser opens at `http://127.0.0.1:8000/`. The console also prints the
+LAN URL to type on the tablet. Ctrl-C in that window stops it.
+
+Every setting is the same `OIS_`-prefixed environment variable as in development:
+
+| Variable | Default | |
+|---|---|---|
+| `OIS_ADAPTER` | `fake` | `fake` or `xplane` |
+| `OIS_HOST` · `OIS_PORT` | `0.0.0.0` · `8000` | Bound to all interfaces on purpose — the tablet needs it |
+| `OIS_XPLANE_HOST` · `OIS_XPLANE_PORT` | `localhost` · `8086` | Where X-Plane's Web API lives |
+| `OIS_OPEN_BROWSER` | on when packaged | Set to `0` to keep the executable headless |
+
+Tagging `v*` runs [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds
+the same executable, smoke-tests it and attaches it to a **draft** release for a human to
+publish.
+
+---
+
 ## Tests
 
 ```bash
