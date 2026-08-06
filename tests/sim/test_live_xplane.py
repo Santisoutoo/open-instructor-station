@@ -5,9 +5,14 @@ enabled::
 
     pytest -m sim
 
-These tests move the user aircraft and put it back. Do not run them while
-flying something you care about.
+These tests move the user aircraft and put it back. On top of that, the
+session-scoped ``live_aircraft_home`` fixture in ``tests/conftest.py``
+snapshots the aircraft before the first live test of the run and restores it
+after the last, so ``pytest -m sim`` as a whole is position-neutral. Do not run
+them while flying something you care about all the same.
 """
+
+import asyncio
 
 import pytest
 
@@ -26,6 +31,14 @@ TELEPORT_DISTANCE_NM = 5.0
 #: Placement tolerance. Generous because the aircraft is flying by the time the
 #: state is read back: at 100 kt a single second is already 51 m.
 PLACEMENT_TOLERANCE_M = 400.0
+
+#: X-Plane reports ``elevation`` in metres; the rest of the project is in feet.
+METRES_PER_FOOT = 0.3048
+
+#: Slack on the local frame's up axis when the two coordinate systems are read
+#: back over several requests. See
+#: :func:`test_local_frame_origin_reproduces_the_aircraft_position`.
+VERTICAL_SAMPLING_TOLERANCE_M = 5.0
 
 
 async def test_reads_a_plausible_state() -> None:
@@ -48,28 +61,53 @@ async def test_local_frame_origin_reproduces_the_aircraft_position() -> None:
     ``lon_ref`` — those were observed to be wrong by ~200 km. Projecting the
     aircraft's own world position through the measured origin must reproduce
     the local coordinates the sim reports, to within float noise.
+
+    **The aircraft is stopped first, and this is load-bearing.** The residual
+    being asserted is a static geometric property, but it is assembled from six
+    separate Web API reads, and the API serves each one from whichever frame
+    happens to be current — there is no way to ask it for a consistent snapshot.
+    A moving aircraft therefore slides between the reads, and the assertion
+    silently measures that motion instead of the calibration: at 140 kt a
+    handful of frames is already tens of metres, dwarfing the sub-metre residual
+    this is looking for. Zeroing the velocity removes the noise rather than
+    hiding it behind a loose tolerance.
     """
     adapter = XPlaneSimAdapter()
     await adapter.connect()
     try:
+        # Stop the aircraft so the six reads below describe one instant.
+        # ``ias_kt`` is written through the velocity vector, which zeroes the
+        # vertical component too, so this also arrests any inherited descent.
+        await adapter.apply_setup(AircraftSetup(ias_kt=0.0))
+
         origin = await adapter.measure_local_frame_origin()
-        state = await adapter.get_aircraft_state()
+        keys = ("latitude", "longitude", "elevation", "local_x", "local_y", "local_z")
+        raw = await asyncio.gather(*(adapter.read_dataref(key) for key in keys))
+        sample = {key: float(value) for key, value in zip(keys, raw, strict=True)}
+
         local = LocalCoordinates(
-            x_m=float(await adapter.read_dataref("local_x")),
-            y_m=float(await adapter.read_dataref("local_y")),
-            z_m=float(await adapter.read_dataref("local_z")),
+            x_m=sample["local_x"],
+            y_m=sample["local_y"],
+            z_m=sample["local_z"],
         )
         projected = world_to_local(
             origin,
             GeoPosition(
-                latitude=state.latitude,
-                longitude=state.longitude,
-                altitude_ft=state.altitude_ft,
+                latitude=sample["latitude"],
+                longitude=sample["longitude"],
+                altitude_ft=sample["elevation"] / METRES_PER_FOOT,
             ),
         )
+        # Horizontal: the axes a wrong frame origin blows up, and with the
+        # aircraft stopped there is nothing left but float noise.
         assert projected.x_m == pytest.approx(local.x_m, abs=1.0)
-        assert projected.y_m == pytest.approx(local.y_m, abs=1.0)
         assert projected.z_m == pytest.approx(local.z_m, abs=1.0)
+        # Vertical: gravity resumes the moment the velocity write lands, so the
+        # up axis still absorbs the free fall accumulated across the sampling
+        # window. A few frames of it is centimetres; the budget below is a wide
+        # margin over that, and still four orders of magnitude tighter than the
+        # 200 km error this test exists to catch.
+        assert projected.y_m == pytest.approx(local.y_m, abs=VERTICAL_SAMPLING_TOLERANCE_M)
     finally:
         await adapter.disconnect()
 
