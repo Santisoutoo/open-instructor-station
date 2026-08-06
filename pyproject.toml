@@ -26,6 +26,8 @@ dev = [
     "ruff>=0.7",
     "mypy>=1.13",
     "types-pyyaml>=6.0",
+    # Packaging: builds the double-clickable executable from packaging/*.spec.
+    "pyinstaller>=6.11",
 ]
 
 [project.scripts]
