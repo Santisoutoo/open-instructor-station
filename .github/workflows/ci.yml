@@ -13,6 +13,10 @@ name: CI
 # FakeSimAdapter. Sim tests are marked `@pytest.mark.sim` and are already excluded by
 # the pyproject addopts (`-m "not sim"`). Do not add X-Plane, MSFS or any simulator to
 # any job in this file.
+#
+# NOTE ON TOOL VERSIONS: ruff and mypy are pinned to a minor range in pyproject.toml
+# so `pip install -e .[dev]` is reproducible. Do not install or upgrade them ad hoc in
+# a step here — that would reintroduce the drift the pin exists to stop.
 
 on:
   push:
