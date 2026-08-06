@@ -1,0 +1,277 @@
+/*
+ * Dark theme, plain CSS, no framework. Sized for an iPad standing next to the simulator:
+ * large touch targets, high contrast, tabular numerals so live values do not jitter.
+ */
+
+:root {
+  --bg: #0d1117;
+  --bg-panel: #161b22;
+  --bg-raised: #1c232c;
+  --border: #2b3440;
+  --text: #e6edf3;
+  --text-dim: #8b98a5;
+  --accent: #58a6ff;
+  --ok: #3fb950;
+  --warn: #d29922;
+  --danger: #f85149;
+
+  color-scheme: dark;
+  font-family:
+    'Segoe UI',
+    system-ui,
+    -apple-system,
+    'Helvetica Neue',
+    Arial,
+    sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--text);
+  background-color: var(--bg);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background-color: var(--bg);
+  -webkit-text-size-adjust: 100%;
+}
+
+h1,
+h2 {
+  margin: 0;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------- layout */
+
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1rem;
+  gap: 1rem;
+}
+
+.app__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.app__title h1 {
+  font-size: 1.4rem;
+  letter-spacing: 0.01em;
+}
+
+.app__subtitle {
+  margin: 0.15rem 0 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.app__main {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+.app__footer {
+  margin-top: auto;
+  padding-top: 0.5rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+  text-align: center;
+}
+
+/* ---------------------------------------------------------------- panels */
+
+.panel {
+  padding: 1.25rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.panel h2 {
+  margin-bottom: 1rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+.panel__empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.panel__error {
+  margin: 0 0 0.75rem;
+  color: var(--danger);
+}
+
+/* ------------------------------------------------------------- telemetry */
+
+.readouts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.readout {
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-raised);
+  border-radius: 8px;
+}
+
+.readout__label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.readout__value {
+  margin: 0.2rem 0 0;
+  font-size: 1.3rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+}
+
+/* ---------------------------------------------------------- capabilities */
+
+.capabilities {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.capability {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-height: 44px; /* touch target */
+  padding: 0.35rem 0.75rem;
+  background: var(--bg-raised);
+  border-radius: 8px;
+}
+
+.capability--off {
+  opacity: 0.5;
+}
+
+.capability__indicator {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.capability--on .capability__indicator {
+  color: var(--ok);
+}
+
+.capability__label {
+  flex: 1;
+}
+
+.capability__state {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.capability--on .capability__state {
+  color: var(--ok);
+}
+
+/* ----------------------------------------------------------------- badge */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.9rem;
+}
+
+.badge__dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+
+.badge__label {
+  font-weight: 600;
+}
+
+.badge__detail {
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.badge--connected {
+  border-color: var(--ok);
+}
+.badge--connected .badge__dot {
+  background: var(--ok);
+}
+.badge--connected .badge__label {
+  color: var(--ok);
+}
+
+.badge--connecting {
+  border-color: var(--warn);
+}
+.badge--connecting .badge__dot {
+  background: var(--warn);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+.badge--connecting .badge__label {
+  color: var(--warn);
+}
+
+.badge--error {
+  border-color: var(--danger);
+}
+.badge--error .badge__dot {
+  background: var(--danger);
+}
+.badge--error .badge__label {
+  color: var(--danger);
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .badge--connecting .badge__dot {
+    animation: none;
+  }
+}

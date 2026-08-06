@@ -1,0 +1,11 @@
+# Normalise line endings: the repository always stores LF.
+# Without this, Windows autocrlf can commit CRLF and break `ruff format --check`
+# and prettier/eslint on the Linux CI runners.
+* text=auto eol=lf
+
+# Binary / generated: never touch.
+*.png binary
+*.jpg binary
+*.ico binary
+*.pdf binary
+ui/package-lock.json -diff linguist-generated

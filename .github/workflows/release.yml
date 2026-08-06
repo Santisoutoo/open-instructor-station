@@ -1,0 +1,115 @@
+name: Release
+
+# Builds the UI, packages a single executable with PyInstaller (bundling ui/dist),
+# uploads it as a workflow artifact and attaches it to a DRAFT GitHub Release.
+#
+# ─────────────────────────────────────────────────────────────────────────────
+# STATUS: NOT YET FUNCTIONAL — the PyInstaller spec does not exist.
+#
+# `packaging/instructor-station.spec` is expected to land with Phase 5 packaging
+# (see docs/roadmap.md). Until then the "PyInstaller" step below will fail if this
+# workflow is ever triggered. That is acceptable and deliberate: the file only fires
+# on `v*` tags, so it cannot run accidentally on a push or a pull request, and it is
+# valid YAML so it will not break workflow parsing in the meantime.
+#
+# When Phase 5 lands: write the spec, verify a clean-machine launch, and remove this
+# notice.
+#
+# Windows is the only enabled target for now (X-Plane's primary platform and the only
+# one MSFS supports). The matrix is written so macOS and Linux can be enabled later by
+# uncommenting their entries — nothing else in the file needs to change.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # required to create the draft release
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            artifact-name: instructor-station-windows
+            binary-path: dist/instructor-station.exe
+          # Enable later by uncommenting — no other change required:
+          # - os: macos-latest
+          #   artifact-name: instructor-station-macos
+          #   binary-path: dist/instructor-station
+          # - os: ubuntu-latest
+          #   artifact-name: instructor-station-linux
+          #   binary-path: dist/instructor-station
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Build the UI
+        working-directory: ui
+        run: |
+          npm ci
+          npm run build
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install project and PyInstaller
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+          pip install pyinstaller
+
+      # The spec bundles ui/dist as static assets so the packaged executable starts the
+      # local server and serves the UI without a Node runtime. See docs/architecture.md.
+      - name: PyInstaller — single executable
+        run: pyinstaller packaging/instructor-station.spec --noconfirm --clean
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact-name }}
+          path: ${{ matrix.binary-path }}
+          if-no-files-found: error
+          retention-days: 30
+
+  release:
+    name: draft-release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: List downloaded artifacts
+        run: find artifacts -type f
+
+      # draft: true — a human reviews and publishes. A tag never ships on its own.
+      - name: Create draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: artifacts/**/*

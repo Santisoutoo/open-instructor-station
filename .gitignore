@@ -1,0 +1,39 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- PyInstaller / packaging ---
+build/
+dist/
+*.spec
+
+# --- Node / UI ---
+node_modules/
+ui/dist/
+ui/.vite/
+npm-debug.log*
+
+# --- Navdata cache: NEVER commit user navdata or derived indexes ---
+*.sqlite
+*.sqlite3
+navdata_cache/
+
+# --- Local config & reports ---
+.env
+.env.local
+config.local.toml
+reports/
+
+# --- OS / editors ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
