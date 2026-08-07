@@ -1,0 +1,9 @@
+I
+1200 Version - HAND-WRITTEN FIXTURE. Every value below is invented.
+# Decoys. Custom Data/earth_fix.dat is present and non-empty, so it wins and
+# NOTHING here may reach the index. A test looks these idents up and expects
+# nothing back.
+
+  10.00000000   10.00000000 ZDFLT ENRT ZZ 4530011
+  11.00000000   11.00000000 ZDECO ENRT ZZ 4530011
+99
