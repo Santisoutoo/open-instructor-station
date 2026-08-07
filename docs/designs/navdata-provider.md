@@ -1848,9 +1848,10 @@ development and drops frames or corrupts the connection under load. The server's
 therefore does nothing but hand the frame across:
 
 ```python
-loop = asyncio.get_running_loop()          # captured before to_thread()
+loop = asyncio.get_running_loop()  # captured before to_thread()
 
-def _on_progress(frame: IndexProgress) -> None:   # runs in the worker thread
+
+def _on_progress(frame: IndexProgress) -> None:  # runs in the worker thread
     loop.call_soon_threadsafe(pump.publish_navdata_progress, frame)
 ```
 
