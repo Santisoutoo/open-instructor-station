@@ -197,6 +197,26 @@ class TestFixtureIntegrity:
                 offenders.append((number, count))
         assert not offenders, f"{path.name}: records with the wrong field count: {offenders}"
 
+    @pytest.mark.parametrize("path", [ZZZZ_DAT, ZZZY_DAT], ids=["ZZZZ", "ZZZY"])
+    def test_every_runway_record_carries_10_fields_and_the_embedded_semicolon(
+        self, path: Path
+    ) -> None:
+        """The shape the real format publishes, which is what makes this fixture worth having.
+
+        A fixture written to a parser's assumption instead of to the format
+        proves nothing, so the shape itself is asserted here rather than left
+        implicit in whatever the parser happens to accept.
+        """
+        offenders = []
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            prefix, separator, body = line.partition(":")
+            if not separator or prefix != "RWY" or "GARBAGE" in body:
+                continue
+            fields = body.rstrip().removesuffix(";").split(",")
+            if len(fields) != 10 or ";" not in fields[7]:
+                offenders.append((number, len(fields)))
+        assert not offenders, f"{path.name}: RWY: records with the wrong shape: {offenders}"
+
     def test_the_fixtures_stay_tiny(self) -> None:
         """A CIFP fixture that has grown is a fixture that started copying real data."""
         assert ZZZZ_DAT.stat().st_size < 8192
@@ -308,10 +328,13 @@ class TestRunwayRecords:
         assert runway.ils_category == "2"
         assert runway.threshold_crossing_height_ft == pytest.approx(48.0)
 
-    def test_blank_trailing_fields_are_none_not_empty_strings(self, zzzz: CifpAirport) -> None:
+    def test_a_runway_without_an_ils_leaves_those_fields_blank(self, zzzz: CifpAirport) -> None:
+        """RW27 has no localizer, no category and no crossing height."""
         runway = zzzz.runway("27")
         assert runway is not None
         assert runway.localizer_ident is None
+        assert runway.ils_category is None
+        assert runway.threshold_crossing_height_ft is None
 
     def test_an_unrecognised_ils_category_is_carried_raw_rather_than_raising(
         self, zzzz: CifpAirport
@@ -331,18 +354,44 @@ class TestRunwayRecords:
         assert airport.runways == ()
         assert airport.skipped_record_count == 1
 
+    def test_the_semicolon_buried_in_field_7_does_not_hide_the_latitude(self) -> None:
+        """The record's own terminator, reused mid-record before the latitude.
+
+        Miss it and ``[NS]DDMMSSss`` never matches, every ``RWY:`` record on
+        every real airport is skipped as malformed, and the CIFP threshold
+        silently loses the §7.2 precedence duel to ``apt.dat`` — the invisible
+        offset between a placement and its procedure that §7.2 exists to
+        prevent. This test is the only thing standing in the way of that.
+        """
+        line = "RWY:RW09,     ,      ,02000, ,IZZA,1,050;N40000000,W003000000,0000;"
+        airport = parse_cifp(line, icao="ZZZZ")
+        assert airport.skipped_record_count == 0
+
+        runway = airport.runway("09")
+        assert runway is not None
+        assert runway.threshold is not None
+        assert runway.threshold.latitude == pytest.approx(40.0)
+        assert runway.threshold.longitude == pytest.approx(-3.0)
+        assert runway.elevation_ft == pytest.approx(2000.0)
+        assert runway.threshold_crossing_height_ft == pytest.approx(50.0)
+        assert runway.localizer_ident == "IZZA"
+        assert runway.ils_category == "1"
+
     def test_the_record_is_read_relative_to_its_coordinates(self) -> None:
         """A leading field more or fewer must not shift the whole record.
 
         The coordinate pair is unmistakable, so it anchors the read instead of
         the parser assuming the gradient/ellipsoid columns are always present.
+        Here the ellipsoidal-height column is gone and every other field must
+        still land.
         """
-        without_gradient = "RWY:RW09,01000,N40000000,W003000000,0000,0050,IZZA,1;"
+        without_gradient = "RWY:RW09,      ,01000, ,IZZA,1,050;N40000000,W003000000,0000;"
         airport = parse_cifp(without_gradient, icao="ZZZZ")
         runway = airport.runway("09")
         assert runway is not None
         assert runway.elevation_ft == pytest.approx(1000.0)
         assert runway.localizer_ident == "IZZA"
+        assert runway.ils_category == "1"
         assert airport.skipped_record_count == 0
 
 
@@ -560,11 +609,30 @@ class TestLegGeometry:
         assert leg.recommended_navaid.ident == "IZZC"
 
     def test_an_rf_leg_carries_its_arc_radius(self, zzzz: CifpAirport) -> None:
-        """The radius has two implied decimals: an RF turn is a few miles, not tens."""
         leg = leg_of(zzzz, "ZZZ1A", 30, transition="RW32B")
         assert leg.path_terminator == "RF"
-        assert leg.arc_radius_nm == pytest.approx(3.50)
+        assert leg.arc_radius_nm == pytest.approx(3.500)
         assert leg.turn_direction == "R"
+
+    @pytest.mark.parametrize(
+        ("published", "expected_nm"),
+        [("002100", 2.100), ("001600", 1.600), ("003150", 3.150), ("003380", 3.380)],
+    )
+    def test_the_arc_radius_has_three_implied_decimals(
+        self, published: str, expected_nm: float
+    ) -> None:
+        """Pinned against the shape real RF legs publish.
+
+        Read as tenths, ``002100`` becomes a 210 NM arc; read as hundredths, a
+        21 NM one. An RF turn is 2.1 NM, so the factor is worth a golden test of
+        its own rather than an inference from the general "distances are tenths"
+        rule, which does not apply to this field.
+        """
+        text = record(
+            sequence="010", procedure="ZZTEST", terminator="RF", arc_radius=published, turn="R"
+        )
+        leg = parse_cifp(text, icao="ZZZZ").procedures[0].legs[0]
+        assert leg.arc_radius_nm == pytest.approx(expected_nm)
 
     def test_the_vertical_angle_is_hundredths_and_keeps_its_sign(self, zzzz: CifpAirport) -> None:
         leg = leg_of(zzzz, "I32L", 20)
@@ -674,8 +742,8 @@ class TestProcedureAssembly:
     def test_a_blank_transition_on_a_sid_means_every_runway(self) -> None:
         text = "\n".join(
             [
-                "RWY:RW09,     ,     ,02000,N40000000,W003000000,0000,0050,    ,0;",
-                "RWY:RW27,     ,     ,02000,N40000000,W002540000,0000,0050,    ,0;",
+                "RWY:RW09,     ,      ,02000, ,    , ,050;N40000000,W003000000,0000;",
+                "RWY:RW27,     ,      ,02000, ,    , ,050;N40000000,W002540000,0000;",
                 record(sequence="010", procedure="ZZCOM", terminator="CA"),
             ]
         )
@@ -712,7 +780,7 @@ class TestProcedureAssembly:
     def test_a_circling_approach_serves_no_runway(self) -> None:
         text = "\n".join(
             [
-                "RWY:RW09,     ,     ,02000,N40000000,W003000000,0000,0050,    ,0;",
+                "RWY:RW09,     ,      ,02000, ,    , ,050;N40000000,W003000000,0000;",
                 record(kind="APPCH", sequence="010", route_type="V", procedure="VOR-A",
                        terminator="CA"),
             ]

@@ -1,6 +1,6 @@
 # Hand-written fixture. Invented throughout. Present ONLY in Resources/default data,
 # which is how roughly a thousand real airports publish their procedures.
 #   RW18 N41 00 00.00 / W004 00 00.00 -> (41.0, -4.0)
-RWY:RW18,     ,     ,00500,N41000000,W004000000,0000,0050,    ,0;
+RWY:RW18,     ,      ,00500, ,    , ,050;N41000000,W004000000,0000;
 APPCH:010,R,R18-Z,,ZZYIF,ZY,P,C,E A ,,,IF,,,,,,,,,,,+,03000,,,,,,,,,,,,,,;
 APPCH:020,R,R18-Z,,RW18,ZY,P,G,G M ,,,TF,,,,,,,,,1800,0050,+,00550,,,,,,,,,,,,,,;

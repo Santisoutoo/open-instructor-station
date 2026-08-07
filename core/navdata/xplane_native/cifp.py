@@ -163,10 +163,21 @@ _AT_OR_ABOVE_ALTITUDE_2_DESCRIPTORS: Final[frozenset[str]] = frozenset({"C"})
 _METRES_PER_FOOT: Final = 0.3048
 _TENTHS: Final = 10.0
 _HUNDREDTHS: Final = 100.0
+_THOUSANDTHS: Final = 1000.0
 _FEET_PER_FLIGHT_LEVEL: Final = 100
 
 _LATITUDE = re.compile(r"^([NS])(\d{2})(\d{2})(\d{2})(\d{2})$")
 _LONGITUDE = re.compile(r"^([EW])(\d{3})(\d{2})(\d{2})(\d{2})$")
+
+# ``RWY:`` field offsets, measured from the LATITUDE field rather than from the
+# start of the record — see `_parse_runway_record` for why the coordinate is the
+# anchor. Verified against 48 records at LEMD, KJFK, EGLL, KSEA, LEBL and KORD;
+# the layout is now written into design §6.6 so it need never be rediscovered.
+_RWY_ELEVATION_OFFSET: Final = -4
+_RWY_LOCALIZER_OFFSET: Final = -2
+_RWY_ILS_CATEGORY_OFFSET: Final = -1
+_RWY_LONGITUDE_OFFSET: Final = 1
+_RWY_DISPLACED_THRESHOLD_OFFSET: Final = 2
 
 #: The runway an approach serves is encoded in its own ident — ``I32L`` is the
 #: ILS to 32L — because the CIFP transition field is blank for the final segment.
@@ -310,16 +321,34 @@ def parse_cifp(
 def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
     """Decode one ``RWY:`` record, or ``None`` when it is unreadable.
 
-    The record is read **relative to its coordinate pair** rather than from
-    fixed indices. The pair is unmistakable — nine and ten characters of packed
-    ``DDMMSSss`` behind a hemisphere letter — and anchoring on it makes the
-    surrounding fields fall out in the order the format publishes them
-    (threshold elevation before; displaced threshold distance, threshold
-    crossing height, localizer ident and ILS category after) without the parser
-    having to assume that the two leading gradient/ellipsoid fields are present.
+    The layout is ten comma-separated fields **with a semicolon buried inside
+    field 7** — the record's own terminator character, reused mid-record as the
+    separator between the threshold crossing height and the latitude::
 
-    A record with no coordinate pair carries no threshold, which is the one
-    thing this record type exists to provide, so it counts as malformed.
+        RWY:RW18L,     ,      ,01922, ,IML ,3,   ;N40314122,W003333368,1640;
+             0      1     2     3    4   5   6      7            8       9
+
+        0  runway ident            5  localizer ident
+        1  runway gradient         6  ILS category
+        2  ellipsoidal height      7  threshold crossing height ";" LATITUDE
+        3  threshold elevation     8  longitude
+        4  (blank)                 9  displaced threshold distance, FEET
+
+    Verified against 48 records at LEMD, KJFK, EGLL, KSEA, LEBL and KORD, and
+    recorded in design §6.6. **The embedded semicolon is the trap**: splitting on
+    commas and then matching a bare ``[NS]DDMMSSss`` against field 7 never
+    matches, so a parser that misses it silently reads *no* runways from *every*
+    real airport — and the CIFP threshold then loses the §7.2 precedence duel to
+    ``apt.dat`` by default, which is exactly the invisible offset between a
+    placement and its procedure that §7.2 exists to prevent.
+
+    The read is anchored on the **latitude** rather than done from fixed indices.
+    The coordinate pair is unmistakable by shape, so anchoring survives a record
+    that gains or loses a leading column, and every other field is then taken at
+    its verified offset from it.
+
+    A record with no coordinate pair carries no threshold, which is the one thing
+    this record type exists to provide, so it counts as malformed.
     """
     if not fields:
         return None
@@ -332,14 +361,14 @@ def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
     if anchor is None:
         return None
 
-    latitude = decode_latitude(fields[anchor])
-    longitude = decode_longitude(fields[anchor + 1])
+    latitude = decode_latitude(_after_semicolon(fields[anchor]))
+    longitude = decode_longitude(_at(fields, anchor + _RWY_LONGITUDE_OFFSET))
     if latitude is None or longitude is None:  # pragma: no cover - the anchor guarantees both
         return None
 
-    elevation_ft = _parse_float(fields[anchor - 1]) if anchor >= 1 else None
-    displaced_ft = _parse_float(_at(fields, anchor + 2))
-    crossing_height_ft = _parse_float(_at(fields, anchor + 3))
+    elevation_ft = _parse_float(_at(fields, anchor + _RWY_ELEVATION_OFFSET))
+    displaced_ft = _parse_float(_at(fields, anchor + _RWY_DISPLACED_THRESHOLD_OFFSET))
+    crossing_height_ft = _parse_float(_before_semicolon(fields[anchor]))
 
     return CifpRunway(
         ident=ident,
@@ -357,20 +386,36 @@ def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
         threshold_crossing_height_ft=(
             None if crossing_height_ft is None or crossing_height_ft < 0 else crossing_height_ft
         ),
-        localizer_ident=_at(fields, anchor + 4).strip() or None,
+        localizer_ident=_at(fields, anchor + _RWY_LOCALIZER_OFFSET).strip() or None,
         # Carried raw. Only 1/2/3 are CAT I/II/III and real data also holds
         # blanks and letter codes for LDA, IGS and localizer-only installations;
         # mapping them here would turn one odd airport into a failed parse.
-        ils_category=_at(fields, anchor + 5).strip() or None,
+        ils_category=_at(fields, anchor + _RWY_ILS_CATEGORY_OFFSET).strip() or None,
     )
 
 
+def _after_semicolon(value: str) -> str:
+    """The part of a ``RWY:`` field following an embedded ``;``, or all of it."""
+    return value.rpartition(";")[2]
+
+
+def _before_semicolon(value: str) -> str:
+    """The part preceding an embedded ``;``, or nothing when there is none."""
+    head, separator, _ = value.partition(";")
+    return head if separator else ""
+
+
 def _find_coordinate_pair(fields: Sequence[str]) -> int | None:
-    """Index of the first field that is a latitude immediately followed by a longitude."""
+    """Index of the field holding the latitude, given the next one is the longitude.
+
+    The latitude is preceded in its own field by the threshold crossing height
+    and a semicolon, so the match is made on the tail of the field rather than
+    on the whole of it.
+    """
     for index in range(len(fields) - 1):
-        if _LATITUDE.match(fields[index].strip().upper()) and _LONGITUDE.match(
-            fields[index + 1].strip().upper()
-        ):
+        latitude = _after_semicolon(fields[index]).strip().upper()
+        longitude = fields[index + 1].strip().upper()
+        if _LATITUDE.match(latitude) and _LONGITUDE.match(longitude):
             return index
     return None
 
@@ -462,7 +507,9 @@ def _parse_procedure_record(
             recommended_navaid=navaid,
             theta_mag_deg=_parse_angle(fields[_F_THETA]),
             rho_nm=_non_negative(_parse_tenths(fields[_F_RHO])),
-            arc_radius_nm=_positive(_parse_hundredths(fields[_F_ARC_RADIUS])),
+            # Three implied decimals, not one: ``002100`` is a 2.100 NM RF turn.
+            # Read as tenths it becomes a 210 NM arc, which is not a turn at all.
+            arc_radius_nm=_positive(_parse_thousandths(fields[_F_ARC_RADIUS])),
             outbound_course_mag_deg=_parse_angle(fields[_F_OUTBOUND_COURSE]),
             distance_nm=distance_nm,
             time_min=time_min,
@@ -658,6 +705,12 @@ def _parse_hundredths(value: str) -> float | None:
     """A fixed-point field with two implied decimals: ``-343`` is -3.43."""
     number = _parse_float(value)
     return None if number is None else number / _HUNDREDTHS
+
+
+def _parse_thousandths(value: str) -> float | None:
+    """A fixed-point field with three implied decimals: ``002100`` is 2.100."""
+    number = _parse_float(value)
+    return None if number is None else number / _THOUSANDTHS
 
 
 def _parse_angle(value: str) -> float | None:

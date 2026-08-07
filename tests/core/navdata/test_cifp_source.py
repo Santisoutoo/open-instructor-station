@@ -21,7 +21,9 @@ from core.navdata.xplane_native.cifp import XPNativeCifpSource
 REPO_ROOT = Path(__file__).resolve().parents[3]
 FIXTURE_ROOT = REPO_ROOT / "tests" / "fixtures" / "navdata" / "xp_root"
 
-RUNWAY_RECORD = "RWY:RW09,     ,     ,02000,N40000000,W003000000,0000,0050,IZZA,1;"
+#: Ten fields, with the semicolon the format buries inside field 7. Invented data,
+#: faithful shape - a fixture written to a parser's assumption proves nothing.
+RUNWAY_RECORD = "RWY:RW09,     ,      ,02000, ,IZZA,1,050;N40000000,W003000000,0000;"
 
 
 def _write(path: Path, content: str) -> Path:
@@ -43,7 +45,7 @@ def _tree(
 
 def _runway_at(elevation: int) -> str:
     """A one-runway file whose elevation identifies which copy was read."""
-    return f"RWY:RW09,     ,     ,0{elevation},N40000000,W003000000,0000,0050,IZZA,1;"
+    return f"RWY:RW09,     ,      ,0{elevation}, ,IZZA,1,050;N40000000,W003000000,0000;"
 
 
 class TestLoading:

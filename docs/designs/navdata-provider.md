@@ -1237,6 +1237,39 @@ bump (§8.4).
 These cost hours to rediscover and are recorded once, here. Every one was checked against real
 records.
 
+**A `RWY:` record is ten comma-separated fields, and field 7 has a `;` buried inside it.** The
+record's own terminator character, reused mid-record as the separator between the threshold
+crossing height and the latitude. Verified identical in shape across 48 records at LEMD, KJFK,
+EGLL, KSEA, LEBL and KORD:
+
+```
+RWY:RW18L,     ,      ,01922, ,IML ,3,   ;N40314122,W003333368,1640;
+RWY:RW14L,     ,      ,01942, ,    , ,   ;N40294171,W003332833,0000;
+     0       1     2     3   4  5   6      7            8        9
+```
+
+| # | Field | Notes |
+|---|---|---|
+| 0 | Runway ident | `RW18L` — normalised to `18L` (§4.4) |
+| 1 | Runway gradient | blank in every record sampled |
+| 2 | Ellipsoidal height | blank in every record sampled |
+| 3 | **Threshold elevation, feet** | `01922` |
+| 4 | *(blank)* | |
+| 5 | **Localizer ident** | `IML `, blank when the runway has no ILS |
+| 6 | **ILS category** | `3`, blank when there is none — decoded defensively, see below |
+| 7 | **Threshold crossing height `;` latitude** | `   ;N40314122` |
+| 8 | **Longitude** | `W003333368` |
+| 9 | **Displaced threshold distance, feet** | `1640` |
+
+**The embedded semicolon is the trap, and it is a silent one.** Split on commas and match a bare
+`[NS]DDMMSSss` against field 7 and it never matches, so *every* `RWY:` record at *every* real
+airport is rejected as malformed. Nothing raises: the airport simply reports no runways, the CIFP
+threshold loses the §7.2 precedence duel to `apt.dat` by default, and the placement acquires the
+small permanent invisible offset from its own procedure that §7.2 exists to prevent. Anchoring the
+read on the coordinate pair — matching on the tail of field 7 after the last `;`, then taking every
+other field at its offset from there — survives this and survives a record that gains or loses a
+leading column.
+
 **`RWY:` threshold coordinates are packed DDMMSSss.** `N40294171` = 40° 29' 41.71" = 40.4949194.
 Latitude is `[NS]DDMMSSss` (9 chars), longitude `[EW]DDDMMSSss` (10 chars). The last two digits are
 **hundredths of a second**, not thousandths.
@@ -1244,9 +1277,10 @@ Latitude is `[NS]DDMMSSss` (9 chars), longitude `[EW]DDDMMSSss` (10 chars). The 
 **`RWY:` gives the *displaced* threshold; `apt.dat` gives the pavement end.** Verified at LEMD 18L:
 `apt.dat` end `40.5325838, -3.5593800` with `displaced = 494 m`; CIFP `N40314122,W003333368` =
 `40.5281167, -3.5593556`. The CIFP point lies **496.7 m** from the `apt.dat` end along the runway
-axis (bearing 179.76°) — agreeing with `apt.dat`'s 494 m to within 3 m. The trailing CIFP field
+axis (bearing 179.76°) — agreeing with `apt.dat`'s 494 m to within 3 m. Field 9 of the same record
 (`1640`) is the **displaced threshold distance in feet** = 499.9 m: the same quantity, from a
-third independent place in the data.
+third independent place in the data. It is published in **feet**; `CifpRunway` carries it in
+metres.
 
 **`earth_nav.dat` localizer bearing is two numbers in one field.** Row type 4, field 7:
 `64979.763`. Decode with **integer** arithmetic on the string (never float `%`):
@@ -1301,6 +1335,21 @@ course, 21 route distance or holding time (`T010` = 1.0 min), 22 altitude descri
 28 vertical angle (`-343` = −3.43°). Courses are tenths of a degree (`3247` = 324.7°); distances
 are tenths of a NM (`0138` = 13.8 NM). The remaining fields are approach-qualifier flags used only
 by the description-code decoding in §5.7.
+
+Verified: 9664 `SID`/`STAR`/`APPCH` records across eight airports, every one of them 38 fields,
+with field 17 landing on the arc radius exactly as mapped above.
+
+**Field 17, the arc radius, is the one exception to "distances are tenths of a NM": it carries
+three implied decimals.** Real RF legs publish `002100`, `001600`, `003150`, `002810`, `003380`
+(KJFK R13L, KSEA R16CZ) — that is 2.100 NM, not 21.0 and certainly not 210. An RF turn is a couple
+of miles across, so a wrong factor here is visible on a map but perfectly silent in a model that
+only requires the value to be positive.
+
+**The 4-character waypoint description code (field 8) is positional and its blanks are
+significant.** Common real values are `'E   '`, `'EY  '`, `'EE B'`, `'E  H'`, `'E CC'`, and a
+missed-approach leg is spelled `'   M'`. Pad it to four characters; never strip it. Column 2 is
+fly-over, column 3 the approach fix role (IAF / FAF / MAP) and column 4 the leg role (missed
+approach, end of procedure), which is where the six role flags of §5.7 come from.
 
 ---
 
