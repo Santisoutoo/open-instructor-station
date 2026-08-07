@@ -154,7 +154,26 @@ per-task decision.
   5. Clear the crash state (`sim/operation/fix_all_systems`) — X-Plane reads a teleport as an
      impact and renders the aircraft wrecked otherwise. Skipping this ends a training session.
 
-  **`set_position` preserves the aircraft's *current* speed, which is the wrong default for a
+  **Never trust `lat_ref`/`lon_ref`.** They advertised an origin 200 km from the real one on the
+  validation run. The local frame origin is *measured* from the aircraft, which is known in both
+  coordinate systems at once — `core.local_frame.origin_from_observation`. The world→local
+  conversion that normally needs the plugin-only `XPLMWorldToLocal` lives in `core/local_frame.py`
+  as a rigid ECEF rotation (not a flat-earth offset: 40 km out, the tangent-plane error is ~120 m,
+  i.e. the difference between arriving at the requested altitude and arriving inside a hill).
+  Long teleports still trigger a scenery reload — expect a pause.
+
+- **The freeze is not just for position — attitude needs it too.** Writing
+  `psi`/`theta`/`phi` into a *running* flight model does not stick: measured against X-Plane
+  12.4.3 at LEMD, a commanded heading came out 7° off in the mild case and 164° off in the bad
+  one, and an `apply_setup` call was observed leaving the aircraft **inverted on the runway**
+  (`roll = -180`). The identical writes with `override_planepath` engaged land exactly: commanding
+  123.0° on a stationary aircraft read back **123.19°**, and still held 123.46° six seconds later.
+  **Both `set_position` and `apply_setup` now freeze** (issue #37), and `tests/conftest.py` freezes
+  around its session restore. Any residual pitch/roll after the release is the aircraft settling
+  onto its gear — that is physically correct, do not tune it away.
+  **The release always goes in a `finally`** — a leaked override freezes the user's aircraft.
+
+- **`set_position` preserves the aircraft's *current* speed, which is the wrong default for a
   placement — RESOLVED in `core/`.** Right for moving an aeroplane that is already flying, wrong
   for a placement: a parked aircraft put on a 10 NM final is handed 0 kt and falls out of the sky.
   Observed at LEMD 32L with the geometry perfect — 0.2 m placement error, 10.000 NM out, on the
@@ -168,14 +187,6 @@ per-task decision.
   category B when the caller states nothing, 0 kt only on the ground); an explicit `ias_kt` always
   wins. Speed is only half of it — the flaps and gear that make it a *stabilised* approach are the
   full pre-teleport setup (#8), which extends `to_setup()` rather than replacing it.
-
-  **Never trust `lat_ref`/`lon_ref`.** They advertised an origin 200 km from the real one on the
-  validation run. The local frame origin is *measured* from the aircraft, which is known in both
-  coordinate systems at once — `core.local_frame.origin_from_observation`. The world→local
-  conversion that normally needs the plugin-only `XPLMWorldToLocal` lives in `core/local_frame.py`
-  as a rigid ECEF rotation (not a flat-earth offset: 40 km out, the tangent-plane error is ~120 m,
-  i.e. the difference between arriving at the requested altitude and arriving inside a hill).
-  Long teleports still trigger a scenery reload — expect a pause.
 - **X-Plane 12 "real weather" mode continuously overwrites manual weather datarefs.** The
   Weather Manager must force manual mode before writing anything.
 - **Navdata sources** (user's install, `Custom Data/` wins over `Resources/default data/`):

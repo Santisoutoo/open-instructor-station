@@ -1,5 +1,25 @@
 import { useGetCapabilitiesQuery } from '../api/instructorApi';
-import { CAPABILITY_LABELS } from '../api/types';
+import type { CapabilityKey } from '../api/models';
+
+/**
+ * Display order and human labels for the capability flags.
+ *
+ * Lives next to the component that renders it, not in `api/`: the *flags* are generated
+ * from the OpenAPI schema, but how they are worded and ordered on screen is a display
+ * decision. `CapabilityKey` keeps the two honest — a flag renamed on the server breaks
+ * this table at compile time.
+ */
+const CAPABILITY_LABELS: ReadonlyArray<readonly [CapabilityKey, string]> = [
+  ['can_set_position', 'Set position'],
+  ['can_set_aircraft_state', 'Set aircraft state'],
+  ['can_set_weather', 'Set weather'],
+  ['can_inject_failures', 'Inject failures'],
+  ['can_spawn_traffic', 'Spawn traffic'],
+  ['can_control_autopilot', 'Control autopilot'],
+  ['can_set_fuel_payload', 'Set fuel & payload'],
+  ['can_control_camera', 'Control camera'],
+  ['can_pushback', 'Pushback'],
+];
 
 /**
  * Renders `GET /api/capabilities`, one row per flag.

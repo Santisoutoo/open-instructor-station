@@ -35,6 +35,22 @@ something:
 Measured accuracy on the validation run: placement exact, restore to the
 original position within 0.00 m, crash flag clear throughout.
 
+**The freeze is not a position concern — it is a flight-model concern.**
+Anything written into ``sim/flightmodel/position/*`` is fought by a running
+flight model, attitude included. Measured against X-Plane 12.4.3 at LEMD, a
+heading commanded at 322.21 while the model was live came back 286.9 with the
+aircraft sitting *inverted on the runway* (``phi = -180.0``); the identical
+write with ``override_planepath`` engaged read back 322.2 while frozen and
+322.3 — 0.09° — after the release. Steps 1 and 4 therefore wrap every
+flight-model write in this module, not just repositioning, and they are shared
+through one helper: :meth:`XPlaneSimAdapter.frozen_flight_model`. Residual
+pitch and roll after the release is the aircraft settling onto its gear; that
+is physically correct and is not something to tune away.
+
+Aircraft *configuration* — flaps, gear, lights, radios — is not part of the
+flight model's integration and is deliberately written outside the freeze, so a
+setup that only changes a switch costs no pause.
+
 This module imports cleanly with no simulator present and opens no sockets
 until :meth:`XPlaneSimAdapter.connect` is awaited.
 """
@@ -43,7 +59,8 @@ from __future__ import annotations
 
 import asyncio
 import math
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -372,6 +389,39 @@ class XPlaneSimAdapter:
 
     # -- Writes -----------------------------------------------------------
 
+    @asynccontextmanager
+    async def frozen_flight_model(self) -> AsyncIterator[None]:
+        """Hold X-Plane's flight model still for the duration of the block.
+
+        Steps 1 and 4 of the five-step procedure, in one place. Every write into
+        ``sim/flightmodel/position/*`` belongs inside this — position, velocity
+        *and* attitude. A running flight model resettles what you wrote within a
+        frame or two, and the failure is not subtle: writing a 322.21° heading
+        into a live model at LEMD produced 286.9° and left the aircraft inverted
+        on the runway at ``phi = -180.0``. The same write inside this block read
+        back 322.2° frozen and 322.3° after the release.
+
+        On exit the override is released and the sim is given
+        :data:`_RELEASE_SETTLE_S` to resume integrating, so the caller reads back
+        a settled aircraft rather than one mid-transition. Whatever pitch and
+        roll the aircraft has by then is it settling onto its landing gear — a
+        physical result, not an error in the write.
+
+        The release lives in a ``finally`` and that is the single most important
+        line in this method: a leaked ``override_planepath`` freezes the user's
+        aircraft indefinitely, with nothing in the UI to explain why.
+
+        Yields:
+            ``None``. The block runs with the flight model frozen.
+        """
+        await self._write("override_planepath", 1, index=0)
+        try:
+            await asyncio.sleep(_OVERRIDE_SETTLE_S)
+            yield
+        finally:
+            await self._write("override_planepath", 0, index=0)
+            await asyncio.sleep(_RELEASE_SETTLE_S)
+
     async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
         """Teleport the aircraft, preserving its current speed on the new heading.
 
@@ -392,21 +442,14 @@ class XPlaneSimAdapter:
         target = world_to_local(origin, position)
         speed_kt = (await self.get_aircraft_state()).ias_kt
 
-        await self._write("override_planepath", 1, index=0)
-        try:
-            await asyncio.sleep(_OVERRIDE_SETTLE_S)
+        async with self.frozen_flight_model():
             await self._write("local_x", target.x_m)
             await self._write("local_y", target.y_m)
             await self._write("local_z", target.z_m)
             await self._write_velocity_vector(heading_deg, speed_kt)
             await self._write("psi", heading_deg % 360.0)
             arrived = await self._await_arrival(position)
-        finally:
-            # The override must come off even if the verification blew up:
-            # leaving it engaged freezes the user's aircraft indefinitely.
-            await self._write("override_planepath", 0, index=0)
 
-        await asyncio.sleep(_RELEASE_SETTLE_S)
         await self.clear_crash_state()
 
         if not arrived:
@@ -499,6 +542,23 @@ class XPlaneSimAdapter:
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is set, leaving the rest untouched.
 
+        The fields split in two, and the split is the whole point of this
+        method's shape:
+
+        * **Flight-model state** — attitude, vertical speed, altitude, airspeed.
+          These are fought by a running flight model, so they are written inside
+          :meth:`frozen_flight_model`. Without the freeze, a commanded heading
+          came back 7° off in the mild case and 164° off in the bad one, and an
+          ``apply_setup`` call was observed leaving the aircraft inverted on the
+          runway (issue #37).
+        * **Configuration** — flaps, speedbrake, gear, autobrake, lights, radios.
+          Switches and knobs, which the flight model reads rather than
+          overwrites. They are written *outside* the freeze so that changing a
+          light does not pause the simulation.
+
+        The freeze is engaged only when there is flight-model state to write, so
+        a configuration-only setup — and an empty one — costs nothing.
+
         Args:
             setup: The configuration to apply. ``None`` fields are skipped.
 
@@ -518,16 +578,13 @@ class XPlaneSimAdapter:
                 "to nav1_freq_hz. Arrives with the Navigation manager."
             )
 
+        await self._write_configuration(setup)
+        await self._write_flight_model_state(setup)
+
+    async def _write_configuration(self, setup: AircraftSetup) -> None:
+        """Write the switch-and-knob half of a setup. No freeze required."""
         writes: list[tuple[str, float | int | bool]] = []
 
-        if setup.heading_deg is not None:
-            writes.append(("psi", setup.heading_deg % 360.0))
-        if setup.pitch_deg is not None:
-            writes.append(("theta", setup.pitch_deg))
-        if setup.roll_deg is not None:
-            writes.append(("phi", setup.roll_deg))
-        if setup.vertical_speed_fpm is not None:
-            writes.append(("vh_ind_fpm", setup.vertical_speed_fpm))
         if setup.flaps_ratio is not None:
             writes.append(("flap_ratio", setup.flaps_ratio))
         if setup.speedbrake_ratio is not None:
@@ -559,20 +616,49 @@ class XPlaneSimAdapter:
         for key, value in writes:
             await self._write(key, value)
 
-        # Altitude is not assignable either: `elevation` is read-only and
-        # derived from the local frame, so it goes through the up axis while
-        # the horizontal position is left exactly where it was.
-        if setup.altitude_ft is not None:
-            await self._write_altitude(setup.altitude_ft)
+    async def _write_flight_model_state(self, setup: AircraftSetup) -> None:
+        """Write the half of a setup the flight model would otherwise overwrite.
 
-        # Airspeed is not a dataref you can assign: it is derived from the
-        # velocity vector, so it is written last, along whichever heading the
-        # setup asked for (or the aircraft's current one).
-        if setup.ias_kt is not None:
-            heading = setup.heading_deg
-            if heading is None:
-                heading = float(await self._read("psi"))
-            await self._write_velocity_vector(heading, setup.ias_kt)
+        Everything here goes inside :meth:`frozen_flight_model`, for the reasons
+        in that method's docstring. The freeze is skipped entirely when the setup
+        carries none of these fields — engaging it costs a pause and a settle,
+        and there is nothing to protect.
+        """
+        # Attitude plus vertical speed: the fields that map straight onto a
+        # single `sim/flightmodel/position/*` dataref.
+        direct: list[tuple[str, float]] = []
+        if setup.heading_deg is not None:
+            direct.append(("psi", setup.heading_deg % 360.0))
+        if setup.pitch_deg is not None:
+            direct.append(("theta", setup.pitch_deg))
+        if setup.roll_deg is not None:
+            direct.append(("phi", setup.roll_deg))
+        if setup.vertical_speed_fpm is not None:
+            direct.append(("vh_ind_fpm", setup.vertical_speed_fpm))
+
+        if not direct and setup.altitude_ft is None and setup.ias_kt is None:
+            return
+
+        async with self.frozen_flight_model():
+            for key, value in direct:
+                await self._write(key, value)
+
+            # Altitude is not assignable either: `elevation` is read-only and
+            # derived from the local frame, so it goes through the up axis while
+            # the horizontal position is left exactly where it was. Doing it
+            # frozen also means the position it reads back is a single instant
+            # rather than a moving aircraft sampled across several requests.
+            if setup.altitude_ft is not None:
+                await self._write_altitude(setup.altitude_ft)
+
+            # Airspeed is not a dataref you can assign: it is derived from the
+            # velocity vector, so it is written last, along whichever heading the
+            # setup asked for (or the aircraft's current one).
+            if setup.ias_kt is not None:
+                heading = setup.heading_deg
+                if heading is None:
+                    heading = float(await self._read("psi"))
+                await self._write_velocity_vector(heading, setup.ias_kt)
 
     async def _write_altitude(self, altitude_ft: float) -> None:
         """Move the aircraft vertically, leaving its horizontal position alone."""

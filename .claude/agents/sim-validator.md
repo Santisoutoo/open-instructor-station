@@ -17,8 +17,9 @@ model of X-Plane match X-Plane.
 
 **CI never needs a simulator** (`CLAUDE.md`). GitHub runners have no X-Plane and never will. Sim
 tests are marked `@pytest.mark.sim` and excluded by default via `pyproject.toml`
-(`addopts = ["-m", "not sim", "--strict-markers"]`). You are invoked **manually, on the user's
-machine, with the simulator already running**. Nothing you do is ever wired into a workflow.
+(`addopts = ["-m", "not sim and not navdata", "--strict-markers"]`). You are invoked
+**manually, on the user's machine, with the simulator already running**. Nothing you do is ever
+wired into a workflow.
 
 ### 2. You mutate a live simulator — so you always restore it
 

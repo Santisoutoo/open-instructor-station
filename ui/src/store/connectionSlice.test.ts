@@ -7,7 +7,7 @@ import reducer, {
   initialConnectionState,
 } from './connectionSlice';
 import { telemetryFrameReceived } from '../features/telemetry/telemetrySlice';
-import type { AircraftState } from '../api/types';
+import type { AircraftState } from '../api/models';
 
 const SAMPLE: AircraftState = {
   latitude: 47.44712,
