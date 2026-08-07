@@ -2,6 +2,7 @@ import { combineReducers, configureStore } from '@reduxjs/toolkit';
 import { setupListeners } from '@reduxjs/toolkit/query';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import { instructorApi } from '../api/instructorApi';
+import aircraftReducer from '../features/aircraft/aircraftSlice';
 import telemetryReducer from '../features/telemetry/telemetrySlice';
 import connectionReducer from './connectionSlice';
 
@@ -13,6 +14,7 @@ import connectionReducer from './connectionSlice';
 const reducerMap = {
   connection: connectionReducer,
   telemetry: telemetryReducer,
+  aircraft: aircraftReducer,
   [instructorApi.reducerPath]: instructorApi.reducer,
 };
 
