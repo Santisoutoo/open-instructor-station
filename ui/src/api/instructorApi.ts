@@ -1,5 +1,12 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { AircraftState, Capabilities, HealthResponse } from './types';
+import type {
+  AircraftControlManifest,
+  AircraftSetup,
+  AircraftSetupResult,
+  AircraftState,
+  Capabilities,
+  HealthResponse,
+} from './models';
 
 /**
  * Server state lives in RTK Query, never in a hand-rolled slice (CLAUDE.md: RTK Query for
@@ -9,7 +16,7 @@ import type { AircraftState, Capabilities, HealthResponse } from './types';
 export const instructorApi = createApi({
   reducerPath: 'instructorApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/api' }),
-  tagTypes: ['Health', 'Capabilities', 'AircraftState'],
+  tagTypes: ['Health', 'Capabilities', 'AircraftState', 'AircraftControls'],
   endpoints: (builder) => ({
     getHealth: builder.query<HealthResponse, void>({
       query: () => 'health',
@@ -28,8 +35,33 @@ export const instructorApi = createApi({
       query: () => 'state',
       providesTags: ['AircraftState'],
     }),
+    /**
+     * Which Aircraft Control panel controls may be written, and why the rest may not.
+     *
+     * Strictly more informative than `getCapabilities`: a capability flag says the adapter
+     * can drive an autopilot, this says whether the server has a field to carry the
+     * request. The panel disables on this, so a failed fetch must fail *closed* — see
+     * `features/aircraft/controls.ts`.
+     */
+    getAircraftControls: builder.query<AircraftControlManifest, void>({
+      query: () => 'aircraft/controls',
+      providesTags: ['AircraftControls'],
+    }),
+    /**
+     * Write the aircraft configuration. Idempotent: the body carries target values, not
+     * deltas. Invalidates the snapshot so a panel not watching the socket still refreshes.
+     */
+    applyAircraftSetup: builder.mutation<AircraftSetupResult, AircraftSetup>({
+      query: (setup) => ({ url: 'aircraft/setup', method: 'POST', body: setup }),
+      invalidatesTags: ['AircraftState'],
+    }),
   }),
 });
 
-export const { useGetHealthQuery, useGetCapabilitiesQuery, useGetStateQuery } =
-  instructorApi;
+export const {
+  useGetHealthQuery,
+  useGetCapabilitiesQuery,
+  useGetStateQuery,
+  useGetAircraftControlsQuery,
+  useApplyAircraftSetupMutation,
+} = instructorApi;

@@ -3,7 +3,7 @@ import { Provider } from 'react-redux';
 import { describe, expect, it } from 'vitest';
 import { TelemetryPanel } from './TelemetryPanel';
 import { setupStore, type RootState } from '../store';
-import type { AircraftState } from '../api/types';
+import type { AircraftState } from '../api/models';
 
 const CRUISE: AircraftState = {
   latitude: 47.447123_4,

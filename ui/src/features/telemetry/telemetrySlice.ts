@@ -1,5 +1,5 @@
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { AircraftState } from '../../api/types';
+import type { AircraftState } from '../../api/models';
 
 export interface TelemetryState {
   /** Most recent validated frame, or `null` before the first one arrives. */
