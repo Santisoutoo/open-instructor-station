@@ -8,14 +8,18 @@ are indicated knots unless stated otherwise.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 __all__ = [
     "AircraftSetup",
     "AircraftState",
     "GeoPosition",
+    "Ils",
     "LightsSetup",
     "Runway",
+    "RunwaySurface",
 ]
 
 
@@ -114,6 +118,86 @@ class AircraftSetup(BaseModel):
     )
 
 
+RunwaySurface = Literal[
+    "asphalt",
+    "concrete",
+    "grass",
+    "dirt",
+    "gravel",
+    "dry_lakebed",
+    "water",
+    "snow",
+    "transparent",
+    "unknown",
+]
+
+
+class Ils(BaseModel):
+    """The ILS serving one runway end, ready to feed :class:`AircraftSetup`.
+
+    Every field is in the unit and the reference frame the consumer needs, so
+    tuning an approach is assignment and never arithmetic:
+    :attr:`frequency_khz` goes straight into ``AircraftSetup.ils_freq_khz``,
+    :attr:`localizer_mag_deg` into ``AircraftSetup.obs1_deg`` (an OBS course is
+    **magnetic**), and :attr:`glideslope_deg` into
+    ``core.geodesy.glideslope_altitude_ft``.
+
+    **Both localizer bearings are carried because the source publishes both.**
+    ``earth_nav.dat`` packs the true bearing and the magnetic front course into
+    a single field, and neither is derivable from the other without a world
+    magnetic model. The true one is what geometry is computed in; the magnetic
+    one is what the aircraft's OBS and the approach plate are numbered in.
+
+    This model lives here rather than in ``core/navdata/`` because
+    :class:`Runway` carries one: putting it the other way round would make
+    ``core/models.py`` and ``core/navdata/models.py`` import each other.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    airport_icao: str = Field(min_length=2, max_length=7, description='ICAO code, e.g. "LEMD".')
+    runway_ident: str = Field(
+        min_length=1, max_length=3, description='Runway served, e.g. "18L" — never "RW18L".'
+    )
+    localizer_ident: str = Field(description='Localizer identifier, e.g. "IML".')
+    frequency_khz: int = Field(
+        ge=108_000,
+        le=111_950,
+        description="Localizer frequency in kHz, the same unit as AircraftSetup.ils_freq_khz.",
+    )
+    localizer_position: GeoPosition = Field(description="Localizer antenna position.")
+    localizer_true_deg: float = Field(
+        ge=0.0, le=360.0, description="Localizer front course, TRUE degrees."
+    )
+    localizer_mag_deg: float = Field(
+        ge=0.0,
+        le=360.0,
+        description=(
+            "Localizer front course, MAGNETIC degrees — the published value, and what "
+            "AircraftSetup.obs1_deg expects."
+        ),
+    )
+    localizer_width_deg: float | None = Field(
+        default=None, gt=0.0, description="Full course width in degrees, when published."
+    )
+    glideslope_deg: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Glidepath angle in degrees, e.g. 3.00. None when the runway has no GS.",
+    )
+    glideslope_position: GeoPosition | None = Field(
+        default=None, description="Glideslope antenna position, when the runway has one."
+    )
+    category: Literal["I", "II", "III"] | None = Field(
+        default=None,
+        description=(
+            "ILS category. None when the source publishes nothing recognisable — an "
+            "unexpected code is never allowed to fail a parse."
+        ),
+    )
+    has_dme: bool = Field(default=False, description="True when a DME is collocated.")
+
+
 class Runway(BaseModel):
     """A single runway end, as read from the user's own navdata.
 
@@ -192,5 +276,29 @@ class Runway(BaseModel):
         description=(
             "Landing distance available in metres, i.e. length_m minus displaced_threshold_m. "
             "None when the displacement is unknown."
+        ),
+    )
+    opposite_ident: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=3,
+        description='The other end of the same strip, e.g. "36R" for "18L".',
+    )
+    width_m: float | None = Field(default=None, gt=0.0, description="Pavement width in metres.")
+    surface: RunwaySurface | None = Field(
+        default=None, description="Surface type, or None when the source does not publish one."
+    )
+    threshold_crossing_height_ft: float | None = Field(
+        default=None,
+        ge=0.0,
+        description="Height of the glidepath over the threshold, in feet AGL, when published.",
+    )
+    ils: Ils | None = Field(
+        default=None,
+        description=(
+            "The ILS serving this end, when there is one. Carried on the runway so that placing "
+            "an aircraft on an ILS final is a single lookup: threshold, bearing, elevation, "
+            "frequency and OBS course arrive together, and no caller can place an aircraft on an "
+            "approach while forgetting to tune it."
         ),
     )
