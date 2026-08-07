@@ -23,8 +23,17 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=5.0",
-    "ruff>=0.7",
-    "mypy>=1.13",
+    # Ruff and mypy are pinned to a minor range ON PURPOSE. Both redefine what
+    # "correct" means between minor releases: ruff 0.16 started formatting Python
+    # code blocks inside Markdown and failed `lint-py` on a prose-only PR, and mypy
+    # adds new diagnostics under `strict = true` (an unbounded `mypy>=1.13` had
+    # already let the 2.x major in unnoticed). Unpinned linters make the required
+    # checks non-reproducible — the same commit passes today and fails tomorrow —
+    # and a red run nobody caused erodes the rule that CI is never bypassed.
+    # Bump these deliberately, as their own reviewable change, and re-run
+    # `ruff format --check .` (Markdown included) in the same commit.
+    "ruff>=0.16.1,<0.17",
+    "mypy>=2.3,<2.4",
     "types-pyyaml>=6.0",
     # Packaging: builds the double-clickable executable from packaging/*.spec.
     "pyinstaller>=6.11",
@@ -77,9 +86,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
-# Default run excludes tests that need a live simulator. `pytest -m sim`
-# overrides this (command-line -m wins over addopts).
-addopts = ["-m", "not sim", "--strict-markers"]
+# The default run excludes everything CI can never have: a live simulator, and the
+# user's own X-Plane navdata install (hard rule 4 — navdata is never redistributed,
+# so it cannot be committed as a fixture either). An explicit command-line -m wins
+# over addopts, so `pytest -m sim` and `pytest -m navdata` remain the escape hatches.
+addopts = ["-m", "not sim and not navdata", "--strict-markers"]
 markers = [
     "sim: requires a live simulator (X-Plane Web API on localhost:8086). Never runs in CI.",
+    "navdata: requires the user's own X-Plane navdata installation. Never runs in CI.",
 ]

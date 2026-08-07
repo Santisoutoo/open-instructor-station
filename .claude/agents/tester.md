@@ -19,8 +19,9 @@ tests. The testing rules it sets:
 - The `SimAdapter` contract suite (`tests/adapters/test_contract.py`) is **parametrised over
   adapters**: it runs against the Fake in CI, and against the real X-Plane adapter under
   `-m sim`. **Every new capability added to the interface must extend this suite.**
-- Tests needing a live sim are marked `@pytest.mark.sim` and are **excluded by default**
-  (`addopts = ["-m", "not sim", "--strict-markers"]` in `pyproject.toml`).
+- Tests needing a live sim are marked `@pytest.mark.sim`, and tests needing the user's own
+  X-Plane navdata install are marked `@pytest.mark.navdata`. Both are **excluded by default**
+  (`addopts = ["-m", "not sim and not navdata", "--strict-markers"]` in `pyproject.toml`).
 - **Never skip or xfail a test to make a run green. Fix the code or report the failure.**
 
 And the rules that shape what your fixtures may contain:

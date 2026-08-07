@@ -9,10 +9,16 @@ name: CI
 # check literally named `test-py`. Configure branch protection / the ruleset with those
 # expanded names (or all four of them) rather than the bare job id.
 #
-# NOTE ON SIMULATORS: CI never needs a simulator. Everything here runs against
-# FakeSimAdapter. Sim tests are marked `@pytest.mark.sim` and are already excluded by
-# the pyproject addopts (`-m "not sim"`). Do not add X-Plane, MSFS or any simulator to
-# any job in this file.
+# NOTE ON SIMULATORS AND NAVDATA: CI never needs a simulator, and it never has the
+# user's navdata install. Everything here runs against FakeSimAdapter and committed
+# fixtures. Those tests are marked `@pytest.mark.sim` / `@pytest.mark.navdata` and are
+# already excluded by the pyproject addopts (`-m "not sim and not navdata"`). Do not
+# add X-Plane, MSFS or any simulator to any job in this file, and do not try to supply
+# a navdata tree — hard rule 4 forbids committing one.
+#
+# NOTE ON TOOL VERSIONS: ruff and mypy are pinned to a minor range in pyproject.toml
+# so `pip install -e .[dev]` is reproducible. Do not install or upgrade them ad hoc in
+# a step here — that would reintroduce the drift the pin exists to stop.
 
 on:
   push:
@@ -81,8 +87,9 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e .[dev]
 
-      # Sim tests are excluded by the pyproject addopts (-m "not sim").
-      # This runs unit + contract tests against FakeSimAdapter only.
+      # Sim and navdata tests are excluded by the pyproject addopts
+      # (-m "not sim and not navdata"). This runs unit + contract tests against
+      # FakeSimAdapter and committed fixtures only.
       - name: Pytest
         run: pytest --cov
 
