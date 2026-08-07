@@ -2,10 +2,9 @@
 
 React + TypeScript (strict) + Redux Toolkit front end for the instructor station.
 
-This is the **Phase-0 foundation**: a production-shaped shell that proves the stack, the state
-management and the live WebSocket link. It is not the full instructor UI — the position,
-weather, failure, traffic and map panels arrive in later phases and each plugs into
-`App.tsx` without touching the others.
+The Phase-0 shell plus the **Aircraft Control panel** (feature spec manager 6). The position,
+weather, failure, traffic and map panels arrive in later phases and each plugs into `App.tsx`
+without touching the others.
 
 ## Requirements
 
@@ -53,12 +52,14 @@ keep working unchanged.
 
 ### Endpoints consumed
 
-| Call                    | Consumer                                                           |
-| ----------------------- | ------------------------------------------------------------------ |
-| `GET /api/health`       | RTK Query, polled every 10 s — feeds the adapter name in the badge |
-| `GET /api/capabilities` | RTK Query — drives `CapabilityList`                                |
-| `GET /api/state`        | RTK Query — one-shot snapshot endpoint                             |
-| `WS /ws/state`          | `useTelemetrySocket` — ~4 Hz `AircraftState` frames                |
+| Call                          | Consumer                                                            |
+| ----------------------------- | ------------------------------------------------------------------- |
+| `GET /api/health`             | RTK Query, polled every 10 s — feeds the adapter name in the badge  |
+| `GET /api/capabilities`       | RTK Query — drives `CapabilityList`                                 |
+| `GET /api/state`              | RTK Query — one-shot snapshot endpoint                              |
+| `GET /api/aircraft/controls`  | RTK Query — decides what the Aircraft Control panel may enable       |
+| `POST /api/aircraft/setup`    | RTK Query mutation — every write the Aircraft Control panel makes    |
+| `WS /ws/state`                | `useTelemetrySocket` — ~4 Hz `AircraftState` frames                 |
 
 The WebSocket hook validates every frame at runtime (`isAircraftState`), drops malformed ones
 instead of rendering `NaN`, and reconnects for ever with capped exponential backoff
@@ -73,10 +74,13 @@ Redux Toolkit only — no plain Redux, no Zustand, no Context for global state.
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
 | `store/connectionSlice.ts`             | Link status (`idle`/`connecting`/`connected`/`error`), last error, last update timestamp, reconnect attempts |
 | `features/telemetry/telemetrySlice.ts` | Latest `AircraftState` + frame count                                                                         |
+| `features/aircraft/aircraftSlice.ts`   | Optimistic pending/confirmed write state per Aircraft Control widget                                         |
 | `api/instructorApi.ts`                 | **All server state**, via RTK Query                                                                          |
 
-`connectionSlice` derives `lastUpdateAt` from `telemetryFrameReceived` in `extraReducers`, so
-the freshness stamp and the telemetry feed can never disagree.
+Two slices derive from the telemetry feed in `extraReducers` rather than being dispatched
+separately, so they can never disagree with it: `connectionSlice` takes `lastUpdateAt` from
+`telemetryFrameReceived`, and `aircraftSlice` resets itself on `telemetryCleared` — a "gear
+down" the station commanded before losing the link is no longer evidence of anything.
 
 Typed hooks (`useAppDispatch`, `useAppSelector`, `useAppStore`) live in `store/index.ts`.
 `setupStore(preloadedState?)` is a factory so tests get an isolated store.
@@ -86,35 +90,65 @@ Typed hooks (`useAppDispatch`, `useAppSelector`, `useAppStore`) live in `store/i
 > `middleware` callback being used together; the combined-reducer form fails to infer the
 > middleware tuple.
 
-## Generated API types — Phase-0 caveat
+## Generated API types
 
 CLAUDE.md is explicit: _"the UI client is generated from FastAPI's OpenAPI schema. **Never
-hand-write API types** in the frontend."_
+hand-write API types** in the frontend."_ The Phase-0 placeholder (`src/api/types.ts`) is gone;
+this is now literally true.
 
-`npm run generate:api` is wired up for exactly that:
-
+```powershell
+.\.venv\Scripts\python.exe -m server   # from the repo root, in another terminal
+cd ui; npm run generate:api            # -> src/api/schema.d.ts
 ```
-openapi-typescript http://localhost:8000/openapi.json -o src/api/schema.d.ts
-```
 
-**It cannot run yet.** The FastAPI server is being built in parallel and nothing answers on
-`:8000`, so there is no schema to generate from. As a stop-gap, `src/api/types.ts` holds a
-small hand-written mirror of the agreed Phase-0 contract, prominently marked with a
-`TODO(phase-0)` banner. It is a placeholder, not a pattern to copy.
+`src/api/schema.d.ts` is generated output — excluded from ESLint and Prettier, never edited by
+hand. `src/api/models.ts` sits on top of it and contains **nothing but aliases** into it
+(`type AircraftState = components['schemas']['AircraftState']`), so a backend change surfaces
+as a TypeScript error rather than a runtime surprise.
 
-**Replace it as soon as the backend answers:**
+Two things deliberately did **not** move into the generated types:
 
-1. Start the server, then `npm run generate:api` — writes `src/api/schema.d.ts`.
-2. Re-point `src/api/instructorApi.ts` at the generated schema:
-   ```ts
-   import type { components } from './schema';
-   type AircraftState = components['schemas']['AircraftState'];
-   ```
-3. Delete `src/api/types.ts`, keeping the `isAircraftState` runtime guard (a compile-time
-   type says nothing about what actually arrives over a socket) and the `CAPABILITY_LABELS`
-   display table next to the component that uses them.
+- **`isAircraftState`** (in `src/api/models.ts`) — a runtime guard for WebSocket frames. A
+  compile-time type says nothing about what actually arrives over a socket, so every frame is
+  validated and a malformed one is dropped rather than rendered as `NaN`.
+- **Display tables** — `CAPABILITY_LABELS` in `CapabilityList.tsx` and `CONTROL_DISPLAY` in
+  `features/aircraft/controls.ts`. Wording, ordering and widget choice are not API types. Both
+  are keyed by a generated union (`CapabilityKey`, `ControlId`), so a flag or control renamed
+  on the server breaks them at compile time.
 
-`src/api/schema.d.ts` is excluded from ESLint and Prettier — generated files are not edited.
+**Re-run `npm run generate:api` whenever a server model changes**, and commit the result.
+
+## Aircraft Control panel
+
+`features/aircraft/` — feature spec manager 6. Reads and writes take different routes on
+purpose: the live picture arrives on `/ws/state`, every write is an idempotent
+`POST /api/aircraft/setup`.
+
+| File                       | Role                                                                       |
+| -------------------------- | -------------------------------------------------------------------------- |
+| `AircraftControlPanel.tsx` | The panel: sections, capability gating, optimistic write orchestration      |
+| `ControlWidgets.tsx`       | The three widgets — slider, stepper, toggle                                 |
+| `controls.ts`              | Display catalogue and the fail-closed `controlAvailability` resolver        |
+| `aircraftSlice.ts`         | Pending/confirmed bookkeeping per control                                   |
+
+Three behaviours worth knowing before changing anything here:
+
+- **Gating comes from `GET /api/aircraft/controls`, not from `GET /api/capabilities`.** A
+  capability flag says the adapter can drive an autopilot; the manifest says whether the server
+  has an `AircraftSetup` field to carry the request. Both must hold. It fails closed exactly
+  like `CapabilityList`: loading, unreachable, or unlisted all mean *disabled*, and the
+  server's own sentence is rendered next to the control.
+- **Nothing commits on drag or on keystroke.** Sliders write on release; steppers write when
+  "Set" is pressed. There is a student flying the aeroplane.
+- **A stepper's input is never seeded from the live feed.** Altitude, speed, heading and
+  vertical speed arrive at ~4 Hz; a self-synchronising field would overwrite whatever the
+  instructor was halfway through typing. The readout tracks the aircraft, the field tracks the
+  intent, and they meet only when "Set" is pressed.
+
+The autopilot block and the elevator trim currently render **disabled with a stated reason**:
+`AircraftSetup` in `core/models.py` has no autopilot or trim fields yet, so no write path
+exists. The server reports that per control, and adding the fields upstream turns them on
+without touching `server/app.py`.
 
 ## Capabilities, not failures
 
@@ -134,18 +168,29 @@ src/
     index.ts                        configureStore, RootState/AppDispatch, typed hooks
     connectionSlice.ts              Link status
   api/
-    instructorApi.ts                RTK Query: getHealth / getCapabilities / getState
-    types.ts                        TODO(phase-0) placeholder — see above
+    schema.d.ts                     GENERATED from the OpenAPI schema — never edited
+    models.ts                       Aliases into schema.d.ts + the isAircraftState guard
+    instructorApi.ts                RTK Query endpoints
   features/telemetry/
     telemetrySlice.ts               Latest AircraftState
     useTelemetrySocket.ts           WebSocket + reconnect backoff
     format.ts                       Display formatting (locale pinned to en-US)
+  features/aircraft/
+    AircraftControlPanel.tsx        Manager 6 — the live control panel
+    ControlWidgets.tsx              Slider / stepper / toggle
+    controls.ts                     Display catalogue + fail-closed availability
+    aircraftSlice.ts                Pending/confirmed write state
   components/
     ConnectionBadge.tsx
     TelemetryPanel.tsx
     CapabilityList.tsx
-  test/setup.ts                     jest-dom matchers + RTL cleanup
+  test/setup.ts                     jest-dom matchers, RTL cleanup, relative-URL Request
 ```
+
+`test/setup.ts` also restores browser behaviour that jsdom does not provide: jsdom ships no
+fetch stack, so the tests inherit Node's, whose `Request` cannot resolve a relative URL. Since
+the whole app talks in relative paths on purpose, every RTK Query test would otherwise fail for
+a reason that cannot happen in a browser.
 
 ## Styling
 
