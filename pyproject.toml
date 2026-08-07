@@ -45,6 +45,8 @@ instructor-station = "server.__main__:main"
 [tool.setuptools]
 packages = [
     "core",
+    "core.navdata",
+    "core.navdata.xplane_native",
     "adapters",
     "adapters.fake",
     "adapters.xplane",

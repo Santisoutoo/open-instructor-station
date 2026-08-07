@@ -34,6 +34,9 @@ navdata_cache/
 config.local.toml
 reports/
 
+# --- Agent worktrees: parallel feature branches, never part of a commit ---
+.claude/worktrees/
+
 # --- OS / editors ---
 .DS_Store
 Thumbs.db
