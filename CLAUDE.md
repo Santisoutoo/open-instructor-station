@@ -154,6 +154,23 @@ per-task decision.
   5. Clear the crash state (`sim/operation/fix_all_systems`) — X-Plane reads a teleport as an
      impact and renders the aircraft wrecked otherwise. Skipping this ends a training session.
 
+- **The freeze is not just for position — attitude needs it too.** Writing
+  `psi`/`theta`/`phi` into a *running* flight model does not stick: measured against X-Plane
+  12.4.3 at LEMD, a commanded heading came out 7° off in the mild case and 164° off in the bad
+  one, and an `apply_setup` call was observed leaving the aircraft **inverted on the runway**
+  (`roll = -180`). The identical writes with `override_planepath` engaged land exactly, and read
+  back within **0.09°** after release. Any residual pitch/roll after the release is the aircraft
+  settling onto its gear — that is physically correct, do not tune it away.
+  `set_position` already does this; `apply_setup` does not (issue #37), so until that lands the
+  live test suite freezes explicitly via `frozen_flight_model` in `tests/conftest.py`.
+  **The release always goes in a `finally`** — a leaked override freezes the user's aircraft.
+
+- **`set_position` preserves the aircraft's current speed**, which is the wrong default for a
+  placement. Putting a parked aircraft on a 10 NM final hands it 0 kt and it falls out of the
+  sky — observed, having flown into terrain with perfect geometry (0.2 m placement error,
+  10.000 NM from the threshold, on the extended centreline). A placement must command an
+  approach speed as part of the setup, not leave it to the caller.
+
   **Never trust `lat_ref`/`lon_ref`.** They advertised an origin 200 km from the real one on the
   validation run. The local frame origin is *measured* from the aircraft, which is known in both
   coordinate systems at once — `core.local_frame.origin_from_observation`. The world→local
