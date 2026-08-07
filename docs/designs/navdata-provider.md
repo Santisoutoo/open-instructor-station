@@ -42,6 +42,10 @@ this document keeps them apart on purpose (§2).
 | D10 | Not-found returns `None` / `[]`. Exceptions are for *broken*, never for *absent*. | §4.6 |
 | D11 | Every directional field is suffixed `_true_deg` or `_mag_deg`. The provider **never converts** between the two. | §5.1 |
 | D12 | The real file parser **runs in CI** against a committed hand-written fixture tree. Only the run against the user's own install is excluded. | §11 |
+| D13 | Models that cross the navdata↔sim seam (`Runway`, `Ils`, `RunwaySurface`) live in `core/models.py`. **`core/navdata/models.py` imports from `core/models.py`, never the reverse.** | §5.0 |
+| D14 | The finished cache is `journal_mode = DELETE` and every reader opens it `mode=ro&immutable=1`. **Never WAL.** | §6.5 |
+| D15 | A published cache file is **never overwritten**. Each build writes a new generation and readers reopen on an epoch bump. | §8.4 |
+| D16 | Cancellation is an explicit `threading.Event`, not a return value from the progress callback. | §3, §7.3 |
 
 ---
 
@@ -87,10 +91,14 @@ the `1200`/`1150`/`1140`/`1100` header numbers in the files themselves), not a s
 distinction is not a word game: a user can point the provider at an X-Plane data tree while flying
 MSFS, and that works. BGL is likewise a format, and `core/navdata/msfs_bgl/` will sit beside it.
 
-**Enforced, not aspired to.** `tests/core/test_core_boundaries.py` walks the import graph of every
-module under `core/` and fails on `httpx`, `websockets`, `SimConnect`, `adapters.*`, or any
-dataref-shaped string literal (`sim/`, `laminar/`). It exists today for `core/`; this design adds
-the `core/navdata/` → `core/sim_adapter.py` edge to its deny-list.
+**Enforced, not aspired to.** `tests/core/navdata/test_core_boundaries.py` walks the import graph
+of every module under `core/` and fails on `httpx`, `websockets`, `SimConnect`, `adapters.*`, or
+any dataref-shaped string literal (`sim/`, `laminar/`), plus the two edges D13 forbids (§11.6).
+
+**That file does not exist yet** — the rule it encodes has held so far by review alone. It is
+created by the foundation work of this design, before the parallel tracks branch, precisely
+because `core/navdata/` is the first part of `core/` big enough for the rule to be broken by
+accident rather than by intent.
 
 ---
 
@@ -117,26 +125,50 @@ The reasoning, in order of weight:
    async generators in the fixture provider.
 
 **The one exception: the index build.** It takes 60–120 seconds on first run (§7.3) and must
-report progress. It is exposed as a synchronous method that takes a progress callback:
+report progress, and must be interruptible. It is exposed as a synchronous method taking a
+progress callback and a cancellation event:
 
 ```python
 def ensure_index(
     self,
     *,
     progress: Callable[[IndexProgress], None] | None = None,
+    cancel: threading.Event | None = None,
     force: bool = False,
 ) -> NavdataStatus: ...
 ```
 
+**D16 — cancellation is the `Event`, not the callback's return value.** The callback returns
+`None` and therefore cannot signal anything; a design that says "the progress callback may signal
+stop" while typing it `-> None` is specifying something the signature forbids. The build checks
+`cancel.is_set()` once per insert batch (10 000 rows, §6.5) and once per progress emission — a
+sub-second reaction with no per-row cost. On cancellation it deletes the partial `.tmp` file and
+returns the **previous** status unchanged; a cancelled build never publishes and never degrades
+what was already there. `threading.Event` is the right type because the build runs in a worker
+thread and the canceller (`asyncio` shutdown, or a second `rebuild` request) does not.
+
 `server/` runs it once at startup in a worker thread (`asyncio.to_thread`), and the callback
 pushes `IndexProgress` frames onto the **existing** WebSocket state pump. The provider itself
-stays synchronous and knows nothing about event loops, WebSockets or FastAPI.
+stays synchronous and knows nothing about event loops, WebSockets or FastAPI — including how the
+frames cross back into the loop, which is `server/`'s problem and is specified in §12.
+
+**Progress emission is throttled at the source.** `apt.dat` is 12.35 M lines; a frame per line,
+or per 1 000 lines, is a denial of service on the WebSocket for a bar that moves in pixels. The
+build emits **at most one `IndexProgress` per 0.5 s or per 1% of overall `fraction`, whichever
+comes first**, plus one unconditional frame at every stage boundary so no stage is invisible.
 
 **Thread-safety, since the threadpool implies it.** `sqlite3` connections must not cross threads.
 The provider holds a `threading.local()` with one **read-only** connection per thread, opened as
-`sqlite3.connect(f"file:{path}?mode=ro", uri=True)` with `row_factory = sqlite3.Row`. The
-database is built once in WAL mode and thereafter never written by a reader. This is stated here
-because discovering it as an intermittent Windows CI failure is the expensive way to learn it.
+
+```python
+sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)
+```
+
+with `row_factory = sqlite3.Row`. `immutable=1` is load-bearing, not an optimisation — see D14
+in §6.5 — and it is only sound because a published cache file is never written and never replaced
+in place (D15, §8.4). Each thread-local connection also carries the **epoch** it was opened at and
+is reopened when the provider's epoch has moved on (§8.4). This is all stated here because
+discovering it as an intermittent Windows CI failure is the expensive way to learn it.
 
 ---
 
@@ -162,16 +194,20 @@ class NavdataProvider(Protocol):
     @property
     def name(self) -> str: ...
 
-    # Cheap. Never raises. The navdata analogue of GET /api/capabilities:
-    # the UI gates on this, exactly as it gates on Capabilities.
+    # Cheap. Never raises. Returns an immutable snapshot (§4.5), so it is safe
+    # to call from any thread while a build is running. The navdata analogue of
+    # GET /api/capabilities: the UI gates on this, exactly as it gates on
+    # Capabilities.
     def status(self) -> NavdataStatus: ...
 
     # Build the index if the cache key does not match (or `force`).
     # Idempotent. Long-running. Safe to call from a worker thread.
+    # `cancel` is checked per insert batch; a cancelled build publishes nothing.
     def ensure_index(
         self,
         *,
         progress: Callable[[IndexProgress], None] | None = None,
+        cancel: threading.Event | None = None,
         force: bool = False,
     ) -> NavdataStatus: ...
 
@@ -328,6 +364,16 @@ class IndexProgress(BaseModel, frozen=True):
 is not available and states why.** An instructor never discovers missing navdata by clicking a
 control that fails. This is the same discipline as hard rule 3, applied to a second axis.
 
+**How `status()` and the build share state — one rule, because they run in different threads.**
+The build thread **never mutates a shared status object**. It constructs a whole new frozen
+`NavdataStatus` and publishes it by assigning a single attribute on the provider; `status()` does
+nothing but return that reference. A single attribute assignment and a single attribute read are
+individually atomic under the GIL, so a reader always sees one coherent status — the one before
+the update or the one after — and never a half-written mix of `state="ready"` with a stale
+`progress`. Building the frames field-by-field into a shared mutable object would make that
+tearing possible, and it would surface as a UI that shows "ready" next to a progress bar at 62%.
+This is the *only* synchronisation the provider needs: no lock, no queue.
+
 ### 4.6 Error model
 
 Mirrors `CapabilityNotSupported` — narrow, and a caller bug rather than a runtime condition.
@@ -358,9 +404,31 @@ a bad runway row is useless.
 
 ## 5. The models
 
-Live in `core/navdata/models.py`, except `Runway` and `GeoPosition`, which stay in
-`core/models.py`. Units follow the existing convention: **the unit is in the field name and is
-never ambiguous.**
+### 5.0 Where each model lives, and the one rule that keeps it acyclic
+
+**D13 — `core/navdata/models.py` imports from `core/models.py`. Never the reverse.** One
+direction, stated once, checked by `test_core_boundaries.py` (§11.6).
+
+That rule decides the split, and it is not a matter of taste: `Runway` stays in `core/models.py`
+(D4 — `core/geodesy.py` consumes it), and §5.3 gives `Runway` an `ils: Ils | None` field. If `Ils`
+lived in `core/navdata/models.py`, then `core/models.py` would import it from there while
+`core/navdata/models.py` imports `GeoPosition` from `core/models.py` — **a guaranteed circular
+import**, resolvable only with `TYPE_CHECKING` guards and `model_rebuild()` calls that every
+future contributor would have to remember.
+
+So:
+
+| Module | Holds | Why |
+|---|---|---|
+| `core/models.py` | `GeoPosition`, `AircraftState`, `AircraftSetup`, `LightsSetup`, **`Runway`**, **`Ils`**, **`RunwaySurface`** | the shared vocabulary — anything referenced by a model on the sim side of the seam |
+| `core/navdata/models.py` | `Airport`, `AirportSummary`, `Waypoint`, `Navaid`, `Fix`, `Hold`, `ParkingStand`, `Procedure`, `ProcedureLeg`, `ProcedureSummary`, `FixRef`, `AltitudeConstraint`, `SpeedConstraint`, `NavdataStatus`, `IndexProgress` | navdata-only vocabulary, nothing on the sim side refers to it |
+
+`Ils` belongs in `core/models.py` on its merits anyway, not merely to dodge a cycle: its fields
+feed `AircraftSetup` directly (`frequency_khz` → `ils_freq_khz`, `localizer_mag_deg` →
+`obs1_deg`, §5.5), which makes it exactly as shared as `Runway` is. `RunwaySurface` follows
+`Runway` for the same reason — it is a field of it.
+
+Units follow the existing convention: **the unit is in the field name and is never ambiguous.**
 
 ### 5.1 Units and reference frames
 
@@ -431,6 +499,14 @@ defaults, so:
 
 **Nothing breaks. There is no migration and no coordinated change.**
 
+**Read the current `core/models.py` before touching this — part of what this section once
+proposed has already landed.** Issue #49 pinned the threshold semantics and shipped
+`pavement_end`, `displaced_threshold_m` and `landing_distance_m`, with validation constraints and
+docstrings richer than anything reproduced here. Those three are now **existing fields**; treating
+them as additions risks re-declaring them or, worse, dropping the `ge=0.0` / `gt=0.0` bounds that
+are already enforced. The block below is annotated accordingly, and `core/models.py` — not this
+document — is the authority on the exact `Field(...)` arguments:
+
 ```python
 class Runway(BaseModel, frozen=True):
     # --- existing, unchanged ------------------------------------------------
@@ -441,22 +517,27 @@ class Runway(BaseModel, frozen=True):
     length_m: float = Field(gt=0.0)
     elevation_ft: float
 
-    # --- added, all optional with defaults ---------------------------------
-    opposite_ident: str | None = None  # "36R"
+    # --- existing since #49: threshold-vs-pavement geometry -----------------
     pavement_end: GeoPosition | None = None  # undisplaced start of pavement
-    displaced_threshold_m: float = 0.0
-    landing_distance_m: float | None = None  # length_m - displaced_threshold_m
+    displaced_threshold_m: float = Field(default=0.0, ge=0.0)
+    landing_distance_m: float | None = Field(default=None, gt=0.0)
+
+    # --- added by this design, all optional with defaults -------------------
+    opposite_ident: str | None = None  # "36R"
     width_m: float | None = None
     surface: RunwaySurface | None = None  # asphalt|concrete|grass|gravel|water|snow|…
     threshold_crossing_height_ft: float | None = None
     ils: Ils | None = None  # populated by the provider — see below
 ```
 
-**Semantics pinned down (these were ambiguous and are now not):**
+**Semantics pinned down (these were ambiguous and are now not — and #49 wrote them into the
+model's own docstring, which is where a reader will find them):**
 
 - **`threshold` is the displaced landing threshold** — the point an aircraft on final aims at, and
   therefore the correct origin for `final_approach_point()`. At LEMD 18L the pavement starts
   494 m before it; a 10 NM final anchored on the wrong point is 0.27 NM off before any other error.
+  A source that only knows the pavement end **walks it forward along the runway axis** by
+  `displaced_threshold_m`; it never assigns the pavement end to `threshold`.
 - **`length_m` is the pavement length** between the two `100`-row end coordinates in `apt.dat`
   (3497.5 m at LEMD 18L/36R), which is what `traffic_pattern_point()` wants for pattern geometry.
   Landing distance available is the separate `landing_distance_m`.
@@ -512,20 +593,23 @@ NavaidKind = Literal[
     "vor", "vor_dme", "vortac", "dme", "ndb", "tacan", "localizer", "glideslope", "gls"
 ]
 
+#: Which radio a navaid is tuned on, or None when it is not tunable at all.
+TunableRadio = Literal["nav", "adf"]
+
 
 class Navaid(BaseModel, frozen=True):
     ident: str
     kind: NavaidKind
     name: str | None = None
     position: GeoPosition
-    frequency_khz: int | None = None  # SAME UNIT as AircraftSetup.nav1_freq_khz
+    frequency_khz: int | None = None  # VHF: same unit as AircraftSetup.nav1_freq_khz
     channel: str | None = None  # TACAN channel, e.g. "112X"
     range_nm: float | None = None
     magnetic_variation_deg: float | None = None
     region_code: str | None = None
     airport_icao: str | None = None  # terminal navaids only
     runway_ident: str | None = None  # localizers / glideslopes
-    usable_for_nav_radio: bool = True  # False for GS, GLS, marker beacons
+    tunable_radio: TunableRadio | None = "nav"  # None for GS, GLS, markers
 
 
 class Ils(BaseModel, frozen=True):
@@ -539,7 +623,7 @@ class Ils(BaseModel, frozen=True):
     localizer_width_deg: float | None = None
     glideslope_deg: float | None = None  # 3.00 → feeds core.geodesy.glideslope_altitude_ft
     glideslope_position: GeoPosition | None = None
-    category: Literal["I", "II", "III"] | None = None  # from CIFP RWY:
+    category: Literal["I", "II", "III"] | None = None  # from CIFP RWY:, unrecognised → None
     has_dme: bool = False
 ```
 
@@ -548,6 +632,26 @@ class Ils(BaseModel, frozen=True):
 116.30 MHz) and NDB frequencies in kHz directly (`380`). **Both conversions happen in the
 provider**, so the Position Manager assigns `setup.nav1_freq_khz = navaid.frequency_khz` with no
 arithmetic and no chance of a factor-of-ten error reaching the radios.
+
+**`tunable_radio`, not a `usable_for_nav_radio: bool` — because an NDB is not a NAV radio.** A
+boolean collapses three genuinely different cases into two. A VOR goes in NAV1; a **glideslope**
+or marker is not tunable by the instructor at all; and an **NDB goes in the ADF**, whose band is
+190–1750 kHz. That last one is the trap: `AircraftSetup` has no `adf_freq_khz` field today, and
+an NDB's 380 kHz would fail `nav1_freq_khz`'s own `ge=108_000` validation, so a caller trusting
+`usable_for_nav_radio == True` on an NDB gets a `ValidationError` at placement time. A three-state
+field makes the correct destination readable off the model — `"nav"` → `nav1`/`nav2`/`ils`,
+`"adf"` → the ADF once `AircraftSetup` gains it, `None` → not offered — and closes the seam
+before the ADF field exists rather than after the first bug report.
+
+| Kind | `tunable_radio` |
+|---|---|
+| `vor`, `vor_dme`, `vortac`, `dme`, `tacan`, `localizer` | `"nav"` |
+| `ndb` | `"adf"` |
+| `glideslope`, `gls` | `None` |
+
+> **Follow-up for whoever owns `core/models.py`:** adding `adf_freq_khz: int | None`
+> (`ge=190, le=1750`) to `AircraftSetup` is what makes an NDB placement tunable end to end. It is
+> a pure addition behind an unchanged interface and is out of scope for this document.
 
 Likewise `Ils.glideslope_deg` feeds `core.geodesy.glideslope_altitude_ft()` directly, and
 `Ils.localizer_mag_deg` feeds `AircraftSetup.obs1_deg` directly. Every unit seam in the Phase 1
@@ -1031,11 +1135,22 @@ ORDER BY rank, longest_runway_m DESC NULLS LAST, icao
 LIMIT :limit;
 ```
 
-`icao LIKE 'LEM%'` uses the primary key index (a prefix `LIKE` with no leading wildcard is
-optimisable by SQLite). `name_norm LIKE '%madrid%'` cannot use an index and is a scan of 31 269
-rows — measured at well under a millisecond, and bounded by `LIMIT`. Ordering by
-`longest_runway_m DESC` puts LEMD above a Madrid airstrip, which is what an instructor typing
-"madrid" wants.
+**This query is a full scan of the `airport` table, and that is fine — but do not let anyone
+"optimise" it on a false premise.** It is tempting to claim `icao LIKE :q||'%'` rides the primary
+key index. It does not, for two independent reasons: SQLite's LIKE optimisation requires the
+pattern to be a literal or a bare bound parameter, and `:q||'%'` is a **concatenation
+expression**, which disqualifies it outright; and the `OR name_norm LIKE '%'||:q||'%'` disjunct
+has a leading wildcard, so no index could serve the `WHERE` clause as a whole regardless.
+
+The honest justification is the measurement: 31 269 rows, scanned in **well under a millisecond**,
+bounded by `LIMIT`, on a table that fits comfortably in the OS page cache after the first query.
+A keystroke budget is ~16 ms; this uses a few percent of it. `ix_airport_name_norm` is kept
+because it serves exact and prefix lookups elsewhere, not because it serves this scan.
+
+If a future profile ever shows this query mattering — it will not at 31 k rows — the fix is
+range predicates (`icao >= :q AND icao < :q || char(0x10FFFF)`) in a separate `UNION ALL` branch,
+not FTS5 (§6.4). Ordering by `longest_runway_m DESC` puts LEMD above a Madrid airstrip, which is
+what an instructor typing "madrid" wants.
 
 **Runways for an airport:**
 
@@ -1081,14 +1196,41 @@ whatever Python the PyInstaller bundle ships. The measured cost of not having it
 the cost of a Windows-only "no such module: rtree" is a broken build. Same argument retires FTS5
 in favour of `name_norm`.
 
-### 6.5 Write-side settings
+### 6.5 Journal mode and connection settings
 
-Build-time: `PRAGMA journal_mode = OFF`, `synchronous = OFF`, `page_size = 8192`, one transaction
-per table, `executemany` in batches of 10 000. The file is disposable, so durability guarantees
-during the build buy nothing and cost most of the build time. `PRAGMA journal_mode = WAL` and an
-`ANALYZE` are set at the end, before the atomic rename.
+**Build-time:** `PRAGMA journal_mode = OFF`, `synchronous = OFF`, `page_size = 8192`, one
+transaction per table, `executemany` in batches of 10 000. The file is disposable, so durability
+guarantees during the build buy nothing and cost most of the build time. `ANALYZE` runs at the
+end, before the atomic publish.
 
-Read-side: opened read-only (§3), `PRAGMA query_only = 1`.
+**D14 — the finished file is `journal_mode = DELETE`, and readers open it
+`mode=ro&immutable=1`. It is never WAL.** This reverses an earlier "WAL at the end" note, and the
+reversal is the point:
+
+- **WAL solves a problem this file does not have.** WAL exists so readers do not block a
+  concurrent *writer*. This database is written exactly once, by one thread, before anyone can
+  open it, and is never written again — D-rule 2 of §6.1 in one sentence. There is no concurrency
+  for WAL to buy anything back from.
+- **WAL costs correctness at publication time.** A WAL database is *three* files — `.sqlite`,
+  `-wal`, `-shm`. The atomic publish is a single `os.replace()`, which moves **one** of them. A
+  build that ends in WAL without a full checkpoint and a clean close publishes a main file whose
+  committed content is partly sitting in a sibling `-wal` that was left behind under the `.tmp`
+  name. That is a corrupt or stale cache produced by an operation the design calls atomic.
+- **WAL costs robustness at read time.** Opening a WAL database read-only requires SQLite to
+  read — and in some paths create — the `-shm` file, so it depends on write permission in the
+  cache directory and on the platform's shared-memory VFS. On a locked-down or network-mounted
+  cache directory that fails, and it fails as "unable to open database file" on a file that is
+  plainly there.
+
+`journal_mode = DELETE` leaves **one self-contained file**, which is exactly what `os.replace()`
+can move atomically. `immutable=1` then tells SQLite the file cannot change underneath it, which
+skips all locking and `-shm` handling entirely: no lock files, no write permission needed, and
+slightly faster reads. `immutable=1` is a *promise*, and §8.4 (D15) is what makes the promise
+true — a published generation is never rewritten and never replaced in place.
+
+**Read-side:** `sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True)`, plus
+`PRAGMA query_only = 1` as a second belt, one connection per thread (§3), reopened on an epoch
+bump (§8.4).
 
 ### 6.6 Verified decoding rules
 
@@ -1138,6 +1280,14 @@ Row type 2 (NDB): field 5 is already kHz.
 **`earth_fix.dat` field 4 is `ENRT` or an airport ICAO.** This is the terminal scope §5.8 depends
 on; it must be indexed, not discarded.
 
+**ILS category decoding is defensive — unrecognised means `None`, never a crash.** The CIFP
+`RWY:` category field carries `0`/`1`/`2`/`3` for no-ILS through CAT III in the common case, but
+real data also contains blanks and letter codes for LDA, IGS and localizer-only installations.
+Only `1`/`2`/`3` map to `Ils.category` `"I"`/`"II"`/`"III"`; **everything else maps to `None`**,
+which the model already permits. A closed `Literal` fed straight from a source field is a
+`ValidationError` waiting for the first unusual airport, and §4.6's rule is that one odd record
+never fails a build.
+
 **`earth_hold.dat` and `earth_awy.dat` share a fix-type enum:** `11` = waypoint/fix, `3` = VOR,
 `2` = NDB.
 
@@ -1180,17 +1330,36 @@ produce data that is 99.97% unused.
 `get_procedures()`, `get_procedure()` and `get_runways()` all funnel through one memoised parse:
 
 ```python
-@lru_cache(maxsize=64)
-def _parse_cifp(icao: str) -> CifpAirport | None: ...
+def _parse_cifp(self, icao: str) -> CifpAirport | None:
+    """Memoised on (icao, resolved_path, mtime_ns). Per instance, not per module."""
 ```
 
 - One file, ~7 KB, one full parse — approximately a millisecond. No I/O concurrency needed, which
   is another reason the interface is synchronous (§3).
-- `maxsize=64` bounds memory at a few MB of parsed objects; an instructor session never touches
-  64 airports.
-- The cache is cleared by `ensure_index(force=True)` and on any cache-key change.
+- The cache is bounded at **64 entries**, evicted least-recently-used: a few MB of parsed objects,
+  and an instructor session never touches 64 airports.
+- It is a plain `dict` behind a `threading.Lock`, held **on the provider instance**.
+- Cleared by `ensure_index(force=True)` and on any cache-key change.
 - A missing `CIFP/<ICAO>.dat` is a normal outcome (`None`), not an error: 31 269 airports have
   runways, 14 938 have procedures.
+
+**Not `@lru_cache` on a module-level function, and not on a method either.** Both are wrong here,
+for different reasons, and both are the kind of wrong that shows up as a test that passes alone
+and fails in a full run:
+
+- **A module-level `@lru_cache(maxsize=64)` keyed on `icao` alone is global mutable state keyed by
+  the wrong thing.** The contract suite (§11.1) constructs several providers in one process —
+  the fixture-tree provider and, under `-m navdata`, one on the developer's real install — and
+  `reset_navdata()` builds fresh ones between tests. Keyed on `icao`, the second provider is
+  served the **first provider's parse of a different file tree**. `ZZZZ` from the fixtures would
+  answer a query against a real install, or vice versa, with no error anywhere.
+- **`@lru_cache` on a method keeps `self` in the key**, so every provider instance ever created
+  is pinned in the cache for the process's lifetime — a leak that `reset_navdata()` cannot undo.
+
+Keying on `(icao, resolved_path, mtime_ns)` fixes both and buys a third property for free: because
+the path is the one that **won §9's per-file precedence**, and because `mtime_ns` is part of the
+key, the cache self-invalidates when a navdata update replaces that airport's file — including the
+case where the winner flips from `Resources/default data/` to `Custom Data/` between calls.
 
 **`get_runways()` triggers the lazy CIFP load.** This is a deliberate coupling: runway data is a
 merge of two sources, and returning different `elevation_ft` and `threshold` values depending on
@@ -1243,15 +1412,18 @@ project never reads. Rejecting those with a `str.startswith` on the untouched li
    fingerprint are checked (a few file `stat()` calls), and it is ready. The build recurs only
    when the user updates their navdata (~every 28 days) or their scenery.
 
-**The build is atomic, and partial results are never queryable.** It writes to
-`navdata-<cycle>-<schema>.sqlite.tmp` and `os.replace()`s it onto the final name only on success.
-Publishing a half-built index so airport search works 30 seconds sooner was considered and
+**The build is atomic, and partial results are never queryable.** It writes to a `.tmp` file,
+closes it cleanly in `journal_mode = DELETE` (§6.5) so exactly one file exists, and only then
+`os.replace()`s it onto a **fresh generation filename** that no reader currently holds open
+(§8.4). Publishing a half-built index so airport search works 30 seconds sooner was considered and
 rejected: silently incomplete navdata — an approach that exists but whose fixes have not been
 indexed yet — is far worse than a progress bar. An instructor briefing a student must be able to
 trust that "no procedures found" means there are none.
 
-The build is **cancellable** (the progress callback may signal stop) and, being cheap and
-idempotent, is simply restarted rather than resumed if it is interrupted.
+The build is **cancellable** through the `cancel` event of §3 and, being cheap and idempotent, is
+simply restarted rather than resumed if it is interrupted. A cancelled or crashed build leaves
+only an orphaned `.tmp`, which the next build removes; the previously published generation is
+untouched and stays queryable throughout.
 
 **If the build fails**, `status()` reports `error` with the reason, navdata panels stay disabled
 with that reason shown, and `POST /api/navdata/rebuild` offers a retry. The rest of the
@@ -1340,12 +1512,52 @@ write to):
 Overridable with `OIS_NAVDATA_CACHE_DIR`. `.gitignore` already excludes `*.sqlite` and
 `navdata_cache/`; §11.4 adds a test that makes that mechanical.
 
-Filename: `navdata-<cycle>-v<SCHEMA_VERSION>.sqlite`. Superseded files are deleted after a
-successful build, so the directory holds exactly one.
+#### D15 — generations: a published file is never overwritten
 
-Two processes starting at once (a packaged app plus a dev server) are handled by an exclusive
-lock file next to the cache; the loser waits for the winner's atomic rename rather than building
-in parallel.
+Filename: **`navdata-<cycle>-v<SCHEMA_VERSION>-g<N>.sqlite`**, where `N` is a monotonically
+increasing generation number — the highest `N` present in the directory, plus one.
+
+**Why the generation number exists, concretely.** `POST /api/navdata/rebuild` on an unchanged
+install — the retry after a failed build, the "my scenery looks wrong" button — produces a file
+with the same cycle and the same schema version as the one already published. Without a
+generation, the build would `os.replace()` **onto the exact path that live thread-local
+connections have open**. Two things then go wrong:
+
+- On Windows, replacing a file that other handles have open depends on the sharing flags those
+  handles were opened with; SQLite's Win32 VFS does not guarantee this succeeds, and the failure
+  mode is a `PermissionError` from the publish step of an otherwise successful two-minute build.
+- With `immutable=1` (D14), it is worse if it *succeeds*: readers have promised SQLite the bytes
+  will not change, and the file underneath them just did. That is undefined behaviour by
+  construction — wrong rows or a spurious "database disk image is malformed", not a clean error.
+
+So the build publishes to a new path and the provider bumps an in-memory **epoch** counter.
+Each thread-local connection records the epoch it was opened at; the accessor compares and, if it
+is behind, closes and reopens against the current path. Reads in flight finish against the old
+file, which is still intact on disk — an epoch bump is never observed mid-query.
+
+Superseded generations are unlinked once no connection references them, and any that survive a
+crash are swept at the next start-up, so the directory holds exactly one file in steady state. On
+Windows an unlink may fail while a handle lingers; that is logged and retried at the next
+start-up, never surfaced to the user — a stale file wastes disk, it does not break anything.
+
+#### Two processes, one build
+
+A packaged app and a dev server starting together must not both spend two minutes building.
+Serialise them with an **advisory lock held on an open file handle** — `msvcrt.locking()` on
+Windows, `fcntl.flock()` elsewhere — not with a "does `build.lock` exist?" check.
+
+**The distinction is the whole point: an OS-held lock dies with the process.** A lock file whose
+mere existence means "locked" is orphaned by exactly the events most likely to interrupt a
+two-minute build — a crash, a power cut, a `SIGKILL` — and every subsequent start then waits
+forever on a holder that no longer exists. Users cannot diagnose that, and "delete this file from
+your AppData folder" is not an acceptable recovery step. A kernel-held lock is released by the
+kernel when the holder dies, so the orphan case does not exist.
+
+The loser waits for the lock with a **timeout (180 s**, comfortably above the 60–120 s build). On
+acquiring it, it re-checks the cache key first: the winner has usually just published, so the
+loser adopts that generation and builds nothing. If the timeout expires it does not build in
+parallel — it reports `status().state == "error"` with a reason naming the other process, and
+`POST /api/navdata/rebuild` remains available.
 
 ---
 
@@ -1468,8 +1680,13 @@ X-Plane-format assumptions impossible to smuggle into `core/`.
 
 **A new marker is required.** `pyproject.toml` currently has `addopts = ["-m", "not sim", …]`; it
 becomes `-m "not sim and not navdata"`, with `navdata: requires the developer's own X-Plane
-installation. Never runs in CI.` added to `markers`. That is the only change this design asks of
-an existing file besides the additive `Runway` fields.
+installation. Never runs in CI.` added to `markers`.
+
+That marker, plus the additive `Runway` fields and the `Ils` / `RunwaySurface` models beside them
+(§5.0), and one added deny-rule in `test_core_boundaries.py` (§11.6), are the **complete** list of
+changes this design asks of files that already exist. Everything else it specifies is new files
+under `core/navdata/`, `server/routers/` and `ui/src/features/navdata/`. Keeping that list short
+and enumerated is what lets the four tracks of §13 start on the same day.
 
 ### 11.2 The fixture tree
 
@@ -1558,11 +1775,38 @@ wrong (§6.6):
 ### 11.6 Boundary tests
 
 - `test_core_boundaries.py` — `core/navdata/` imports nothing from `core/sim_adapter.py`,
-  `adapters.*`, `httpx`, `websockets`, `SimConnect`.
+  `adapters.*`, `httpx`, `websockets`, `SimConnect`, **and `core/models.py` imports nothing from
+  `core/navdata/`** (D13). The last one is a one-line addition to the existing import-graph walk
+  and it is what keeps the `Runway.ils` field from reintroducing a cycle: the failure it prevents
+  is not subtle at runtime, but it is exactly the sort of thing a contributor "fixes" with a
+  `TYPE_CHECKING` guard instead of moving the model back where it belongs.
 - `test_provider_adapter_independence.py` — a server built with `OIS_ADAPTER=fake` and
   `OIS_NAVDATA=xplane_native(fixture_root)` serves navdata correctly, and one built with
   `OIS_ADAPTER=fake` and `OIS_NAVDATA=in_memory` serves the fixture provider. The two axes are
   independently selectable, proven rather than asserted.
+
+### 11.7 Cache-lifecycle tests
+
+The §6.5 / §8.4 rules are invisible in normal operation and expensive to debug when violated, so
+each gets a cheap test against the fixture tree:
+
+- **Journal mode.** After a build, the published file's `PRAGMA journal_mode` is `delete`, and no
+  `-wal` or `-shm` sibling exists in the cache directory (D14).
+- **Generations.** Two consecutive `ensure_index(force=True)` calls on an unchanged fixture tree
+  produce **two different filenames**, and a connection opened before the second build still
+  answers queries afterwards (D15). This is the test that would have caught the in-place
+  `os.replace()`, and it fails loudly on Windows, which is where the bug lives.
+- **Epoch reopen.** A query issued after a forced rebuild observes the new generation — i.e. a row
+  added to the fixture tree between builds is visible without recreating the provider.
+- **Cancellation.** `ensure_index(cancel=already_set_event)` publishes nothing, leaves the
+  previous status intact, and leaves no `.tmp` behind (D16).
+- **CIFP cache keying.** Two providers over two different fixture roots, alive in one process,
+  each return **their own** `ZZZZ` procedures — the regression test for the module-level
+  `@lru_cache` rejected in §7.2.
+
+Add to the golden-value tests of §11.5: `tunable_radio` for one navaid of each kind (`"nav"` for
+a VOR, `"adf"` for an NDB, `None` for a glideslope), and an ILS category field carrying an
+unrecognised code, asserting `category is None` rather than a raised `ValidationError`.
 
 ---
 
@@ -1586,9 +1830,35 @@ Listed so the UI track can generate its client and start immediately. All handle
 | `GET` | `/api/navdata/holds?fix_ident=&airport_icao=` |
 
 `IndexProgress` frames go out on the **existing** WebSocket alongside live state — no second
-socket. Not-found returns `404`; `NavdataUnavailable` returns `409` with `status()` in the body, so
-a UI that raced the build gets the state rather than a stack trace. The UI is expected to gate on
-`GET /api/navdata/status`, exactly as it gates on `GET /api/capabilities`.
+socket. The UI is expected to gate on `GET /api/navdata/status`, exactly as it gates on
+`GET /api/capabilities`.
+
+**Status codes.** Not-found returns `404`. `NavdataUnavailable` returns **`503` with a
+`Retry-After` header** and `status()` in the body, so a UI that raced the build gets the state
+rather than a stack trace. `503`, not `409`: the request is not in conflict with the resource's
+state — there is nothing to reconcile and nothing the client did wrong. The index is *temporarily
+absent*, which is precisely what `503 Service Unavailable` means, and it is the one status whose
+`Retry-After` tells the generated client how long to wait. `Retry-After: 5` while `building`,
+`Retry-After: 60` while `unavailable` or `error`, where a human has to act.
+
+**Crossing back into the event loop — the one thing `server/` must get right.** `ensure_index()`
+runs in a worker thread (§3), so its progress callback fires **off the event loop**. Touching the
+WebSocket pump from there is a data race on asyncio internals, and it is the kind that works in
+development and drops frames or corrupts the connection under load. The server's callback
+therefore does nothing but hand the frame across:
+
+```python
+loop = asyncio.get_running_loop()  # captured before to_thread()
+
+
+def _on_progress(frame: IndexProgress) -> None:  # runs in the worker thread
+    loop.call_soon_threadsafe(pump.publish_navdata_progress, frame)
+```
+
+`call_soon_threadsafe` is the only asyncio API safe to call from another thread, and this is the
+only place in the project that needs it. Frame volume is already bounded at the source — one per
+0.5 s or per 1% of progress (§3) — so this queues a handful of callbacks per second, not
+thousands.
 
 New settings in `server/deps.py`, alongside the existing `OIS_`-prefixed ones:
 
@@ -1611,12 +1881,18 @@ The contract is fixed; the four tracks are disjoint by file and can start togeth
 | Track | Owns | Depends on this document for |
 |---|---|---|
 | **#4 CIFP parser** | `core/navdata/xplane_native/cifp.py`, fixtures `CIFP/ZZZZ.dat` | `Procedure`, `ProcedureLeg`, `FixRef`, constraints, positionability, the §6.6 field map |
-| **#5 `apt.dat` + `earth_*` indexer** | `core/navdata/schema.py`, `core/navdata/xplane_native/{apt,earth}.py`, the build job | the DDL, the cache key, precedence, the §6.6 decoders, `IndexProgress` |
-| **#6 geodesy** | `core/geodesy.py` | nothing — `Runway` is unchanged (D4) |
+| **#5 `apt.dat` + `earth_*` indexer** | `core/navdata/schema.py`, `core/navdata/xplane_native/{apt,earth}.py`, the build job, the cache lifecycle | the DDL, the cache key, precedence, the §6.6 decoders, `IndexProgress`, D14–D16 |
+| **#6 geodesy** | `core/geodesy.py` | nothing — `Runway`'s existing fields are unchanged (D4) |
 | **UI panel** | `ui/src/features/navdata/` | the §12 endpoints and the generated types |
 
 `core/navdata/schema.py` has exactly one owner and is never edited concurrently
 (`CLAUDE.md`, parallelisation policy).
+
+**One shared file needs a serial, up-front edit before the tracks branch:** adding `Ils`,
+`RunwaySurface` and the new optional `Runway` fields to `core/models.py` (§5.0, §5.3). It is
+shared vocabulary, so it follows the same rule as a `SimAdapter` contract change — **done once, by
+one agent, before dependent work starts**, never in parallel. It is a handful of additive model
+declarations and it unblocks #4, #5 and the UI's generated types simultaneously.
 
 ---
 
