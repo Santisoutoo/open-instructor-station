@@ -1420,12 +1420,27 @@ every call:
 | `threshold` | CIFP `RWY:` (DDMMSSss) if present, else `apt.dat` end walked forward by the displacement |
 | `elevation_ft` | CIFP `RWY:` threshold elevation if present, else airport elevation |
 | `threshold_crossing_height_ft`, `ils.category`, localizer ident | CIFP `RWY:` only |
-| `true_bearing_deg`, `length_m`, `width_m`, `surface`, `displaced_threshold_m`, `pavement_end` | `apt.dat` only |
+| `displaced_threshold_m` | `apt.dat`, **unless the CIFP supplied the threshold** — then measured from `pavement_end` to that threshold along the runway axis |
+| `landing_distance_m` | `length_m` − `displaced_threshold_m`, so it follows the row above |
+| `true_bearing_deg`, `length_m`, `width_m`, `surface`, `pavement_end` | `apt.dat` only |
 | `ils.*` (frequency, positions, courses, glideslope) | `earth_nav.dat` only |
 
 CIFP wins on threshold geometry because it is the datum the procedures themselves are built on;
 using `apt.dat` for the threshold and CIFP for the approach legs would put a small, permanent,
 invisible offset between a placement and the procedure it claims to be on.
+
+**The displacement has to follow the threshold that won.** `displaced_threshold_m` is *defined* as
+the distance from `pavement_end` to `threshold`, so once the CIFP has supplied the threshold, the
+only value satisfying that definition is one measured against it — `apt.dat`'s published number
+describes a point the merged model no longer carries. At LEMD 18L, where both sources publish a
+displacement, the difference is survey noise (494 m published, 496 m measured). Where `apt.dat`
+publishes **no** displacement and the CIFP publishes 1640 ft, it is the whole 494 m: the runway
+would otherwise report `threshold ≠ pavement_end` alongside a displacement of `0.0`, and hand out
+the full 3497 m of pavement as landing distance available with 494 m of it lying before the
+threshold. The measurement takes the **along-axis component** rather than the straight-line
+distance, so lateral survey disagreement is dropped instead of being folded into the displacement,
+and a threshold measuring out *behind* the pavement end reads as zero rather than as a negative
+displacement.
 
 ### 7.3 What happens on first run — the user's first impression
 

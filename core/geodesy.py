@@ -14,6 +14,16 @@ The module has two layers:
 :func:`traffic_pattern_point` are the runway geometry built on them. They take
 raw numbers and answer with raw numbers.
 
+**Every runway-relative distance here is measured from the displaced landing
+threshold.** :class:`~core.models.Runway` carries two anchor points that are not
+interchangeable — ``threshold``, where an aircraft on final aims, and
+``pavement_end``, where the paving starts — and everything in this module uses
+``threshold``. ``length_m`` is the *pavement* length, which is what the
+traffic-pattern geometry is built on. At LEMD 18L the two anchors are ~496 m
+apart, so a function here that quietly took the pavement end would displace
+every final by 0.27 NM while the geometry still looked flawless. The convention
+is stated in full on :class:`~core.models.Runway`; this module assumes it.
+
 **Placements.** Every runway-relative position the Position Manager offers has a
 name — ``"final_10nm"``, ``"left_downwind"``, ``"short_final"`` — and resolving
 one yields a :class:`Placement`: *where* to put the aircraft, at *what*
@@ -506,9 +516,18 @@ def final_approach_point(
 ) -> GeoPosition:
     """Point on the extended runway centreline, on the glidepath.
 
+    **The origin is the displaced landing threshold**, ``runway.threshold`` —
+    never the start of the pavement, which :class:`~core.models.Runway` carries
+    separately as ``pavement_end``. That is what an aircraft on final aims at and
+    what a published approach is measured from, and the distinction is not
+    cosmetic: at LEMD 18L the two points are ~496 m apart, so anchoring here on
+    the pavement end would place a "10 NM final" 0.27 NM out of position, every
+    time, with the geometry looking perfect.
+
     Args:
         runway: The target runway end.
-        distance_nm: Distance out from the threshold, nautical miles.
+        distance_nm: Distance out from the **landing threshold**, nautical
+            miles.
         glideslope_deg: Glidepath angle in degrees.
 
     Returns:
@@ -566,8 +585,19 @@ def traffic_pattern_point(
 ) -> tuple[GeoPosition, float]:
     """Position and heading for a point on a rectangular traffic pattern.
 
-    Geometry is built on the runway axis, with the threshold as origin. The
-    pattern lies on the left of the runway when ``left_hand`` is true (all
+    Geometry is built on the runway axis, with the **displaced landing
+    threshold** (``runway.threshold``) as origin and the **pavement length**
+    (``runway.length_m``) as the along-axis span — the two halves of the
+    convention :class:`~core.models.Runway` pins, taken here deliberately and
+    together. A pattern is flown relative to the runway the pilot sees, so the
+    downwind abeam point sits at half the *paved* length from the threshold, and
+    on a runway with a displaced threshold the upwind and crosswind legs
+    therefore sit ``displaced_threshold_m`` further out than the far end of the
+    pavement. That is the conservative direction — the legs are never *short* of
+    the departure end — and it is why ``length_m`` is the pavement length rather
+    than the landing distance available.
+
+    The pattern lies on the left of the runway when ``left_hand`` is true (all
     turns to the left), on the right otherwise.
 
     Args:
@@ -577,8 +607,8 @@ def traffic_pattern_point(
         pattern_width_nm: Lateral distance from the centreline to the downwind
             leg, in nautical miles.
         leg_distance_nm: How far beyond the departure end the upwind/crosswind
-            legs sit, and how far before the threshold the base leg sits, in
-            nautical miles.
+            legs sit, and how far before the landing threshold the base leg
+            sits, in nautical miles.
         left_hand: ``True`` for a left-hand (standard) pattern.
 
     Returns:
