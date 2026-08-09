@@ -11,10 +11,19 @@ on a 10 NM final with no speed arrives below stall and flies into terrain — th
 defect behind issue #39, measured against a live X-Plane. The order is asserted
 by recording the calls, not by inspecting the response, because a response that
 looks right is exactly what the buggy order produced.
+
+**A speed of zero is that same defect, whoever asked for it.** ``ias_kt: 0`` on
+an airborne placement is accepted — a stationary aircraft in the air is a
+legitimate demonstration and refusing would overrule the instructor — but it is
+never *affirmed*: the notes warn, and the assertions below are written against
+the **resolved** speed rather than against a substring that reads the same at
+137 kt and at 0.
 """
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Iterator
 from typing import Any
 
 import pytest
@@ -22,13 +31,32 @@ from fastapi.testclient import TestClient
 
 import server.deps
 from adapters.fake import FakeSimAdapter
-from core.geodesy import APPROACH_CATEGORY_CIRCLING_IAS_KT, APPROACH_CATEGORY_VAT_KT
-from core.models import AircraftSetup, GeoPosition
+from core.geodesy import (
+    APPROACH_CATEGORY_CIRCLING_IAS_KT,
+    APPROACH_CATEGORY_VAT_KT,
+    DEFAULT_GLIDESLOPE_DEG,
+    glideslope_altitude_ft,
+)
+from core.models import AircraftSetup, GeoPosition, Ils, LightsSetup, Runway
+from core.navdata.in_memory import InMemoryNavdataProvider
+from core.navdata.models import (
+    Airport,
+    AltitudeConstraint,
+    Hold,
+    Procedure,
+    ProcedureLeg,
+    SpeedConstraint,
+    Waypoint,
+)
 from core.sim_adapter import Capabilities
 from server.app import create_app
 from server.deps import reset_adapter, reset_navdata
-from server.position_routes import CAPABILITY_UNAVAILABLE_STATUS, UNPOSITIONABLE_STATUS
-from tests.server.conftest import build_provider
+from server.position_routes import (
+    CAPABILITY_UNAVAILABLE_STATUS,
+    UNPOSITIONABLE_STATUS,
+    _merge_setup,
+)
+from tests.server.conftest import AIRPORT, FIX_GOXOL, RUNWAY_18, RUNWAY_36, build_provider
 
 #: 3° glidepath, 10 NM out, threshold at 1000 ft:
 #: 1000 + tan(3°) x 10 x 6076.115486 = 4184.4 ft.
@@ -49,6 +77,20 @@ def preview(client: TestClient, request: dict[str, Any]) -> dict[str, Any]:
     assert response.status_code == 200, response.text
     body: dict[str, Any] = response.json()
     return body
+
+
+def _has_running_loop() -> bool:
+    """Whether this call is executing **on** the event loop.
+
+    True inside the body of an ``async def`` route, false inside a threadpool
+    worker — which is the whole question when asking whether a blocking navdata
+    read is stalling the telemetry push.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
 
 
 class TestPreviewGeometry:
@@ -128,8 +170,99 @@ class TestNotes:
         assert "category default" in notes
 
     def test_an_explicit_speed_is_not_dressed_up_as_a_computation(self, client: TestClient) -> None:
-        notes = " ".join(preview(client, {**FINAL_10NM, "ias_kt": 137.0})["notes"])
-        assert "as requested" in notes
+        """Assert on the **resolved** number, not on a substring.
+
+        The previous version of this test asserted only that the notes contained
+        ``"as requested"``, which reads identically at 137 kt and at 0 kt — and a
+        0 kt final is issue #39's measured crash. A note that names a speed has
+        to be checked against the speed that was actually resolved.
+        """
+        body = preview(client, {**FINAL_10NM, "ias_kt": 137.0})
+        assert body["placement"]["ias_kt"] == 137.0
+        notes = " ".join(body["notes"])
+        assert "137 kt, exactly as requested." in notes
+        # The instructor named the number, so it must not be attributed to a chart.
+        assert "category default" not in notes
+
+
+#: Every placement type that is airborne by construction, each asking for 0 kt.
+#: A final, a circuit leg, a fix, a procedure leg and a hold are all *flown*;
+#: only a stand and a sea-level coordinate are not.
+AIRBORNE_AT_ZERO_KNOTS: dict[str, dict[str, Any]] = {
+    "final": {**FINAL_10NM, "ias_kt": 0},
+    "circuit_leg": {**FINAL_10NM, "placement": "left_downwind", "ias_kt": 0},
+    "waypoint": {"type": "waypoint", "ident": "GOXOL", "altitude_ft": 9000.0, "ias_kt": 0},
+    "procedure_leg": {
+        "type": "procedure_leg",
+        "airport_icao": "ZZZZ",
+        "kind": "sid",
+        "ident": "TEST1A",
+        "sequence": 20,
+        "ias_kt": 0,
+    },
+    "hold": {"type": "hold", "fix_ident": "GOXOL", "ias_kt": 0},
+    "coordinate": {
+        "type": "coordinate",
+        "position": {"latitude": 40.5, "longitude": -3.5, "altitude_ft": 7000.0},
+        "ias_kt": 0,
+    },
+}
+
+
+class TestAZeroSpeedIsWarnedAboutWhoeverAskedForIt:
+    """Issue #39, from the other direction.
+
+    ``ias_kt`` is validated ``ge=0.0`` and ``core.geodesy`` returns an explicit
+    value untouched, so ``0`` reaches the placement intact — a perfect 10 NM
+    final at 4,184 ft with the aircraft below stall speed, which is the exact
+    geometry that flew into terrain at LEMD. The guard existed only on the
+    coordinate branch; these cases prove it now covers every placement that is
+    not on the ground, and that it keys on the **resolved** speed rather than on
+    who chose it.
+    """
+
+    @pytest.mark.parametrize(
+        "request_body", AIRBORNE_AT_ZERO_KNOTS.values(), ids=list(AIRBORNE_AT_ZERO_KNOTS)
+    )
+    def test_zero_knots_in_the_air_is_warned_about(
+        self, client: TestClient, request_body: dict[str, Any]
+    ) -> None:
+        body = preview(client, request_body)
+        assert body["placement"]["ias_kt"] == 0.0
+        assert body["placement"]["position"]["altitude_ft"] > 0.0
+        notes = " ".join(body["notes"])
+        assert "stall" in notes
+        # The old note affirmed the number instead: "0 kt, as requested."
+        assert "as requested" not in notes
+
+    def test_the_warning_is_not_a_refusal(self, client: TestClient) -> None:
+        """A stationary aircraft in the air is a legitimate demonstration."""
+        with client:
+            response = client.post(
+                "/api/position/apply", json={"placement": {**FINAL_10NM, "ias_kt": 0}}
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["applied"]["ias_kt"] == 0.0
+
+    def test_a_stand_at_zero_knots_is_not_warned_about(self, client: TestClient) -> None:
+        body = preview(client, {"type": "parking", "airport_icao": "ZZZZ", "stand_name": "R32"})
+        assert body["placement"]["ias_kt"] == 0.0
+        assert "stall" not in " ".join(body["notes"])
+
+    def test_a_ground_level_coordinate_at_zero_knots_is_not_warned_about(
+        self, client: TestClient
+    ) -> None:
+        body = preview(
+            client,
+            {
+                "type": "coordinate",
+                "position": {"latitude": 40.5, "longitude": -3.5, "altitude_ft": 0.0},
+                "ias_kt": 0,
+            },
+        )
+        notes = " ".join(body["notes"])
+        assert "stall" not in notes
+        assert "on the ground" in notes
 
 
 class TestOtherPlacementTypes:
@@ -358,6 +491,194 @@ class TestApplyMergesTheStagingBarsEdits:
         assert response.json()["applied"]["gear_down"] is True
 
 
+class TestAnEditedGeometryFieldActuallyTakes:
+    """``altitude_ft`` and ``heading_deg`` are geometry, not setup.
+
+    ``set_position`` writes both, and it runs **after** ``apply_setup``, so an
+    edit handed to the setup was overwritten a moment later: an altitude edited
+    to 1234 ft arrived as 4184.36 and a heading edited to 99° arrived as 0°.
+    Two of the staging bar's four editable controls did nothing — and
+    ``applied`` echoed the request back as though they had, which is the worse
+    half of the defect.
+
+    **Every assertion here is against the read-back ``state``.** The previous
+    tests trusted the echo, which is exactly how this survived.
+    """
+
+    def test_an_edited_altitude_reaches_the_aircraft(self, client: TestClient) -> None:
+        with client:
+            response = client.post(
+                "/api/position/apply",
+                json={"placement": FINAL_10NM, "setup": {"altitude_ft": 1234.0}},
+            )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["state"]["altitude_ft"] == pytest.approx(1234.0)
+        # And the placement reported back is the one that was flown to.
+        assert body["placement"]["position"]["altitude_ft"] == pytest.approx(1234.0)
+
+    def test_an_edited_heading_reaches_the_aircraft(self, client: TestClient) -> None:
+        with client:
+            response = client.post(
+                "/api/position/apply",
+                json={"placement": FINAL_10NM, "setup": {"heading_deg": 99.0}},
+            )
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["state"]["heading_deg"] == pytest.approx(99.0)
+        assert body["placement"]["heading_deg"] == pytest.approx(99.0)
+
+    def test_applied_describes_the_outcome_and_not_the_request(self, client: TestClient) -> None:
+        """The echo and the read-back have to agree, or the echo is a lie."""
+        with client:
+            response = client.post(
+                "/api/position/apply",
+                json={
+                    "placement": FINAL_10NM,
+                    "setup": {"altitude_ft": 1234.0, "heading_deg": 99.0},
+                },
+            )
+        body = response.json()
+        assert body["applied"]["altitude_ft"] == pytest.approx(body["state"]["altitude_ft"])
+        assert body["applied"]["heading_deg"] == pytest.approx(body["state"]["heading_deg"])
+
+    def test_the_lateral_geometry_is_still_the_placement_s(self, client: TestClient) -> None:
+        """Editing the altitude must not move the aircraft off the centreline."""
+        with client:
+            staged = client.post("/api/position/preview", json=FINAL_10NM).json()
+            response = client.post(
+                "/api/position/apply",
+                json={"placement": FINAL_10NM, "setup": {"altitude_ft": 1234.0}},
+            )
+        state = response.json()["state"]
+        assert state["latitude"] == pytest.approx(staged["placement"]["position"]["latitude"])
+        assert state["longitude"] == pytest.approx(staged["placement"]["position"]["longitude"])
+
+    def test_an_unedited_placement_keeps_its_computed_geometry(self, client: TestClient) -> None:
+        with client:
+            response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
+        state = response.json()["state"]
+        assert state["altitude_ft"] == pytest.approx(TEN_NM_FINAL_ALTITUDE_FT, abs=0.1)
+        assert state["heading_deg"] == pytest.approx(0.0)
+
+
+class TestTheMergedSetupIsValidated:
+    """A merged setup must be an ``AircraftSetup``, sub-models included.
+
+    ``model_dump`` is recursive and ``model_copy(update=...)`` does not validate,
+    so the pair produced an ``AircraftSetup`` whose ``lights`` was a plain
+    ``dict``. It type checks, it serialises identically, and then the X-Plane
+    adapter does ``getattr(setup.lights, "landing")`` on it and the request dies
+    as a 500 — **after** ``apply_setup`` has started writing to a live aircraft.
+    """
+
+    @pytest.mark.parametrize(
+        "edit", [{"landing": True}, {}], ids=["a_switch_set", "an_empty_object"]
+    )
+    def test_a_nested_edit_survives_the_merge_as_a_model(self, edit: dict[str, Any]) -> None:
+        merged = _merge_setup(
+            AircraftSetup(altitude_ft=4184.4, ias_kt=120.0),
+            AircraftSetup.model_validate({"lights": edit}),
+        )
+        # Before the fix this was a plain ``dict`` — the type says otherwise, so
+        # only a runtime check can catch it.
+        assert isinstance(merged.lights, LightsSetup)
+        # The geometry's fields are still there.
+        assert merged.altitude_ft == 4184.4
+
+    def test_an_empty_nested_object_is_not_none(self) -> None:
+        """``exclude_none`` empties the sub-object but keeps the key.
+
+        So ``{"lights": {}}`` merges as ``{}`` rather than as ``None``, and every
+        adapter that gates on ``setup.lights is not None`` walks straight into
+        it. It has to arrive as a model with nothing switched.
+        """
+        merged = _merge_setup(AircraftSetup(), AircraftSetup(lights=LightsSetup()))
+        assert merged.lights is not None
+        assert merged.lights.landing is None
+
+    @pytest.mark.parametrize(
+        "lights", [{"landing": True}, {}], ids=["a_switch_set", "an_empty_object"]
+    )
+    def test_the_adapter_receives_a_model_and_not_a_dict(
+        self, monkeypatch: pytest.MonkeyPatch, lights: dict[str, Any]
+    ) -> None:
+        """End to end, reading the setup exactly as ``XPlaneSimAdapter`` does."""
+        received: list[object] = []
+        switches: list[bool | None] = []
+
+        class LightReadingAdapter(FakeSimAdapter):
+            async def apply_setup(self, setup: AircraftSetup) -> None:
+                received.append(setup.lights)
+                if setup.lights is not None:
+                    # The attribute access from adapters/xplane/xplane_adapter.py.
+                    # On a dict it raises AttributeError and takes the request
+                    # down as a 500, mid-write.
+                    switches.append(setup.lights.landing)
+                await super().apply_setup(setup)
+
+        provider = build_provider()
+        monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: provider)
+        monkeypatch.setattr(server.deps, "_build_adapter", lambda _s: LightReadingAdapter())
+        reset_adapter()
+        reset_navdata()
+
+        with TestClient(create_app()) as client:
+            response = client.post(
+                "/api/position/apply",
+                json={"placement": FINAL_10NM, "setup": {"lights": lights}},
+            )
+        assert response.status_code == 200, response.text
+        assert isinstance(received[0], LightsSetup)
+        assert switches == [lights.get("landing")]
+
+
+class TestApplyResolvesNavdataOffTheEventLoop:
+    """``apply`` is ``async def``, and navdata is blocking SQLite.
+
+    Resolving inline blocks the loop that also serves ``/ws/state``, so the
+    ~4 Hz telemetry feed to the tablet stalls during the one operation where the
+    instructor is watching the aircraft move. ``asyncio.get_running_loop()``
+    raises in a worker thread and succeeds on the loop, which is the difference
+    stated directly rather than timed.
+    """
+
+    @staticmethod
+    def _watch(provider: InMemoryNavdataProvider, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+        on_the_loop: list[bool] = []
+        original = provider.get_runway
+
+        def watched(icao: str, ident: str) -> Runway | None:
+            on_the_loop.append(_has_running_loop())
+            return original(icao, ident)
+
+        monkeypatch.setattr(provider, "get_runway", watched)
+        return on_the_loop
+
+    def test_apply_resolves_in_the_threadpool(
+        self,
+        client: TestClient,
+        navdata: InMemoryNavdataProvider,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        on_the_loop = self._watch(navdata, monkeypatch)
+        with client:
+            response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
+        assert response.status_code == 200, response.text
+        assert on_the_loop == [False]
+
+    def test_preview_resolves_in_the_threadpool_too(
+        self,
+        client: TestClient,
+        navdata: InMemoryNavdataProvider,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A regression guard: ``preview`` is ``def`` and must stay ``def``."""
+        on_the_loop = self._watch(navdata, monkeypatch)
+        preview(client, FINAL_10NM)
+        assert on_the_loop == [False]
+
+
 class TestCapabilityGating:
     @pytest.fixture
     def incapable_client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
@@ -386,6 +707,280 @@ class TestCapabilityGating:
         with incapable_client:
             response = incapable_client.post("/api/position/preview", json=FINAL_10NM)
         assert response.status_code == 200
+
+
+#: A second hand-written world, for the two things the shared one cannot show:
+#: a runway whose published ILS glidepath is **not** the 3° standard, and
+#: published speed bands that actually bite a category B aircraft (V_AT 120 kt,
+#: circling 135 kt). Nothing here comes from a navdata file either — hard rule 4.
+STEEP_ILS = Ils(
+    airport_icao="ZZZZ",
+    runway_ident="09",
+    localizer_ident="IZZS",
+    frequency_khz=110500,
+    localizer_position=GeoPosition(latitude=40.0, longitude=-2.96, altitude_ft=1000.0),
+    localizer_true_deg=90.0,
+    localizer_mag_deg=92.0,
+    glideslope_deg=3.8,
+)
+
+#: Runway 09 with a steep published path — London City flies 5.5°, so 3.8° is
+#: nothing exotic. On a 10 NM final the difference from the 3° standard is
+#: 851 ft, and it is 851 ft on the wrong side of the glideslope.
+STEEP_RUNWAY = Runway(
+    airport_icao="ZZZZ",
+    ident="09",
+    threshold=GeoPosition(latitude=40.0, longitude=-3.0, altitude_ft=1000.0),
+    true_bearing_deg=90.0,
+    length_m=3000.0,
+    elevation_ft=1000.0,
+    opposite_ident="27",
+    ils=STEEP_ILS,
+)
+
+
+def _leg(sequence: int, ident: str, latitude: float, speed: SpeedConstraint) -> ProcedureLeg:
+    return ProcedureLeg(
+        sequence=sequence,
+        path_terminator="TF",
+        is_positionable=True,
+        fix=Waypoint(
+            ident=ident,
+            kind="fix",
+            position=GeoPosition(latitude=latitude, longitude=-3.0),
+            region_code="ZZ",
+        ),
+        altitude=AltitudeConstraint(descriptor="+", min_ft=6000.0),
+        speed=speed,
+    )
+
+
+#: One procedure, three published speed bands, one category: a ceiling that bites
+#: (130 < 135 circling), a floor that bites (160 > 135), and a ceiling so low it
+#: would stall the aeroplane (100 < 120 V_AT) and is therefore overridden.
+BANDED_SID = Procedure(
+    airport_icao="ZZZZ",
+    kind="sid",
+    ident="BAND1A",
+    runway_idents=("09",),
+    legs=(
+        _leg(10, "CAPPD", 40.2, SpeedConstraint(descriptor="-", max_kt=130.0)),
+        _leg(20, "FLOOR", 40.3, SpeedConstraint(descriptor="+", min_kt=160.0)),
+        _leg(30, "TOOLO", 40.4, SpeedConstraint(descriptor="-", max_kt=100.0)),
+    ),
+)
+
+#: A hold placarded below the category's circling speed, so the placard binds.
+SLOW_HOLD = Hold(
+    fix=Waypoint(ident="SLOWH", kind="fix", position=FIX_GOXOL.position, region_code="ZZ"),
+    inbound_course_mag_deg=180.0,
+    turn_direction="R",
+    leg_time_min=1.0,
+    min_altitude_ft=7000.0,
+    speed_kt=130.0,
+    airport_icao="ZZZZ",
+)
+
+
+#: An airport below mean sea level. Bar Yehuda, by the Dead Sea, sits at about
+#: -1,266 ft and Schiphol at -11 ft, so "altitude above zero means airborne" is
+#: not a simplification — it is wrong about real places, and wrong in the
+#: direction that withholds a stall warning.
+DEEP_AIRPORT = Airport(
+    icao="ZZZB",
+    name="Testfield Below Sea Level",
+    position=GeoPosition(latitude=31.3, longitude=35.4, altitude_ft=-1266.0),
+    elevation_ft=-1266.0,
+    runway_count=1,
+    longest_runway_m=1800.0,
+    has_procedures=False,
+)
+
+
+@pytest.fixture
+def charted_client(monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    """A client over the steep-ILS runway, the banded SID and the slow hold."""
+    provider = InMemoryNavdataProvider(
+        airports=[AIRPORT, DEEP_AIRPORT],
+        runways=[RUNWAY_36, RUNWAY_18, STEEP_RUNWAY],
+        fixes=[FIX_GOXOL],
+        holds=[SLOW_HOLD],
+        procedures=[BANDED_SID],
+    )
+    monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: provider)
+    reset_navdata()
+    yield TestClient(create_app())
+    reset_navdata()
+
+
+def _banded_leg(sequence: int) -> dict[str, Any]:
+    return {
+        "type": "procedure_leg",
+        "airport_icao": "ZZZZ",
+        "kind": "sid",
+        "ident": "BAND1A",
+        "sequence": sequence,
+    }
+
+
+class TestTheSpeedNoteNamesTheRightSource:
+    """The provenance comes from the branch taken, not from a table lookup.
+
+    ``_constrained_ias_kt`` can return a value that is neither the category's
+    circling speed nor its threshold speed, and inferring the source by
+    comparing its output against those two tables labelled a **charted** number
+    "ICAO category B threshold speed (V_AT). This is a category default, not
+    this airframe's number" — the exact inversion of the distinction the notes
+    exist to make.
+    """
+
+    def test_a_published_ceiling_is_not_credited_to_the_category_chart(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(charted_client, _banded_leg(10))
+        assert body["placement"]["ias_kt"] == 130.0
+        notes = " ".join(body["notes"])
+        assert "published restriction of at or below 130 kt" in notes
+        assert "threshold speed" not in notes
+        assert "category default" not in notes
+
+    def test_a_published_floor_is_not_credited_to_the_category_chart(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(charted_client, _banded_leg(20))
+        assert body["placement"]["ias_kt"] == 160.0
+        notes = " ".join(body["notes"])
+        assert "published minimum of 160 kt" in notes
+        assert "threshold speed" not in notes
+
+    def test_a_ceiling_below_the_category_floor_says_why_it_was_overridden(
+        self, charted_client: TestClient
+    ) -> None:
+        """100 kt would stall a category B aeroplane, so V_AT wins — and says so."""
+        body = preview(charted_client, _banded_leg(30))
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["B"]
+        notes = " ".join(body["notes"])
+        assert "threshold speed (V_AT)" in notes
+        assert "no chart may hand an aeroplane a stall" in notes
+
+    def test_a_hold_placard_below_the_circling_speed_is_named_as_the_placard(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(charted_client, {"type": "hold", "fix_ident": "SLOWH"})
+        assert body["placement"]["ias_kt"] == 130.0
+        notes = " ".join(body["notes"])
+        assert "published restriction of at or below 130 kt" in notes
+        assert "threshold speed" not in notes
+
+    def test_an_unclamped_leg_still_names_the_category(self, charted_client: TestClient) -> None:
+        """The shared world's 250 kt placard never bites, and must read that way."""
+        body = preview(charted_client, {**FINAL_10NM, "runway_ident": "36"})
+        notes = " ".join(body["notes"])
+        assert "ICAO category B threshold speed (V_AT)" in notes
+        assert "category default" in notes
+
+
+class TestZeroKnotsIsMeasuredAgainstTheGroundAndNotAgainstZero:
+    """Sea level is not the ground, and the difference withholds the warning.
+
+    Gating the stall warning on ``altitude_ft > 0`` gives an airborne point over
+    the Dead Sea — a real place, 1,410 ft below sea level — the reassuring
+    sentence. The station has no terrain service but it does have every airport
+    in the index, and the nearest one is a far better reference than zero.
+    """
+
+    def test_an_airborne_point_below_sea_level_is_still_warned_about(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(
+            charted_client,
+            {
+                "type": "coordinate",
+                "position": {"latitude": 31.3, "longitude": 35.4, "altitude_ft": -500.0},
+            },
+        )
+        # 766 ft above the field, and below sea level: flying, by any reading.
+        assert body["placement"]["ias_kt"] == 0.0
+        assert "stall" in " ".join(body["notes"])
+
+    def test_a_point_on_a_below_sea_level_field_is_not_warned_about(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(
+            charted_client,
+            {
+                "type": "coordinate",
+                "position": {"latitude": 31.3, "longitude": 35.4, "altitude_ft": -1266.0},
+            },
+        )
+        assert "stall" not in " ".join(body["notes"])
+
+    def test_a_default_speed_is_never_reported_as_requested(
+        self, charted_client: TestClient
+    ) -> None:
+        """Nothing was requested, so nothing may be credited to the instructor."""
+        body = preview(
+            charted_client,
+            {
+                "type": "coordinate",
+                "position": {"latitude": 31.3, "longitude": 35.4, "altitude_ft": -1266.0},
+            },
+        )
+        notes = " ".join(body["notes"])
+        assert "as requested" not in notes
+        assert "no speed was given" in notes
+
+
+class TestTheGlidepathComesFromThePublishedIls:
+    """``glideslope_deg = None`` means "the one that is published here".
+
+    ``Runway`` carries its ``Ils`` so this is a single lookup. Reaching for the
+    3° standard instead puts a 10 NM final at a 3.8° field 851 ft **below** the
+    glideslope the student is about to intercept — converging on it from
+    underneath, which is not the exercise.
+    """
+
+    def test_the_published_angle_is_used_when_none_is_requested(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(charted_client, {**FINAL_10NM, "runway_ident": "09"})
+        assert body["schematic"]["glidepath_deg"] == 3.8
+        assert body["placement"]["position"]["altitude_ft"] == pytest.approx(
+            glideslope_altitude_ft(1000.0, 10.0, 3.8), abs=0.1
+        )
+        assert "published ILS glidepath" in " ".join(body["notes"])
+
+    def test_the_published_angle_is_not_the_standard_one(self, charted_client: TestClient) -> None:
+        """The difference is the point: 851 ft at 10 NM, and the wrong way.
+
+        ``(tan 3.8° - tan 3°) x 10 x 6076.115486 = 851.39``. Placed on the
+        standard 3°, the aircraft is that far *below* the path it is about to
+        intercept.
+        """
+        published = preview(charted_client, {**FINAL_10NM, "runway_ident": "09"})
+        standard = preview(
+            charted_client, {**FINAL_10NM, "runway_ident": "09", "glideslope_deg": 3.0}
+        )
+        assert published["placement"]["position"]["altitude_ft"] - standard["placement"][
+            "position"
+        ]["altitude_ft"] == pytest.approx(851.4, abs=0.1)
+
+    def test_a_runway_without_an_ils_falls_back_to_the_icao_standard(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(charted_client, {**FINAL_10NM, "runway_ident": "18"})
+        assert body["schematic"]["glidepath_deg"] == DEFAULT_GLIDESLOPE_DEG
+        assert body["placement"]["position"]["altitude_ft"] == pytest.approx(
+            TEN_NM_FINAL_ALTITUDE_FT, abs=0.1
+        )
+        assert "no ILS glidepath is published" in " ".join(body["notes"])
+
+    def test_an_explicit_angle_wins_over_the_published_one(
+        self, charted_client: TestClient
+    ) -> None:
+        body = preview(charted_client, {**FINAL_10NM, "runway_ident": "09", "glideslope_deg": 5.5})
+        assert body["schematic"]["glidepath_deg"] == 5.5
+        assert "as requested" in " ".join(body["notes"])
 
 
 class TestRequestValidation:
