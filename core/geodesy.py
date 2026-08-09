@@ -37,10 +37,19 @@ The default comes from the aircraft's **ICAO approach category**
 a 737 do not fly the same final. See :data:`APPROACH_CATEGORY_VAT_KT` for what
 the defaults are worth and where they stop being trustworthy.
 
-Holding entries and procedure (SID/STAR/approach) legs are deliberately absent:
-both resolve against published navdata — ``earth_hold.dat`` and the CIFP — and
-inventing their geometry here instead of reading the published values would be
-wrong.
+Procedure (SID/STAR/approach) legs are deliberately absent: they resolve against
+published navdata — the CIFP — and inventing their geometry here instead of
+reading the published values would be wrong. Holds follow the same rule but do
+have geometry of their own: :func:`hold_placement` takes the published pattern
+(inbound course, turn direction, leg length) as *input* and only answers the
+question the published data does not, which is which entry the aircraft is set
+up for. It invents nothing.
+
+**Everything in this module is true, never magnetic.** ``earth_hold.dat`` and
+the CIFP publish courses in magnetic degrees, and converting needs a world
+magnetic model this project deliberately does not carry (see
+:mod:`core.navdata.models`). Callers convert before they get here, and say in
+the UI that they did.
 """
 
 from __future__ import annotations
@@ -67,21 +76,28 @@ __all__ = [
     "FINAL_DISTANCES_NM",
     "GROUND_IAS_KT",
     "METRES_PER_NAUTICAL_MILE",
+    "PARALLEL_SECTOR_DEG",
     "PATTERN_PLACEMENTS",
     "RUNWAY_PLACEMENTS",
     "SHORT_FINAL_DISTANCE_NM",
+    "TEARDROP_SECTOR_DEG",
     "ApproachCategory",
     "FinalPlacement",
+    "HoldEntry",
     "PatternLeg",
     "PatternPlacement",
     "PatternSide",
     "Placement",
     "RunwayPlacement",
+    "TurnDirection",
     "coordinate_placement",
     "distance_and_bearing",
     "final_approach_point",
     "final_placement",
     "glideslope_altitude_ft",
+    "hold_entry",
+    "hold_leg_length_nm",
+    "hold_placement",
     "pattern_placement",
     "point_at_distance_and_bearing",
     "resolve_runway_placement",
@@ -98,6 +114,13 @@ PatternLeg = Literal["downwind", "base", "crosswind", "upwind"]
 
 #: Which side of the runway the pattern is flown on.
 PatternSide = Literal["left", "right"]
+
+#: Direction of turn in a holding pattern, spelled the way ``earth_hold.dat``
+#: and the CIFP spell it. ``"R"`` is the standard (right-hand) pattern.
+TurnDirection = Literal["L", "R"]
+
+#: The three published holding entries (ICAO Doc 8168).
+HoldEntry = Literal["direct", "parallel", "teardrop"]
 
 #: The finals the Position Manager offers, named after their distance out.
 FinalPlacement = Literal[
@@ -818,4 +841,121 @@ def waypoint_placement(
         heading_deg=heading,
         ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
         label=f"over {ident}",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Holding patterns
+# ---------------------------------------------------------------------------
+
+#: Width of the teardrop (offset) entry sector, degrees. ICAO Doc 8168.
+TEARDROP_SECTOR_DEG: float = 70.0
+
+#: Width of the parallel entry sector, degrees.
+PARALLEL_SECTOR_DEG: float = 110.0
+
+
+def hold_entry(
+    inbound_course_deg: float,
+    arrival_heading_deg: float,
+    turn_direction: TurnDirection = "R",
+) -> HoldEntry:
+    """Which published entry an aircraft arriving on ``arrival_heading_deg`` flies.
+
+    The three sectors of ICAO Doc 8168, measured about the fix and expressed
+    relative to the inbound course: a 180° direct sector, a 70° teardrop sector
+    and a 110° parallel sector. A left-hand hold is the exact mirror of a
+    right-hand one, and is computed as such rather than written out twice — the
+    two tables would drift apart the first time one of them was corrected.
+
+    Args:
+        inbound_course_deg: Course flown **to** the fix on the inbound leg,
+            TRUE degrees.
+        arrival_heading_deg: The aircraft's true heading as it reaches the fix.
+        turn_direction: ``"R"`` for the standard right-hand pattern.
+
+    Returns:
+        The entry the aircraft is set up for. A heading exactly on a sector
+        boundary resolves deterministically; in the air either neighbouring
+        entry is acceptable there, so the boundary case is a convention rather
+        than a fact.
+    """
+    relative = _normalise_bearing(arrival_heading_deg - inbound_course_deg)
+    if turn_direction == "L":
+        relative = _normalise_bearing(-relative)
+    if PARALLEL_SECTOR_DEG < relative <= 180.0:
+        return "teardrop"
+    if 180.0 < relative < 360.0 - TEARDROP_SECTOR_DEG:
+        return "parallel"
+    return "direct"
+
+
+def hold_leg_length_nm(
+    ias_kt: float,
+    *,
+    leg_length_nm: float | None = None,
+    leg_time_min: float | None = None,
+) -> float | None:
+    """Length of the hold's outbound leg, whichever way it was published.
+
+    ``earth_hold.dat`` publishes exactly one of the two — a distance or a time —
+    and a time is only a length once a speed is chosen. Returns ``None`` when
+    neither was published, rather than inventing the ICAO one-minute default:
+    the caller is drawing a diagram with it, and a guessed racetrack drawn as
+    confidently as a published one is a lie the instructor cannot see through.
+    """
+    if leg_length_nm is not None:
+        return leg_length_nm
+    if leg_time_min is not None:
+        return ias_kt * leg_time_min / 60.0
+    return None
+
+
+def hold_placement(
+    fix: GeoPosition,
+    inbound_course_deg: float,
+    turn_direction: TurnDirection,
+    altitude_ft: float,
+    *,
+    ident: str = "hold",
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+) -> Placement:
+    """Place the aircraft in a published hold, over the fix, on the inbound course.
+
+    **Over the fix, not somewhere on the racetrack.** A hold is a pattern rather
+    than a point, so "put the aircraft in the hold" has no single answer — but
+    the holding fix on the inbound course is the one an instructor means and the
+    one every entry converges on. Placing part-way round the pattern would put
+    the aircraft somewhere the student cannot identify on a chart.
+
+    Args:
+        fix: The holding fix. Its own ``altitude_ft`` is ignored in favour of
+            ``altitude_ft``, because navdata fixes carry no altitude.
+        inbound_course_deg: Course flown to the fix, **TRUE** degrees. The
+            published value is magnetic; converting it is the caller's job and
+            this module has no magnetic model — see the module docstring.
+        turn_direction: ``"R"`` for the standard right-hand pattern.
+        altitude_ft: Target altitude, feet MSL. Callers should pass the hold's
+            published minimum when there is one.
+        ident: Fix name, used only for the label.
+        ias_kt: Indicated airspeed to command, knots. ``None`` takes the
+            ``category``'s circling speed, used here as a generic manoeuvring
+            speed. A hold is always flown, so a speed is defaulted rather than
+            withheld.
+        category: The aircraft's ICAO approach category, used only when
+            ``ias_kt`` is ``None``.
+
+    Returns:
+        The placement over the fix, established inbound, flying.
+    """
+    return Placement(
+        position=GeoPosition(
+            latitude=fix.latitude,
+            longitude=fix.longitude,
+            altitude_ft=altitude_ft,
+        ),
+        heading_deg=_normalise_bearing(inbound_course_deg),
+        ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
+        label=f"{ident} hold, {'right' if turn_direction == 'R' else 'left'}-hand",
     )
