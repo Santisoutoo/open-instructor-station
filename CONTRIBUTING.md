@@ -7,10 +7,8 @@ wins.
 Everything — code, comments, documentation, commit messages, PR descriptions — is written in
 **English**.
 
-This is a **private, proprietary project**. No license file, no license headers, and never copy
-code from third-party projects (Little Navmap is GPL-3: study its design, never its code).
-Contributions are accepted under those same proprietary terms: opening a PR does not grant you
-a license to the code, and what you contribute becomes part of the proprietary codebase.
+Never copy code from third-party projects: Little Navmap is GPL-3, so its design may be studied
+and its code never reused.
 
 ---
 

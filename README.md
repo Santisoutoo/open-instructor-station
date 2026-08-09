@@ -10,15 +10,6 @@ Everything runs *outside* the sim and talks to it over the network. X-Plane 12 i
 target; MSFS comes later through the same adapter abstraction. Because the server is reachable
 over the LAN, driving the station from a **tablet** is a first-class scenario.
 
-> ### ⚠️ Proprietary — All rights reserved
->
-> **This is a private project. No license is granted.**
->
-> There is no `LICENSE` file and its absence is deliberate: code published without a license
-> grants **no rights whatsoever** to copy, use, modify or distribute it. Do not add a license
-> file or license headers. Third-party code is never copied in — Little Navmap is GPL-3, its
-> design may be studied, its code never reused.
-
 ---
 
 ## Status
@@ -167,8 +158,7 @@ to make a run pass, navdata is never committed).
 
 In short: branch off `dev`, open a PR back into `dev`, and keep all four CI checks green —
 `lint-py`, `test-py`, `lint-ui`, `test-ui`. Bug reports and feature requests go through the
-[issue templates](.github/ISSUE_TEMPLATE). Contributions are accepted under this project's
-proprietary terms; contributing does not grant you a license to the code.
+[issue templates](.github/ISSUE_TEMPLATE).
 
 ---
 
