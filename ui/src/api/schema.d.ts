@@ -171,6 +171,10 @@ export interface paths {
         /**
          * Search Airports
          * @description Type-ahead over every airport in the index. Ranked, always bounded.
+         *
+         *     The parameter is ``q``, as the design specifies: the UI client is generated
+         *     from this schema, so the name is published surface and renaming it later
+         *     would break every caller silently.
          */
         get: operations["search_airports_api_navdata_airports_get"];
         put?: never;
@@ -320,6 +324,36 @@ export interface paths {
          *     to see the climb leg even though it can never be a placement.
          */
         get: operations["get_procedure_api_navdata_airports__icao__procedures__kind___ident__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/navaids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Navaids
+         * @description Navaids by identifier, or every navaid near a point.
+         *
+         *     **Two query forms, one path**, because they answer the same question from
+         *     the two directions an instructor asks it: "where is BRA?" and "what can I
+         *     tune from here?". Exactly one of ``ident`` and ``lat``/``lon`` must be given
+         *     — sending both would leave the server to invent a precedence, and sending
+         *     neither would ask for every navaid on Earth.
+         *
+         *     A list either way: navaid identifiers are **not** globally unique, so the
+         *     single-ident form returns every match sorted by ident then region, and the
+         *     caller disambiguates with ``region``.
+         */
+        get: operations["get_navaids_api_navdata_navaids_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1153,6 +1187,63 @@ export interface components {
             beacon?: boolean | null;
             /** Strobe */
             strobe?: boolean | null;
+        };
+        /**
+         * Navaid
+         * @description A ground-based navigation aid.
+         *
+         *     :attr:`tunable_radio` says where the frequency goes rather than merely
+         *     whether it is usable, because the three cases are genuinely different: a VOR
+         *     goes in NAV1, an NDB goes in the ADF, and a glideslope is not tuned by the
+         *     instructor at all. A boolean would collapse the first two, and an NDB's
+         *     380 kHz does not even pass ``AircraftSetup.nav1_freq_khz`` validation.
+         */
+        Navaid: {
+            /** Ident */
+            ident: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "vor" | "vor_dme" | "vortac" | "dme" | "ndb" | "tacan" | "localizer" | "glideslope" | "gls";
+            /** Name */
+            name?: string | null;
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Frequency Khz
+             * @description Frequency in kHz. VHF navaids share the unit of AircraftSetup.nav1_freq_khz (108000-117950); NDBs are in their own band (190-1750). The source stores VHF in units of 10 kHz and NDBs in kHz, and both are normalised here.
+             */
+            frequency_khz?: number | null;
+            /**
+             * Channel
+             * @description TACAN channel, e.g. "112X".
+             */
+            channel?: string | null;
+            /**
+             * Range Nm
+             * @description Published service volume.
+             */
+            range_nm?: number | null;
+            /** Magnetic Variation Deg */
+            magnetic_variation_deg?: number | null;
+            /** Region Code */
+            region_code?: string | null;
+            /**
+             * Airport Icao
+             * @description Terminal navaids only.
+             */
+            airport_icao?: string | null;
+            /**
+             * Runway Ident
+             * @description Localizers and glideslopes only.
+             */
+            runway_ident?: string | null;
+            /**
+             * Tunable Radio
+             * @description Which radio tunes this: "nav" for VHF navaids and localizers, "adf" for NDBs, None for glideslopes, GLS and markers.
+             * @default nav
+             */
+            tunable_radio: ("nav" | "adf") | null;
         };
         /**
          * NavdataStatus
@@ -1996,7 +2087,7 @@ export interface operations {
         parameters: {
             query: {
                 /** @description ICAO, IATA or part of the name. */
-                query: string;
+                q: string;
                 limit?: number;
             };
             header?: never;
@@ -2241,6 +2332,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Procedure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_navaids_api_navdata_navaids_get: {
+        parameters: {
+            query?: {
+                /** @description VOR/NDB/DME identifier. */
+                ident?: string | null;
+                /** @description ICAO region code, e.g. 'LE'. */
+                region?: string | null;
+                lat?: number | null;
+                lon?: number | null;
+                radius_nm?: number;
+                kinds?: ("vor" | "vor_dme" | "vortac" | "dme" | "ndb" | "tacan" | "localizer" | "glideslope" | "gls")[] | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Navaid"][];
                 };
             };
             /** @description Validation Error */

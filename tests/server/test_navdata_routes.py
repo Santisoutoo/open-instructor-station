@@ -7,10 +7,15 @@ from fastapi.testclient import TestClient
 
 import server.deps
 from core.navdata.in_memory import InMemoryNavdataProvider
+from core.navdata.models import NavdataStatus
 from core.navdata.provider import NavdataUnavailable
 from server.app import create_app
 from server.deps import reset_navdata
-from server.navdata_routes import NAVDATA_UNAVAILABLE_STATUS
+from server.navdata_routes import (
+    BUILDING_RETRY_AFTER_S,
+    NAVDATA_UNAVAILABLE_STATUS,
+    UNAVAILABLE_RETRY_AFTER_S,
+)
 
 
 class TestStatus:
@@ -36,23 +41,32 @@ class TestAirports:
     def test_search_ranks_the_bigger_field_first(self, client: TestClient) -> None:
         """An instructor typing a partial name wants the airport, not the strip."""
         with client:
-            response = client.get("/api/navdata/airports", params={"query": "Testfield"})
+            response = client.get("/api/navdata/airports", params={"q": "Testfield"})
         assert response.status_code == 200
         assert [row["icao"] for row in response.json()] == ["ZZZZ", "ZZZA"]
 
     def test_search_respects_the_limit(self, client: TestClient) -> None:
         with client:
-            response = client.get(
-                "/api/navdata/airports", params={"query": "Testfield", "limit": 1}
-            )
+            response = client.get("/api/navdata/airports", params={"q": "Testfield", "limit": 1})
+        assert response.status_code == 200
         assert len(response.json()) == 1
 
     def test_an_empty_query_is_rejected_rather_than_returning_the_world(
         self, client: TestClient
     ) -> None:
         with client:
-            response = client.get("/api/navdata/airports", params={"query": ""})
+            response = client.get("/api/navdata/airports", params={"q": ""})
         assert response.status_code == 422
+
+    def test_the_search_parameter_is_q_as_the_design_specifies(self, client: TestClient) -> None:
+        """``?q=``, not ``?query=`` — pinned because the UI client is generated from it.
+
+        The name is part of the published surface, so a silent drift back to
+        ``query`` would compile on both sides and only fail at runtime.
+        """
+        with client:
+            wrong_name = client.get("/api/navdata/airports", params={"query": "Testfield"})
+        assert wrong_name.status_code == 422
 
     def test_one_airport(self, client: TestClient) -> None:
         with client:
@@ -149,6 +163,68 @@ class TestParkingAndProcedures:
         assert response.status_code == 404
 
 
+class TestNavaids:
+    """``GET /api/navdata/navaids`` — two query forms on one path (design §12)."""
+
+    def test_by_ident_returns_every_match_because_idents_collide(self, client: TestClient) -> None:
+        with client:
+            response = client.get("/api/navdata/navaids", params={"ident": "ZZT"})
+        assert response.status_code == 200
+        assert [row["region_code"] for row in response.json()] == ["YY", "ZZ"]
+
+    def test_a_region_disambiguates(self, client: TestClient) -> None:
+        with client:
+            response = client.get("/api/navdata/navaids", params={"ident": "ZZT", "region": "ZZ"})
+        assert [row["name"] for row in response.json()] == ["Testfield VOR"]
+
+    def test_an_unknown_ident_is_an_empty_list_not_a_404(self, client: TestClient) -> None:
+        """Absent is ``[]`` on a list route: the provider never raises for not-found."""
+        with client:
+            response = client.get("/api/navdata/navaids", params={"ident": "NOPE"})
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_near_a_point_returns_the_local_ones_nearest_first(self, client: TestClient) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/navaids",
+                params={"lat": 40.0, "lon": -3.0, "radius_nm": 5.0},
+            )
+        assert response.status_code == 200
+        # The VOR is 0.01° north of the point, the NDB 0.02° south of it, and
+        # the far-away VOR sharing the ident is 1000 NM away and excluded.
+        assert [row["ident"] for row in response.json()] == ["ZZT", "ZZN"]
+
+    def test_near_filters_by_kind(self, client: TestClient) -> None:
+        """An instructor tuning NAV1 must not be offered an NDB."""
+        with client:
+            response = client.get(
+                "/api/navdata/navaids",
+                params={"lat": 40.0, "lon": -3.0, "radius_nm": 5.0, "kinds": ["vor_dme"]},
+            )
+        assert [row["ident"] for row in response.json()] == ["ZZT"]
+
+    def test_the_ndb_is_marked_for_the_adf_and_not_the_nav_radio(self, client: TestClient) -> None:
+        """The three-state field is what stops an NDB reaching ``nav1_freq_khz``."""
+        with client:
+            response = client.get("/api/navdata/navaids", params={"ident": "ZZN"})
+        assert response.json()[0]["tunable_radio"] == "adf"
+
+    def test_neither_form_is_rejected_rather_than_returning_the_world(
+        self, client: TestClient
+    ) -> None:
+        with client:
+            response = client.get("/api/navdata/navaids")
+        assert response.status_code == 422
+
+    def test_both_forms_at_once_is_rejected_rather_than_guessing(self, client: TestClient) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/navaids", params={"ident": "ZZT", "lat": 40.0, "lon": -3.0}
+            )
+        assert response.status_code == 422
+
+
 class TestFixesAndHolds:
     def test_fixes_by_ident(self, client: TestClient) -> None:
         with client:
@@ -165,20 +241,60 @@ class TestFixesAndHolds:
 
 
 class TestUnavailableProvider:
-    """A broken provider answers 503 with its reason — never a 500."""
+    """A broken provider answers 503 with its reason — never a 500.
 
-    @pytest.fixture
-    def broken_client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    Design §12 pins the whole answer, not only the status code: a
+    ``Retry-After`` whose value distinguishes "wait, it is building" from "a
+    human has to act", and ``status()`` in the body so a UI that raced the build
+    gets state instead of an opaque error.
+    """
+
+    @staticmethod
+    def _broken_client(monkeypatch: pytest.MonkeyPatch, state: str, reason: str) -> TestClient:
         class BrokenProvider(InMemoryNavdataProvider):
+            def status(self) -> NavdataStatus:
+                return super().status().model_copy(update={"state": state, "reason": reason})
+
             def search_airports(self, query: str, *, limit: int = 20) -> list:  # type: ignore[type-arg]
-                raise NavdataUnavailable("in_memory", "The index has not been built.")
+                raise NavdataUnavailable("in_memory", reason)
 
         monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: BrokenProvider())
         reset_navdata()
         return TestClient(create_app(), raise_server_exceptions=False)
 
+    @pytest.fixture
+    def broken_client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        return self._broken_client(monkeypatch, "unavailable", "The index has not been built.")
+
+    @pytest.fixture
+    def building_client(self, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+        return self._broken_client(monkeypatch, "building", "The index is being built.")
+
     def test_a_query_against_a_broken_provider_is_503(self, broken_client: TestClient) -> None:
         with broken_client:
-            response = broken_client.get("/api/navdata/airports", params={"query": "ZZ"})
+            response = broken_client.get("/api/navdata/airports", params={"q": "ZZ"})
         assert response.status_code == NAVDATA_UNAVAILABLE_STATUS
         assert "not been built" in response.json()["detail"]
+
+    def test_the_body_carries_the_status_so_a_racing_client_learns_the_state(
+        self, broken_client: TestClient
+    ) -> None:
+        with broken_client:
+            response = broken_client.get("/api/navdata/airports", params={"q": "ZZ"})
+        status = response.json()["status"]
+        assert status["state"] == "unavailable"
+        assert status["provider"] == "in_memory"
+
+    def test_an_unavailable_provider_asks_for_a_long_wait(self, broken_client: TestClient) -> None:
+        """A human has to act, so retrying in five seconds only burns battery."""
+        with broken_client:
+            response = broken_client.get("/api/navdata/airports", params={"q": "ZZ"})
+        assert response.headers["Retry-After"] == str(UNAVAILABLE_RETRY_AFTER_S)
+
+    def test_a_building_provider_asks_for_a_short_wait(self, building_client: TestClient) -> None:
+        """The build finishes on its own; the client only has to come back."""
+        with building_client:
+            response = building_client.get("/api/navdata/airports", params={"q": "ZZ"})
+        assert response.status_code == NAVDATA_UNAVAILABLE_STATUS
+        assert response.headers["Retry-After"] == str(BUILDING_RETRY_AFTER_S)
+        assert response.json()["status"]["state"] == "building"
