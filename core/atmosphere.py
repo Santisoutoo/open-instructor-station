@@ -60,9 +60,11 @@ __all__ = [
     "density_altitude_ft",
     "density_ratio",
     "ias_from_tas",
+    "isa_deviation_c",
     "isa_temperature_c",
     "pressure_ratio",
     "tas_from_ias",
+    "temperature_from_deviation_c",
 ]
 
 # --- ISA defining constants -------------------------------------------------
@@ -142,6 +144,50 @@ def isa_temperature_c(pressure_altitude_ft: float) -> float:
     if pressure_altitude_ft >= TROPOPAUSE_ALTITUDE_FT:
         return _TROPOPAUSE_TEMPERATURE_K - _KELVIN_AT_ZERO_C
     return ISA_SEA_LEVEL_TEMPERATURE_C - ISA_LAPSE_RATE_C_PER_FT * pressure_altitude_ft
+
+
+def isa_deviation_c(temperature_c: float, pressure_altitude_ft: float) -> float:
+    """How far the air is from a standard day, in degrees Celsius.
+
+    "ISA+15" is this number. It is the portable half of a temperature
+    observation: the deviation is roughly constant through an air mass, while the
+    temperature itself is not — air cools with height whether the day is standard
+    or not.
+
+    Args:
+        temperature_c: Observed outside air temperature in degrees Celsius.
+        pressure_altitude_ft: The pressure altitude it was observed at.
+
+    Returns:
+        ``temperature_c`` minus the standard temperature for that altitude:
+        positive in air warmer than standard, zero on a standard day.
+    """
+    return temperature_c - isa_temperature_c(pressure_altitude_ft)
+
+
+def temperature_from_deviation_c(pressure_altitude_ft: float, deviation_c: float) -> float:
+    """Air temperature at an altitude, given how far the day is off standard.
+
+    The inverse of :func:`isa_deviation_c`. Together the pair estimate the
+    temperature *somewhere else* from a single measurement: take the deviation
+    where it was measured, and re-apply it at the altitude of interest.
+
+    That assumes the real lapse rate matches the ISA's 1.98 °C per 1 000 ft. An
+    inversion or an unusually dry, well-mixed layer breaks the assumption, but it
+    is a far better one than carrying the raw temperature across. A 25 °C surface
+    reading taken up to 10 000 ft unchanged puts about 5 % of error into the
+    density ratio and pushes true airspeed the *wrong* way; its deviation taken up
+    instead costs a fraction of a per cent on any ordinary day.
+
+    Args:
+        pressure_altitude_ft: Pressure altitude of interest, in feet.
+        deviation_c: Departure from the standard temperature, in degrees Celsius
+            — typically from :func:`isa_deviation_c` at another altitude.
+
+    Returns:
+        Estimated outside air temperature there, in degrees Celsius.
+    """
+    return isa_temperature_c(pressure_altitude_ft) + deviation_c
 
 
 def pressure_ratio(pressure_altitude_ft: float) -> float:
