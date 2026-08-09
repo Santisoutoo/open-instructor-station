@@ -42,9 +42,10 @@ function entry(
   return reason === undefined ? base : { ...base, reason };
 }
 
-const NOT_MODELLED = (field: string) =>
-  `Not wired yet: AircraftSetup has no '${field}' field, so there is no path from this control to the simulator.`;
-
+/**
+ * What the real server returns for `FakeSimAdapter`: every control writable, the
+ * autopilot block included since issue #41 put its fields on `AircraftSetup`.
+ */
 const FAKE_MANIFEST: AircraftControlManifest = {
   adapter: 'fake',
   controls: [
@@ -52,42 +53,42 @@ const FAKE_MANIFEST: AircraftControlManifest = {
     entry('speedbrake', 'speedbrake_ratio', true),
     entry('gear', 'gear_down', true),
     entry('autobrake', 'autobrake_level', true),
-    entry('trim', 'elevator_trim_ratio', false, NOT_MODELLED('elevator_trim_ratio')),
+    entry('trim', 'elevator_trim_ratio', true),
     entry('lights', 'lights', true),
     entry('altitude', 'altitude_ft', true),
     entry('speed', 'ias_kt', true),
     entry('vertical_speed', 'vertical_speed_fpm', true),
     entry('heading', 'heading_deg', true),
-    entry(
-      'autopilot_master',
-      'autopilot_master',
-      false,
-      NOT_MODELLED('autopilot_master'),
-    ),
-    entry('autopilot_nav', 'autopilot_nav', false, NOT_MODELLED('autopilot_nav')),
-    entry('autopilot_app', 'autopilot_app', false, NOT_MODELLED('autopilot_app')),
-    entry('autopilot_hdg', 'autopilot_hdg', false, NOT_MODELLED('autopilot_hdg')),
-    entry('flight_director', 'flight_director', false, NOT_MODELLED('flight_director')),
-    entry(
-      'target_altitude',
-      'target_altitude_ft',
-      false,
-      NOT_MODELLED('target_altitude_ft'),
-    ),
-    entry('target_speed', 'target_ias_kt', false, NOT_MODELLED('target_ias_kt')),
-    entry(
-      'target_heading',
-      'target_heading_deg',
-      false,
-      NOT_MODELLED('target_heading_deg'),
-    ),
-    entry(
-      'target_vertical_speed',
-      'target_vertical_speed_fpm',
-      false,
-      NOT_MODELLED('target_vertical_speed_fpm'),
-    ),
+    entry('autopilot_master', 'autopilot_master', true),
+    entry('autopilot_nav', 'autopilot_nav', true),
+    entry('autopilot_app', 'autopilot_app', true),
+    entry('autopilot_hdg', 'autopilot_hdg', true),
+    entry('flight_director', 'flight_director', true),
+    entry('target_altitude', 'target_altitude_ft', true),
+    entry('target_speed', 'target_ias_kt', true),
+    entry('target_heading', 'target_heading_deg', true),
+    entry('target_vertical_speed', 'target_vertical_speed_fpm', true),
   ],
+};
+
+/**
+ * An adapter that cannot drive an autopilot: the manifest still lists the block,
+ * disabled with the capability as the stated reason. This is hard rule 3 in its
+ * primary form — the reason an instructor sees is "this simulator cannot", not
+ * "this panel has not been finished".
+ */
+const NO_AUTOPILOT_MANIFEST: AircraftControlManifest = {
+  adapter: 'stub',
+  controls: FAKE_MANIFEST.controls.map((control) =>
+    control.capability === 'can_control_autopilot'
+      ? entry(
+          control.control,
+          control.setup_field,
+          false,
+          "The 'stub' adapter does not declare can_control_autopilot.",
+        )
+      : control,
+  ),
 };
 
 /** Every POST body the panel sent, in order. */
@@ -229,7 +230,7 @@ describe('<AircraftControlPanel />', () => {
     expect(screen.getByRole('button', { name: /landing gear/i })).toBeDisabled();
   });
 
-  it('enables the controls the server backs and disables the rest with a stated reason', async () => {
+  it('enables every control the server backs, autopilot and trim included', async () => {
     stubFetch();
     renderPanel();
 
@@ -237,15 +238,63 @@ describe('<AircraftControlPanel />', () => {
       expect(screen.getByRole('slider', { name: /flaps/i })).toBeEnabled();
     });
     expect(screen.getByRole('button', { name: /landing gear/i })).toBeEnabled();
+    expect(screen.getByRole('slider', { name: /elevator trim/i })).toBeEnabled();
 
-    // The autopilot block and the trim have no `AircraftSetup` field behind them yet.
+    const autopilot = group('Autopilot');
+    expect(within(autopilot).getByRole('button', { name: /^nav$/i })).toBeEnabled();
+    expect(within(autopilot).getByLabelText(/ap heading/i)).toBeEnabled();
+  });
+
+  it('disables the autopilot block with the capability as the reason on an adapter without one', async () => {
+    stubFetch({ manifest: NO_AUTOPILOT_MANIFEST });
+    renderPanel();
+
+    // Everything outside the autopilot still works: an unsupported capability
+    // disables its own controls and nothing else.
+    await waitFor(() => {
+      expect(screen.getByRole('slider', { name: /flaps/i })).toBeEnabled();
+    });
+    expect(screen.getByRole('slider', { name: /elevator trim/i })).toBeEnabled();
+
     const nav = within(group('Autopilot')).getByRole('button', { name: /^nav$/i });
     expect(nav).toBeDisabled();
-    expect(rowOf(nav)).toHaveTextContent(/AircraftSetup has no 'autopilot_nav' field/);
+    expect(rowOf(nav)).toHaveTextContent(/does not declare can_control_autopilot/);
+  });
 
-    const trim = screen.getByRole('slider', { name: /elevator trim/i });
-    expect(trim).toBeDisabled();
-    expect(rowOf(trim)).toHaveTextContent(/AircraftSetup has no 'elevator_trim_ratio'/);
+  it('arms an autopilot mode through the same idempotent setup write', async () => {
+    stubFetch({ setupBody: { applied: { autopilot_hdg: true }, state: CRUISE } });
+    const user = userEvent.setup();
+    const { store } = renderPanel();
+
+    const hdg = within(group('Autopilot')).getByRole('button', { name: /^hdg$/i });
+    await waitFor(() => {
+      expect(hdg).toBeEnabled();
+    });
+    await user.click(hdg);
+
+    await waitFor(() => {
+      expect(posted).toEqual([{ autopilot_hdg: true }]);
+    });
+    await waitFor(() => {
+      expect(store.getState().aircraft.commanded['autopilot_hdg']).toBe(true);
+    });
+  });
+
+  it('commits an autopilot selector to its own field', async () => {
+    stubFetch();
+    const user = userEvent.setup();
+    renderPanel();
+
+    const field = screen.getByLabelText(/^ap altitude \(ft\)/i);
+    await waitFor(() => {
+      expect(field).toBeEnabled();
+    });
+    await user.type(field, '12000');
+    await user.click(within(rowOf(field)).getByRole('button', { name: /^set$/i }));
+
+    await waitFor(() => {
+      expect(posted).toEqual([{ target_altitude_ft: 12000 }]);
+    });
   });
 
   it('posts the gear command and confirms it optimistically', async () => {

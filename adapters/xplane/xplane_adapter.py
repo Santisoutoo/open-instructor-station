@@ -47,9 +47,16 @@ through one helper: :meth:`XPlaneSimAdapter.frozen_flight_model`. Residual
 pitch and roll after the release is the aircraft settling onto its gear; that
 is physically correct and is not something to tune away.
 
-Aircraft *configuration* — flaps, gear, lights, radios — is not part of the
-flight model's integration and is deliberately written outside the freeze, so a
-setup that only changes a switch costs no pause.
+Aircraft *configuration* — flaps, trim, gear, lights, radios and the autopilot —
+is not part of the flight model's integration and is deliberately written
+outside the freeze, so a setup that only changes a switch costs no pause.
+
+**The autopilot has no method of its own** (issue #41). It arrives through
+:meth:`XPlaneSimAdapter.apply_setup` like every other switch, gated by
+``can_control_autopilot``, and X-Plane's own shape is honoured rather than
+flattened: the master switch and the flight director are one three-valued
+dataref, and the lateral modes are selected by command because their status
+datarefs are read-only. See :meth:`XPlaneSimAdapter._write_autopilot`.
 
 This module imports cleanly with no simulator present and opens no sockets
 until :meth:`XPlaneSimAdapter.connect` is awaited.
@@ -117,8 +124,20 @@ DATAREFS: dict[str, str] = {
     # --- Aircraft configuration -------------------------------------------
     "flap_ratio": "sim/cockpit2/controls/flap_ratio",
     "speedbrake_ratio": "sim/cockpit2/controls/speedbrake_ratio",
+    "elevator_trim": "sim/cockpit2/controls/elevator_trim",  # -1 .. +1
     "gear_handle_down": "sim/cockpit2/controls/gear_handle_down",
     "autobrake_level": "sim/cockpit2/switches/auto_brake_level",
+    # --- Autopilot ---------------------------------------------------------
+    # The master switch and the flight director are ONE dataref in X-Plane:
+    # 0 = off, 1 = flight director only, 2 = servos engaged. See
+    # `_autopilot_mode_for`, which is where the two boolean fields are folded
+    # back into it.
+    "autopilot_mode": "sim/cockpit/autopilot/autopilot_mode",
+    "autopilot_altitude_dial_ft": "sim/cockpit2/autopilot/altitude_dial_ft",
+    "autopilot_airspeed_dial": "sim/cockpit2/autopilot/airspeed_dial_kts_mach",
+    "autopilot_airspeed_is_mach": "sim/cockpit2/autopilot/airspeed_is_mach",
+    "autopilot_heading_dial_deg": "sim/cockpit2/autopilot/heading_dial_deg_mag_pilot",
+    "autopilot_vvi_dial_fpm": "sim/cockpit2/autopilot/vvi_dial_fpm",
     # --- Lights ------------------------------------------------------------
     "landing_lights": "sim/cockpit2/switches/landing_lights_on",
     "taxi_lights": "sim/cockpit2/switches/taxi_light_on",
@@ -137,6 +156,16 @@ COMMANDS: dict[str, str] = {
     # Repairs every failed system, which includes clearing the crash state a
     # teleport provokes. Step 5 of the repositioning procedure.
     "fix_all_systems": "sim/operation/fix_all_systems",
+    # --- Autopilot lateral mode selection ---------------------------------
+    # X-Plane exposes the *armed/captured* lateral mode as read-only status
+    # datarefs (`nav_status`, `approach_status`, …) and selects it through
+    # commands. There is deliberately no per-mode "off": the lateral modes are
+    # mutually exclusive, so deselecting one means selecting another, and
+    # wing-leveller is X-Plane's neutral one.
+    "autopilot_nav": "sim/autopilot/NAV",
+    "autopilot_approach": "sim/autopilot/approach",
+    "autopilot_heading": "sim/autopilot/heading",
+    "autopilot_wing_leveler": "sim/autopilot/wing_leveler",
 }
 
 _CAPABILITIES = Capabilities(
@@ -173,6 +202,24 @@ _ARRIVAL_TIMEOUT_S = 30.0
 #: flight model is still frozen, so the aircraft is not moving and this only has
 #: to absorb float noise — not a second of flight.
 POSITION_WRITE_TOLERANCE_M = 50.0
+
+#: The three values of ``sim/cockpit/autopilot/autopilot_mode``. X-Plane models
+#: the master switch and the flight director as one ladder rather than two
+#: switches, which is physically right: servos without a flight director is not
+#: a state a real autopilot has.
+AUTOPILOT_MODE_OFF = 0
+AUTOPILOT_MODE_FLIGHT_DIRECTOR = 1
+AUTOPILOT_MODE_SERVOS = 2
+
+#: Lateral-mode field -> the command that selects it, in the order they are
+#: applied. The modes are mutually exclusive, so the last one activated wins:
+#: the order runs from the least specific (heading) to the most specific
+#: (approach), which is the sensible resolution of a contradictory setup.
+_LATERAL_MODE_COMMANDS: tuple[tuple[str, str], ...] = (
+    ("autopilot_hdg", "autopilot_heading"),
+    ("autopilot_nav", "autopilot_nav"),
+    ("autopilot_app", "autopilot_approach"),
+)
 
 
 class XPlaneNotReachable(RuntimeError):
@@ -568,10 +615,10 @@ class XPlaneSimAdapter:
           came back 7° off in the mild case and 164° off in the bad one, and an
           ``apply_setup`` call was observed leaving the aircraft inverted on the
           runway (issue #37).
-        * **Configuration** — flaps, speedbrake, gear, autobrake, lights, radios.
-          Switches and knobs, which the flight model reads rather than
-          overwrites. They are written *outside* the freeze so that changing a
-          light does not pause the simulation.
+        * **Configuration** — flaps, speedbrake, trim, gear, autobrake, lights,
+          radios and the autopilot. Switches and knobs, which the flight model
+          reads rather than overwrites. They are written *outside* the freeze so
+          that changing a light does not pause the simulation.
 
         The freeze is engaged only when there is flight-model state to write, so
         a configuration-only setup — and an empty one — costs nothing.
@@ -596,6 +643,7 @@ class XPlaneSimAdapter:
             )
 
         await self._write_configuration(setup)
+        await self._write_autopilot(setup)
         await self._write_flight_model_state(setup)
 
     async def _write_configuration(self, setup: AircraftSetup) -> None:
@@ -606,6 +654,8 @@ class XPlaneSimAdapter:
             writes.append(("flap_ratio", setup.flaps_ratio))
         if setup.speedbrake_ratio is not None:
             writes.append(("speedbrake_ratio", setup.speedbrake_ratio))
+        if setup.elevator_trim_ratio is not None:
+            writes.append(("elevator_trim", setup.elevator_trim_ratio))
         if setup.gear_down is not None:
             writes.append(("gear_handle_down", int(setup.gear_down)))
         if setup.autobrake_level is not None:
@@ -632,6 +682,85 @@ class XPlaneSimAdapter:
 
         for key, value in writes:
             await self._write(key, value)
+
+    async def _write_autopilot(self, setup: AircraftSetup) -> None:
+        """Write the autopilot half of a setup. No freeze required.
+
+        The autopilot is a panel, not a flight-model integration variable, so
+        this runs outside :meth:`frozen_flight_model` exactly like the rest of
+        the switches. Three X-Plane facts shape the method:
+
+        * **The master switch and the flight director share one dataref.**
+          ``autopilot_mode`` is a ladder — off / flight director / servos — so
+          the two boolean fields are folded into a single value against the
+          current one; see :meth:`_autopilot_mode_for`.
+        * **The lateral modes are selected by command, not written.** X-Plane
+          publishes ``nav_status``/``approach_status`` as read-only, and the
+          modes are mutually exclusive, so "NAV off" can only mean "select
+          another lateral mode". Wing-leveller is the neutral one.
+        * **The speed selector is shared between knots and Mach.** Asking for a
+          speed in knots therefore takes the dial out of Mach first — the same
+          shape as forcing manual weather mode before writing a wind.
+
+        Args:
+            setup: The setup to apply. ``None`` fields are skipped, and a setup
+                carrying no autopilot field at all costs nothing — not even a
+                read.
+        """
+        if setup.autopilot_master is not None or setup.flight_director is not None:
+            current = int(await self._read("autopilot_mode"))
+            await self._write(
+                "autopilot_mode",
+                self._autopilot_mode_for(current, setup.flight_director, setup.autopilot_master),
+            )
+
+        # `is True` rather than truthiness throughout: `None` means "leave this
+        # mode alone" and must not read as "switch it off".
+        selected = [
+            command for field, command in _LATERAL_MODE_COMMANDS if getattr(setup, field) is True
+        ]
+        if selected:
+            for command in selected:
+                await self._activate(command)
+        elif any(getattr(setup, field) is False for field, _ in _LATERAL_MODE_COMMANDS):
+            await self._activate("autopilot_wing_leveler")
+
+        if setup.target_altitude_ft is not None:
+            await self._write("autopilot_altitude_dial_ft", setup.target_altitude_ft)
+        if setup.target_ias_kt is not None:
+            await self._write("autopilot_airspeed_is_mach", 0)
+            await self._write("autopilot_airspeed_dial", setup.target_ias_kt)
+        if setup.target_heading_deg is not None:
+            await self._write("autopilot_heading_dial_deg", setup.target_heading_deg % 360.0)
+        if setup.target_vertical_speed_fpm is not None:
+            await self._write("autopilot_vvi_dial_fpm", setup.target_vertical_speed_fpm)
+
+    @staticmethod
+    def _autopilot_mode_for(current: int, flight_director: bool | None, master: bool | None) -> int:
+        """Fold ``flight_director`` and ``master`` into one ``autopilot_mode`` value.
+
+        The order is deliberate. The flight director is applied first because it
+        is the lower rung of the ladder, then the master switch, so a
+        contradictory setup (``flight_director=False`` together with
+        ``autopilot_master=True``) resolves in favour of the servos — an engaged
+        autopilot implies a flight director, never the other way round.
+
+        Args:
+            current: The mode X-Plane currently reports.
+            flight_director: Requested flight director state, or ``None``.
+            master: Requested servo state, or ``None``.
+
+        Returns:
+            The value to write to ``autopilot_mode``.
+        """
+        mode = current
+        if flight_director is not None:
+            mode = (
+                max(mode, AUTOPILOT_MODE_FLIGHT_DIRECTOR) if flight_director else AUTOPILOT_MODE_OFF
+            )
+        if master is not None:
+            mode = AUTOPILOT_MODE_SERVOS if master else min(mode, AUTOPILOT_MODE_FLIGHT_DIRECTOR)
+        return mode
 
     async def _write_flight_model_state(self, setup: AircraftSetup) -> None:
         """Write the half of a setup the flight model would otherwise overwrite.

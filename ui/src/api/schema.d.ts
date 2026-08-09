@@ -177,6 +177,16 @@ export interface components {
          *     Every field is optional: ``None`` means *leave that aspect of the aircraft
          *     untouched*. An adapter must apply exactly the fields that are set and must
          *     not reset the others to a default.
+         *
+         *     **This model is the whole write surface of the aircraft**, autopilot
+         *     included. There is deliberately no separate ``set_autopilot`` seam on
+         *     :class:`~core.sim_adapter.SimAdapter`: an instructor arming HDG and dialling
+         *     the heading bug is one intent, and splitting it across two calls would make
+         *     it two half-applied states an aircraft can be caught between. The fields are
+         *     still gated separately — the autopilot block needs
+         *     :attr:`~core.sim_adapter.Capabilities.can_control_autopilot`, everything else
+         *     needs ``can_set_aircraft_state`` — so an adapter that cannot drive an
+         *     autopilot refuses those fields and honours the rest.
          */
         AircraftSetup: {
             /**
@@ -230,6 +240,11 @@ export interface components {
              */
             speedbrake_ratio?: number | null;
             /**
+             * Elevator Trim Ratio
+             * @description -1 = full nose down, 0 = neutral, +1 = full nose up.
+             */
+            elevator_trim_ratio?: number | null;
+            /**
              * Gear Down
              * @description True = gear down and locked.
              */
@@ -266,6 +281,51 @@ export interface components {
              * @description NAV2 OBS course in degrees.
              */
             obs2_deg?: number | null;
+            /**
+             * Autopilot Master
+             * @description True = autopilot servos engaged and flying the aircraft.
+             */
+            autopilot_master?: boolean | null;
+            /**
+             * Flight Director
+             * @description True = flight director bars shown. Engaging the autopilot implies a flight director; switching the flight director off switches the autopilot off with it.
+             */
+            flight_director?: boolean | null;
+            /**
+             * Autopilot Nav
+             * @description True = NAV (VOR/LOC/GPS) selected as the lateral mode.
+             */
+            autopilot_nav?: boolean | null;
+            /**
+             * Autopilot App
+             * @description True = APPROACH selected as the lateral mode.
+             */
+            autopilot_app?: boolean | null;
+            /**
+             * Autopilot Hdg
+             * @description True = HEADING selected as the lateral mode.
+             */
+            autopilot_hdg?: boolean | null;
+            /**
+             * Target Altitude Ft
+             * @description Autopilot altitude selector, feet MSL. Not the aircraft's.
+             */
+            target_altitude_ft?: number | null;
+            /**
+             * Target Ias Kt
+             * @description Autopilot speed selector, indicated knots.
+             */
+            target_ias_kt?: number | null;
+            /**
+             * Target Heading Deg
+             * @description Autopilot heading bug, MAGNETIC degrees (a heading selector always is).
+             */
+            target_heading_deg?: number | null;
+            /**
+             * Target Vertical Speed Fpm
+             * @description Autopilot vertical speed selector, feet per minute.
+             */
+            target_vertical_speed_fpm?: number | null;
         };
         /**
          * AircraftSetupResult
