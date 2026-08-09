@@ -203,6 +203,7 @@ class XPlaneSimAdapter:
         self._client: httpx.AsyncClient | None = None
         self._ids: dict[str, int] = {}
         self._command_ids: dict[str, int] = {}
+        self._freeze_depth = 0
 
     # -- Identity ---------------------------------------------------------
 
@@ -411,16 +412,32 @@ class XPlaneSimAdapter:
         line in this method: a leaked ``override_planepath`` freezes the user's
         aircraft indefinitely, with nothing in the UI to explain why.
 
+        **It is re-entrant** (issue #48). A caller can hold one freeze around
+        :meth:`set_position` or :meth:`apply_setup` *and* its own read-back, so
+        the value it verifies is the value that was written rather than whatever
+        the aircraft flew to afterwards — an airborne aircraft with nobody flying
+        it was measured turning 4° to 170° between the write and the read. Only
+        the outermost block writes ``override_planepath`` and pays the settle
+        delays; nested blocks are no-ops. The nesting is a depth counter on a
+        single task, not a cross-task lock: two concurrent tasks freezing the
+        same adapter are not supported, and neither is anything else about
+        driving one simulator from two places at once.
+
         Yields:
             ``None``. The block runs with the flight model frozen.
         """
-        await self._write("override_planepath", 1, index=0)
+        if self._freeze_depth == 0:
+            await self._write("override_planepath", 1, index=0)
+        self._freeze_depth += 1
         try:
-            await asyncio.sleep(_OVERRIDE_SETTLE_S)
+            if self._freeze_depth == 1:
+                await asyncio.sleep(_OVERRIDE_SETTLE_S)
             yield
         finally:
-            await self._write("override_planepath", 0, index=0)
-            await asyncio.sleep(_RELEASE_SETTLE_S)
+            self._freeze_depth -= 1
+            if self._freeze_depth == 0:
+                await self._write("override_planepath", 0, index=0)
+                await asyncio.sleep(_RELEASE_SETTLE_S)
 
     async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
         """Teleport the aircraft, preserving its current speed on the new heading.
