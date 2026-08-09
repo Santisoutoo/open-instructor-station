@@ -685,7 +685,9 @@ def command_launch(args: argparse.Namespace) -> int:
         command.append("--no_joysticks")
 
     creation_flags = 0
-    if os.name == "nt":
+    # sys.platform, not os.name: these two flags only exist on Windows, and mypy narrows
+    # platform branches on sys.platform alone — CI type-checks this file on Linux.
+    if sys.platform == "win32":
         creation_flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
     subprocess.Popen(
         command,
