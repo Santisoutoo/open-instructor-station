@@ -136,7 +136,15 @@ per-task decision.
 | `planner` | Design a manager before any code: endpoints, models, datarefs, test plan → `docs/designs/<feature>.md`. Read-only. |
 | `implementer` | Build the design on a `feature/*` branch. Leaves a PR ready; never merges. |
 | `tester` | Write and run unit + contract tests against `FakeSimAdapter`. Never green-washes. |
-| `sim-validator` | Automated in-sim validation: with X-Plane live, run `pytest -m sim` + an E2E smoke (read datarefs → teleport → restore) and report. Never runs in CI. |
+| `sim-validator` | Automated live validation, unattended: starts X-Plane if it is not up, runs `pytest -m sim` + an E2E smoke (read datarefs → teleport → restore), shuts down and reports. Never runs in CI. |
+
+---
+
+## Skills (`.claude/skills/`)
+
+| Skill | Use for |
+|---|---|
+| `sim-lifecycle` | Driving the X-Plane 12 **process**: launch at an airport, wait for a real flight, place the aircraft, quit, restore the user's preferences. Developer tooling — `spikes/sim_lifecycle.py`, never imported by the app, never in CI. Rule 1 forbids *the application* launching a simulator; it does not forbid the test harness. **Only shut down a simulator you started.** |
 
 ---
 

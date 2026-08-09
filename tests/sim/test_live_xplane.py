@@ -196,9 +196,15 @@ async def test_apply_setup_writes_configuration() -> None:
     adapter = XPlaneSimAdapter()
     await adapter.connect()
     try:
-        before = await adapter.get_aircraft_state()
-        await adapter.apply_setup(AircraftSetup(heading_deg=(before.heading_deg + 30.0) % 360.0))
-        after = await adapter.get_aircraft_state()
+        # Read, write and read back inside one freeze: an airborne aircraft with
+        # nobody flying it turns between the write and the read-back, which is
+        # what made this assertion fail live (issue #48).
+        async with adapter.frozen_flight_model():
+            before = await adapter.get_aircraft_state()
+            await adapter.apply_setup(
+                AircraftSetup(heading_deg=(before.heading_deg + 30.0) % 360.0)
+            )
+            after = await adapter.get_aircraft_state()
         assert after.heading_deg == pytest.approx((before.heading_deg + 30.0) % 360.0, abs=5.0)
     finally:
         await adapter.disconnect()
