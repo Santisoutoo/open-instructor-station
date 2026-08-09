@@ -57,10 +57,11 @@ export function AirportSearch() {
   }, []);
 
   const shouldSearch = debounced.length >= MIN_QUERY_LENGTH;
-  const { data: results, isFetching } = useSearchAirportsQuery(
-    { query: debounced },
-    { skip: !shouldSearch },
-  );
+  const {
+    data: results,
+    isFetching,
+    isError,
+  } = useSearchAirportsQuery({ query: debounced }, { skip: !shouldSearch });
 
   function choose(icao: string) {
     dispatch(airportSelected(icao));
@@ -110,7 +111,18 @@ export function AirportSearch() {
         </ul>
       )}
 
-      {shouldSearch && (
+      {/*
+        A failed search and an empty one are the same picture unless this says which, and
+        the instructor spends a while retyping the code before suspecting the station.
+        Every other picker in this panel reports its own failure; so does this one.
+      */}
+      {shouldSearch && isError && (
+        <p className="panel__error">
+          The airport index could not be searched. Check the connection to the station.
+        </p>
+      )}
+
+      {shouldSearch && !isError && (
         <ul className="airport-search__results" aria-label="Airport search results">
           {results?.length === 0 && !isFetching && (
             <li className="airport-search__empty">No airport matches “{debounced}”.</li>
