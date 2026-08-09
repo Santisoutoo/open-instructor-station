@@ -7,8 +7,20 @@ wins.
 Everything — code, comments, documentation, commit messages, PR descriptions — is written in
 **English**.
 
-This is a **private, proprietary project**. No license file, no license headers, and never copy
-code from third-party projects (Little Navmap is GPL-3: study its design, never its code).
+Never copy code from third-party projects: Little Navmap is GPL-3, so its design may be studied
+and its code never reused.
+
+---
+
+## Getting set up
+
+The two-terminal development setup — backend, then frontend — is in the
+[README quickstart](README.md#quickstart). You do **not** need a simulator: the default adapter
+is `FakeSimAdapter` and it implements the whole interface in memory.
+
+Bug reports and feature requests go through the templates in
+[`.github/ISSUE_TEMPLATE/`](.github/ISSUE_TEMPLATE). Always say which adapter you were running
+(`fake` or `xplane`) — it is the first thing a triager needs.
 
 ---
 
