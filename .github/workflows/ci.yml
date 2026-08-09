@@ -16,9 +16,11 @@ name: CI
 # add X-Plane, MSFS or any simulator to any job in this file, and do not try to supply
 # a navdata tree — hard rule 4 forbids committing one.
 #
-# NOTE ON TOOL VERSIONS: ruff and mypy are pinned to a minor range in pyproject.toml
-# so `pip install -e .[dev]` is reproducible. Do not install or upgrade them ad hoc in
-# a step here — that would reintroduce the drift the pin exists to stop.
+# NOTE ON TOOL VERSIONS: the whole toolchain that decides whether this pipeline is
+# green — ruff, mypy, pytest and its plugins — is pinned to a minor range in
+# pyproject.toml so `pip install -e .[dev]` is reproducible. Do not install or upgrade
+# any of them ad hoc in a step here, and do not add a `pip install pytest ...` line:
+# that would reintroduce the drift the pins exist to stop.
 
 on:
   push:

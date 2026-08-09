@@ -20,9 +20,19 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=8.3",
-    "pytest-asyncio>=0.24",
-    "pytest-cov>=5.0",
+    # The test runner is pinned to a minor range for the same reason as the linters
+    # below: an unbounded floor is how `pytest>=8.3` quietly became **9.1.1**, a major
+    # the project never chose (same story as the old `mypy>=1.13` resolving 2.x). A
+    # pytest major can change collection rules, fixture semantics or defaults, and the
+    # result is a red pipeline nobody caused — which breaks the rule that a red run is
+    # never bypassed, because that rule only holds while red reliably means "you broke
+    # something". The plugins get the same treatment: pytest-asyncio had already
+    # crossed its own 0.x -> 1.x major under `>=0.24`, and it owns `asyncio_mode`.
+    # Bump these deliberately, as their own reviewable change, with a full `pytest` run
+    # in the same commit.
+    "pytest>=9.1.1,<9.2",
+    "pytest-asyncio>=1.4,<1.5",
+    "pytest-cov>=7.1,<7.2",
     # Ruff and mypy are pinned to a minor range ON PURPOSE. Both redefine what
     # "correct" means between minor releases: ruff 0.16 started formatting Python
     # code blocks inside Markdown and failed `lint-py` on a prose-only PR, and mypy
@@ -34,7 +44,12 @@ dev = [
     # `ruff format --check .` (Markdown included) in the same commit.
     "ruff>=0.16.1,<0.17",
     "mypy>=2.3,<2.4",
-    "types-pyyaml>=6.0",
+    # Stub packages feed mypy under `strict = true`, so they can turn a passing file
+    # red without a line of ours changing. The bound is on the PyYAML API line the
+    # stubs target; note it cannot freeze the stub *date*, because every release in
+    # this line is `6.0.12.<date>` — only an exact pin would, and that trades a real
+    # risk for constant bump churn over a single `yaml` import surface.
+    "types-pyyaml>=6.0.12,<6.1",
     # Packaging: builds the double-clickable executable from packaging/*.spec.
     "pyinstaller>=6.11",
 ]
