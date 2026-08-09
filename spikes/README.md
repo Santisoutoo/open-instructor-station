@@ -4,6 +4,11 @@ Throwaway validation scripts. Not imported by the application, not covered by te
 the PyInstaller bundle. A spike exists to answer one question against real software; once it is
 answered the answer belongs in `docs/` and in the adapter, not here.
 
+One exception, flagged so nobody deletes it during a clean-up: **`sim_lifecycle.py` is not
+throwaway.** It answered its question and then became the thing the `sim-validator` agent and the
+`sim-lifecycle` skill drive. It stays here because it is still developer tooling — outside the
+application, outside the bundle, outside CI — but it has a consumer now.
+
 ## `xplane_connection.py`
 
 **Question: can an external process read *and write* the aircraft position over the X-Plane 12.1+
@@ -75,3 +80,72 @@ Record the outcome in `docs/` and update `adapters/xplane/xplane_adapter.py`: ei
 "UNVALIDATED" warning from its module docstring, or implement the UDP fallback behind the same
 `set_position` signature. Nothing else in the codebase should need to change — that is what the
 `SimAdapter` seam is for.
+
+## `sim_lifecycle.py`
+
+**Question: can a test run drive the X-Plane 12 *process* — start it at a chosen airport, wait
+for it to be flyable, shut it down — without a human clicking anything?**
+
+Answered: yes. That is what unblocks automated live validation. Until this existed, `pytest -m sim`
+and the `sim-validator` agent both required a person to have X-Plane already running, which is why
+`docs/designs/live-contract-suite.md` had to record that the suite was **never run against a real
+simulator**.
+
+### This does not break hard rule 1
+
+`CLAUDE.md` rule 1 — *"the app is 100% external, the user never opens or launches anything inside
+the sim"* — is about **the application**. This script is not the application: nothing imports it,
+it is excluded from the PyInstaller bundle and it never runs in CI. Launching an `.exe` from the
+outside is not "opening something inside the simulator"; the instructor station still never does
+it. Keep it that way — if this module ever acquires an importer under `core/`, `server/` or
+`adapters/`, the rule has been broken.
+
+### Subcommands
+
+| Command | What it does |
+|---|---|
+| `status` | prints one of `not-running` / `menu` / `ready` |
+| `list --apt LEMD` | the airport's runways and stands, straight from `apt.dat` |
+| `launch --apt LEMD --rwy 32L` | writes the boot position and starts the process |
+| `wait-ready --near-apt LEMD` | blocks until a flight is actually loaded there |
+| `place --apt LEMD --rwy 32L` | puts the aircraft on the exact spot, via the adapter |
+| `quit` | asks the sim to quit, kills it if it refuses, restores preferences |
+| `restore-prefs` | restores preferences only, touching no process |
+
+```powershell
+& .venv\Scripts\python.exe spikes\sim_lifecycle.py launch --apt LEMD --rwy 32L
+& .venv\Scripts\python.exe spikes\sim_lifecycle.py wait-ready --near-apt LEMD
+& .venv\Scripts\python.exe spikes\sim_lifecycle.py place --apt LEMD --rwy 32L
+& .venv\Scripts\python.exe spikes\sim_lifecycle.py quit
+```
+
+### What was measured, because the folklore is wrong
+
+- **There is no `--load_acf` or `--load_apt`.** `X-Plane.exe --help` prints the whole flag list and
+  neither is on it. What is: `--window=WxH`, `--no_sound`, `--no_joysticks`, `--pref:`, `--dref:`.
+- **Left alone, X-Plane never starts flying.** It sits on the Quick Flight Loader screen waiting
+  for a human. Measured: nine minutes after launch the Web API was answering **HTTP 200 with an
+  empty dataref index**, because no flight existed to have datarefs about. `_show_qfl_on_start 0`
+  in `Output/preferences/X-Plane.prf` is the fix; with it the sim is ready in about a minute.
+  This is why "the API responds" is never the readiness test — `wait-ready` requires a plausible
+  position, not a 200.
+- **Only the *airport* in `_last_start` can be trusted.** Asking for LEBL 24R put the aircraft at
+  LEBL on runway 02; asking for LEMD 18R put it at LEMD on the previous session's spot. So the
+  boot position is used for the one thing it is reliable at — loading the right corner of the
+  world — and `place` sets the exact spot afterwards through the adapter's validated path. That
+  also keeps the teleport short, which sidesteps the scenery-reload failure of
+  [#36](https://github.com/Santisoutoo/open-instructor-station/issues/36).
+
+### It writes to the user's preferences
+
+Choosing a boot position means editing `Output/preferences/Freeflight.prf` and `X-Plane.prf`. Both
+are copied to `<name>.ois-backup` beside the original **before** the first edit, and only when a
+backup is not already there — a previous run that died left the *pristine* copy, and overwriting it
+would lose the user's settings for good. `quit` restores automatically; `restore-prefs` does it on
+demand. If a run is killed, the backup survives and the next `launch` will not clobber it.
+
+### Exit codes
+
+Per subcommand, and documented on each one; `0` always means the thing asked for happened.
+`status` is the exception — it always exits `0` because its answer is the word it prints, and three
+states do not map onto success-or-failure.

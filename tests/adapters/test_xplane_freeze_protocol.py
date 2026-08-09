@@ -256,3 +256,69 @@ async def test_frozen_flight_model_releases_on_an_exception(adapter: _RecordingA
             raise ZeroDivisionError
 
     assert adapter.writes == [(OVERRIDE, 1), (OVERRIDE, 0)]
+
+
+# --------------------------------------------------------------------------
+# Re-entrancy — issue #48
+# --------------------------------------------------------------------------
+
+
+async def test_frozen_flight_model_is_reentrant(adapter: _RecordingAdapter) -> None:
+    """A nested freeze must not release the outer one when it exits.
+
+    Without this, a caller holding a freeze around a write *and* its read-back
+    has the aircraft handed back to the flight model the moment the adapter's
+    own inner freeze ends — which is exactly the drift issue #48 is about.
+    """
+    async with adapter.frozen_flight_model():
+        async with adapter.frozen_flight_model():
+            pass
+        assert adapter.values[OVERRIDE] == 1, "the inner block released the outer freeze"
+
+    assert adapter.writes == [(OVERRIDE, 1), (OVERRIDE, 0)]
+
+
+async def test_a_caller_can_hold_the_freeze_across_set_position(
+    adapter: _RecordingAdapter,
+) -> None:
+    """``set_position`` freezes internally; that must nest, not take over."""
+    async with adapter.frozen_flight_model():
+        await adapter.set_position(HOME, heading_deg=270.0)
+        assert adapter.values[OVERRIDE] == 1, "set_position released the caller's freeze"
+
+    overrides = [value for key, value in adapter.writes if key == OVERRIDE]
+    assert overrides == [1, 0], f"expected one freeze and one release, got {adapter.writes}"
+
+
+async def test_a_caller_can_hold_the_freeze_across_apply_setup(
+    adapter: _RecordingAdapter,
+) -> None:
+    """The same for ``apply_setup``, which is where the heading read-back drifts."""
+    async with adapter.frozen_flight_model():
+        await adapter.apply_setup(AircraftSetup(heading_deg=123.0))
+        assert adapter.values[OVERRIDE] == 1, "apply_setup released the caller's freeze"
+        assert adapter.values["psi"] == 123.0
+
+    overrides = [value for key, value in adapter.writes if key == OVERRIDE]
+    assert overrides == [1, 0], f"expected one freeze and one release, got {adapter.writes}"
+
+
+async def test_reentrant_freeze_releases_once_and_recovers_after_an_exception(
+    adapter: _RecordingAdapter,
+) -> None:
+    """An exception through a nested freeze must not leave the counter unbalanced.
+
+    A depth counter that drifts upwards is a leaked override in disguise: the
+    next freeze would think it was already nested and never engage.
+    """
+    with pytest.raises(ZeroDivisionError):
+        async with adapter.frozen_flight_model():
+            async with adapter.frozen_flight_model():
+                raise ZeroDivisionError
+
+    assert adapter.writes == [(OVERRIDE, 1), (OVERRIDE, 0)]
+
+    async with adapter.frozen_flight_model():
+        assert adapter.values[OVERRIDE] == 1, "the freeze depth did not return to zero"
+
+    assert adapter.writes == [(OVERRIDE, 1), (OVERRIDE, 0), (OVERRIDE, 1), (OVERRIDE, 0)]
