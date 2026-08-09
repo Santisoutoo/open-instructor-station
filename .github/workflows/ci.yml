@@ -25,8 +25,12 @@ name: CI
 on:
   push:
     branches: [main, dev]
+  # Every pull request, whatever it targets. Restricting this to main and dev meant a
+  # PR stacked on a feature branch reported no checks at all, so the only signal was a
+  # human remembering to run the suite locally. Work is routinely stacked — a fix on
+  # top of a large feature branch is reviewed and merged there first — and CLAUDE.md's
+  # "CI must be green before any merge" does not carve out those merges.
   pull_request:
-    branches: [main, dev]
 
 # Cancel superseded runs on the same ref: only the latest push to a PR matters.
 concurrency:
