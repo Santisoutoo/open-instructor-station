@@ -13,8 +13,8 @@ overrides them.
 
 | Phase | Theme | Managers delivered | Status |
 |---|---|---|---|
-| **0** | Foundation | — (skeleton + contract + CI) | **In progress** |
-| **1** | Position Manager + Aircraft Control | 1, 6, radios of 7 | Planned |
+| **0** | Foundation | — (skeleton + contract + CI) | **Complete** |
+| **1** | Position Manager + Aircraft Control | 1, 6, radios of 7 | **In progress** |
 | **2** | Weather + Failures → Scenario Generator | 3, 4, 9 → 2, 14 | Planned |
 | **3** | Instructor Map + AI Traffic | 5, 13, 8, 10 | Planned |
 | **4** | Analysis and sessions | 11, 12, full 7 | Planned |

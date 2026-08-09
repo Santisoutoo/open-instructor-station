@@ -1,0 +1,15 @@
+I
+1200 Version - HAND-WRITTEN FIXTURE. Every value below is invented.
+# ZOXOL appears TWICE on purpose: once enroute (ENRT) and once scoped to ZZZZ.
+# Collapsing that terminal column would make roughly half the legs of a typical
+# SID unresolvable, so the two must stay distinguishable.
+# The last record is deliberately malformed: it must be skipped and counted,
+# never fatal.
+
+  40.50000000   -3.50000000 ZOXOL ENRT LE 4530011
+  40.20000000   -3.20000000 ZOXOL ZZZZ LE 4530011
+  40.60000000   -3.60000000 ZANKO ENRT LE 4530011
+  40.30000000   -2.70000000 ZUBIX ZZZZ LE 4530011
+  41.10000000   -3.10000000 ZEBRA ENRT LE 4530011
+  not-a-latitude -3.00000000 ZBROK ENRT LE 4530011
+99

@@ -1,0 +1,15 @@
+A
+1140 Version - HAND-WRITTEN FIXTURE. Every value below is invented.
+# Reached ONLY through the zero-byte Custom Data/earth_hold.dat beside it: a
+# navdata installer that leaves an empty placeholder must fall through to the
+# default data rather than reporting "this install publishes no holds".
+#
+#   ZUL    a terminal hold at ZZZY's neighbour ZZZZ, over a VOR (fix type 3),
+#          measured in TIME
+#   ZOXOL  an enroute hold over a waypoint (fix type 11), measured in DISTANCE
+#   ZANKO  publishes NEITHER measure: skipped and counted, never fatal
+
+ZUL   ZZZZ LE  3 242.0 1.0 0.0 R 6000 0 0
+ZOXOL ENRT LE 11  90.0 0.0 7.0 L 0 0 230
+ZANKO ENRT LE 11 123.4 0.0 0.0 R 0 0 0
+99
