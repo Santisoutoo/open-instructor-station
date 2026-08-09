@@ -1,19 +1,20 @@
 # Position Manager — design
 
-Covers issues **#9** (API endpoints) and **#10** (UI panel), plus the holding geometry left over
-from **#6**. This is the manager the product exists for: put the aircraft where the lesson needs
-it, from a tablet, without alt-tabbing into the simulator.
+Covers issues **#9** (API endpoints) and **#10** (UI panel). This is the manager the product
+exists for: put the aircraft where the lesson needs it, from a tablet, without alt-tabbing into
+the simulator.
 
-Everything it needs from `core/` already existed before this work started:
+Everything it needs from `core/` already exists:
 
 | What | Where |
 |---|---|
-| Placement geometry | `core/geodesy.py` — `Placement`, `final_placement`, `pattern_placement`, `resolve_runway_placement`, `coordinate_placement`, `waypoint_placement`, `RUNWAY_PLACEMENTS` |
+| Placement geometry | `core/geodesy.py` — `Placement`, `resolve_runway_placement`, `coordinate_placement`, `waypoint_placement`, `procedure_leg_placement`, `hold_placement`, `positionable_legs`, `true_from_magnetic` |
 | The static world | `core/navdata/provider.py` — the `NavdataProvider` protocol |
 | The vocabulary | `core/navdata/models.py`, `core/models.py` (`Runway`, `GeoPosition`, `AircraftSetup`) |
 
-Phase A adds **no new `core/` concepts** other than holding geometry. `server/` is a façade; the
-panel is a consumer.
+**This branch adds nothing to `core/`.** `server/` is a façade over what is already there; the
+panel is a consumer of the façade. See §3.4 for why the holding geometry that was originally
+specified here no longer is.
 
 **Status: both phases are implemented** on `feature/position-manager`.
 
@@ -291,62 +292,43 @@ is false → **422** carrying `unpositionable_reason` verbatim. `preview` needs 
 — staging is navdata and arithmetic, and it works against an adapter that cannot reposition at
 all.
 
-### 3.4 The one `core/` addition — holding geometry
+### 3.4 `core/` needed no addition after all
 
-```python
-TurnDirection = Literal["L", "R"]
-HoldEntry = Literal["direct", "parallel", "teardrop"]
+This design originally specified holding geometry here, and it was written. It was then
+**deleted**: PR #64 landed `feature/placement-geodesy` on `dev` in parallel, with a far more
+complete treatment of the same ground — `hold_placement`, `hold_entry_placement`,
+`holding_pattern_point`, `procedure_leg_placement`, `procedure_placement`, `positionable_legs`,
+`turn_radius_nm` and `true_from_magnetic`. Keeping a second, smaller implementation of the same
+thing would have been the worst outcome available, so the merge took `dev`'s wholesale and the
+router was rewritten against it. That closes the last bullet of **#6** without this branch
+contributing to it.
 
+Two of `dev`'s decisions changed the router's behaviour and are worth stating, because they are
+better than what was specified here:
 
-def hold_entry(
-    inbound_course_deg: float,
-    arrival_heading_deg: float,
-    turn_direction: TurnDirection = "R",
-) -> HoldEntry: ...
+- **A published speed is a ceiling, not a target.** A hold placarded at 210 kt or a STAR leg at
+  250 kt is a restriction the aircraft must stay under, and flying the placard would put a
+  category A trainer a hundred knots over its manoeuvring speed. `_constrained_ias_kt` starts
+  from the aircraft's own category speed and lets the chart only *clamp* it — never below the
+  category's threshold speed, so a mis-parsed restriction cannot hand an aeroplane a stall.
+  The preview's notes therefore read "Published speed restriction: at or below 210 kt", not
+  "210 kt — the hold's published speed".
+- **A leg's heading comes from its neighbours.** An ARINC outbound course is magnetic, so the
+  router passes `procedure_leg_placement` the previous and next *positionable* fixes and lets it
+  derive a true heading from the geometry.
 
-
-def hold_leg_length_nm(
-    ias_kt: float,
-    *,
-    leg_length_nm: float | None = None,
-    leg_time_min: float | None = None,
-) -> float | None: ...
-
-
-def hold_placement(
-    fix: GeoPosition,
-    inbound_course_deg: float,  # TRUE; the caller converts, this module never does
-    turn_direction: TurnDirection,
-    altitude_ft: float,
-    *,
-    ident: str = "hold",
-    ias_kt: float | None = None,
-    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
-) -> Placement: ...
-```
-
-The placement is at the **holding fix**, on the inbound course — the honest answer to "put the
-aircraft in the hold", and the one every entry converges on. Placing part-way round the pattern
-would put the aircraft somewhere the student cannot identify on a chart.
-
-`hold_entry` implements the ICAO Doc 8168 sectors: 180° direct, 70° teardrop, 110° parallel. It
-takes the turn direction because the sectors are not symmetric, and a left-hand hold is computed
-as the **exact mirror** of the right-hand one so the two cannot drift apart the first time one is
-corrected.
-
-Leg length is a **separate function**, not a parameter of the placement, because it does not move
-the placement point — it only draws the racetrack. It returns `None` when the source published
-neither a distance nor a time: no ICAO one-minute default, because a guessed racetrack drawn as
-confidently as a published one is a lie the instructor cannot see through.
-
-**Magnetic versus true is the trap.** `Hold.inbound_course_mag_deg` is magnetic and
+**Magnetic versus true remains the trap.** `Hold.inbound_course_mag_deg` is magnetic and
 `core/geodesy.py` is true throughout, and this project deliberately carries no world magnetic
-model. `hold_placement` therefore takes a **true** course, and `server/position_routes.py`
-converts using the airport's published `magnetic_variation_deg` when there is one, adding a note
-saying so — and when there is none, it uses the magnetic value unconverted and says *that* in the
-notes. Guessing silently is the one thing that must not happen.
+model. `hold_placement` therefore requires a `magnetic_variation_deg`, and
+`server/position_routes.py` supplies the airport's published one — adding a note saying so, or,
+when the airport publishes none, passing zero and saying *that* in the notes instead. Guessing
+silently is the one thing that must not happen.
 
-### 3.5 Tests — 56 new, all in CI, no simulator
+`core.geodesy` raises `ValueError` when the published data cannot answer a request — a leg with
+no altitude constraint and no altitude given. The router maps that to **422** with the module's
+own sentence: the request is well formed, the data cannot answer it.
+
+### 3.5 Tests — all in CI, no simulator
 
 - `tests/server/conftest.py` builds a hand-written world: airport `ZZZZ` (the ICAO code reserved
   for "no code assigned", so it can never collide with a real one), runway 36 on a **true bearing
@@ -490,7 +472,8 @@ Built as one branch, `feature/position-manager`, rather than the two planned: th
 `schema.d.ts` regenerated from the running Phase-A server, so splitting them would have meant
 either a merge in the middle or hand-written API types, and the second is forbidden.
 
-Closes **#9** and **#10**, and the last bullet of **#6**.
+Closes **#9** and **#10**. The last bullet of **#6** was closed on `dev` by PR #64 instead —
+see §3.4.
 
 CI is the integration barrier. Nothing here touches `SimAdapter` or `Capabilities`, so this work
 is not on the never-parallelise list.

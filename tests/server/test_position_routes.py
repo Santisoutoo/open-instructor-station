@@ -201,9 +201,14 @@ class TestProcedureLegs:
             },
         )
         assert body["placement"]["position"]["altitude_ft"] == 6000.0
-        assert body["placement"]["ias_kt"] == 250.0
+        # The leg is placarded at 250 kt, and a placard is a **ceiling**: the aircraft
+        # flies its own category speed clamped to it, never the placard itself. Flying
+        # 250 kt because a chart says "250" would put a trainer 100 kt over its
+        # manoeuvring speed.
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_CIRCLING_IAS_KT["B"]
         notes = " ".join(body["notes"])
-        assert "published constraint" in notes
+        assert "published constraint" in notes.lower()
+        assert "250" in notes
 
     def test_an_unpositionable_leg_is_refused_with_its_reason(self, client: TestClient) -> None:
         with client:
@@ -252,10 +257,14 @@ class TestProcedureLegs:
 
 
 class TestHoldPlacement:
-    def test_it_uses_the_published_minimum_and_speed(self, client: TestClient) -> None:
+    def test_it_uses_the_published_minimum_and_clamps_to_the_placard(
+        self, client: TestClient
+    ) -> None:
         body = preview(client, {"type": "hold", "fix_ident": "GOXOL"})
         assert body["placement"]["position"]["altitude_ft"] == 7000.0
-        assert body["placement"]["ias_kt"] == 210.0
+        # Placarded at 210 kt, which is a ceiling a category B aircraft never reaches.
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_CIRCLING_IAS_KT["B"]
+        assert "at or below 210 kt" in " ".join(body["notes"])
 
     def test_the_magnetic_course_is_converted_and_the_note_says_so(
         self, client: TestClient

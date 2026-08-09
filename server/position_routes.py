@@ -47,11 +47,14 @@ from core.geodesy import (
     distance_and_bearing,
     hold_placement,
     point_at_distance_and_bearing,
+    positionable_legs,
+    procedure_leg_placement,
     resolve_runway_placement,
+    true_from_magnetic,
     waypoint_placement,
 )
 from core.models import AircraftSetup, AircraftState, GeoPosition, Runway
-from core.navdata.models import Airport, ProcedureKind, ProcedureLeg
+from core.navdata.models import Hold, Procedure, ProcedureKind, ProcedureLeg, Waypoint
 from core.navdata.provider import NavdataProvider
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
 from server.deps import get_adapter, get_navdata
@@ -266,16 +269,10 @@ def _runway(provider: NavdataProvider, icao: str, ident: str) -> Runway:
     return runway
 
 
-def _airport(provider: NavdataProvider, icao: str) -> Airport:
-    airport = provider.get_airport(icao)
-    if airport is None:
-        raise HTTPException(
-            status_code=404, detail=f"Airport {icao.upper()!r} is not in the navigation index."
-        )
-    return airport
-
-
-def _leg(provider: NavdataProvider, request: ProcedureLegPlacementRequest) -> ProcedureLeg:
+def _leg(
+    provider: NavdataProvider, request: ProcedureLegPlacementRequest
+) -> tuple[Procedure, ProcedureLeg]:
+    """The requested leg, with the procedure it belongs to — the neighbours give it a heading."""
     procedure = provider.get_procedure(
         request.airport_icao, request.kind, request.ident, request.transition
     )
@@ -299,29 +296,34 @@ def _leg(provider: NavdataProvider, request: ProcedureLegPlacementRequest) -> Pr
             detail=leg.unpositionable_reason
             or f"A {leg.path_terminator} leg carries no defensible coordinate.",
         )
-    return leg
+    return procedure, leg
 
 
-def _magnetic_to_true(course_mag_deg: float, airport: Airport | None) -> tuple[float, str]:
-    """Convert a published magnetic course, saying plainly what was done.
+def _hold_variation(provider: NavdataProvider, hold: Hold) -> tuple[float, str]:
+    """The magnetic variation to convert a hold's published course with, and a note.
 
-    This project carries no world magnetic model on purpose, so the only
-    variation available is whatever the airport record published. When there is
-    none the magnetic value is used unconverted — and the note says so, because
-    silently treating a magnetic course as true is the single most common way to
-    be quietly wrong in navigation.
+    A published inbound course is magnetic and ``core.geodesy`` is true
+    throughout, so something has to supply the variation. This project carries
+    no world magnetic model on purpose, which leaves whatever the airport record
+    published — and when there is none, zero, meaning the magnetic value is used
+    unconverted. The note says which of the two happened, because silently
+    treating a magnetic course as true is the commonest way to be quietly wrong
+    in navigation, and the instructor is the one who can tell whether it matters
+    where they are flying.
     """
+    airport = provider.get_airport(hold.airport_icao) if hold.airport_icao is not None else None
+    course = hold.inbound_course_mag_deg
     if airport is not None and airport.magnetic_variation_deg is not None:
         variation = airport.magnetic_variation_deg
-        return (course_mag_deg + variation) % 360.0, (
-            f"Inbound course {course_mag_deg:g}° magnetic converted to "
-            f"{(course_mag_deg + variation) % 360.0:.1f}° true using {airport.icao}'s "
+        return variation, (
+            f"Inbound course {course:g}° magnetic converted to "
+            f"{true_from_magnetic(course, variation):.1f}° true using {airport.icao}'s "
             f"published variation of {variation:+g}°."
         )
-    return course_mag_deg % 360.0, (
-        f"Inbound course {course_mag_deg:g}° is MAGNETIC and was used unconverted: no "
-        f"magnetic variation is published for this fix, and this station carries no "
-        f"world magnetic model."
+    return 0.0, (
+        f"Inbound course {course:g}° is MAGNETIC and was used unconverted: no magnetic "
+        f"variation is published for this fix, and this station carries no world "
+        f"magnetic model."
     )
 
 
@@ -341,7 +343,22 @@ def request_category(request: PlacementRequest) -> ApproachCategory:
 def _resolve(
     request: PlacementRequest, provider: NavdataProvider
 ) -> tuple[Placement, PlacementSchematic, list[str]]:
-    """Resolve any request into a placement, its diagram and its provenance notes."""
+    """Resolve any request into a placement, its diagram and its provenance notes.
+
+    ``core.geodesy`` raises :class:`ValueError` when a request cannot be honoured
+    from the published data — a leg with no altitude constraint and no altitude
+    given, for instance. That is a 422 with the module's own sentence, not a 500:
+    the request is well formed and the *data* cannot answer it.
+    """
+    try:
+        return _resolve_placement(request, provider)
+    except ValueError as exc:
+        raise HTTPException(status_code=UNPOSITIONABLE_STATUS, detail=str(exc)) from exc
+
+
+def _resolve_placement(
+    request: PlacementRequest, provider: NavdataProvider
+) -> tuple[Placement, PlacementSchematic, list[str]]:
     notes: list[str] = []
 
     category = request_category(request)
@@ -438,37 +455,25 @@ def _resolve(
         return placement, PlacementSchematic(), notes
 
     if isinstance(request, ProcedureLegPlacementRequest):
-        leg = _leg(provider, request)
-        assert leg.fix is not None  # guaranteed by _leg
-        altitude_ft = request.altitude_ft
-        if altitude_ft is None and leg.altitude is not None:
-            altitude_ft = leg.altitude.suggested_ft
-            if altitude_ft is not None:
-                notes.append(
-                    f"{altitude_ft:,.0f} ft — published constraint: {leg.altitude.display}."
-                )
-        if altitude_ft is None:
-            raise HTTPException(
-                status_code=UNPOSITIONABLE_STATUS,
-                detail=f"Leg {request.sequence} publishes no altitude constraint, so an "
-                f"altitude must be given.",
-            )
-        ias_kt = request.ias_kt
-        if ias_kt is None and leg.speed is not None and leg.speed.suggested_kt is not None:
-            ias_kt = leg.speed.suggested_kt
-            notes.append(f"{ias_kt:g} kt — published constraint: {leg.speed.display}.")
-        placement = waypoint_placement(
-            leg.fix.position,
-            altitude_ft,
-            ident=leg.fix.ident,
-            ias_kt=ias_kt,
+        procedure, leg = _leg(provider, request)
+        if request.altitude_ft is None and leg.altitude is not None:
+            notes.append(f"Published constraint: {leg.altitude.display}.")
+        if request.ias_kt is None and leg.speed is not None:
+            notes.append(f"Published constraint: {leg.speed.display}.")
+        # The surrounding legs are what give a leg a heading: an ARINC outbound
+        # course is magnetic, and this project carries no magnetic model.
+        neighbours = _neighbouring_fixes(procedure, leg)
+        placement = procedure_leg_placement(
+            leg,
+            altitude_ft=request.altitude_ft,
+            ias_kt=request.ias_kt,
             category=category,
+            procedure_ident=procedure.ident,
+            previous_fix=neighbours[0],
+            next_fix=neighbours[1],
         )
-        notes.append(_speed_note(ias_kt, placement, category))
-        notes.append(
-            f"{leg.path_terminator} leg {leg.sequence} of {request.ident.upper()}, "
-            f"over {leg.fix.ident}."
-        )
+        notes.append(_speed_note(request.ias_kt, placement, category))
+        notes.append(f"{leg.path_terminator} leg {leg.sequence} of {procedure.ident}.")
         return placement, PlacementSchematic(), notes
 
     holds = provider.get_holds(
@@ -482,33 +487,44 @@ def _resolve(
             detail=f"No published hold at {request.fix_ident.upper()}.",
         )
     hold = holds[0]
-    airport = provider.get_airport(hold.airport_icao) if hold.airport_icao is not None else None
-    inbound_true_deg, course_note = _magnetic_to_true(hold.inbound_course_mag_deg, airport)
+    variation_deg, course_note = _hold_variation(provider, hold)
     notes.append(course_note)
-    altitude_ft = request.altitude_ft
-    if altitude_ft is None:
-        altitude_ft = hold.min_altitude_ft
-        if altitude_ft is not None:
-            notes.append(f"{altitude_ft:,.0f} ft — the hold's published minimum.")
-    if altitude_ft is None:
-        raise HTTPException(
-            status_code=UNPOSITIONABLE_STATUS,
-            detail="This hold publishes no minimum altitude, so an altitude must be given.",
-        )
-    ias_kt = request.ias_kt if request.ias_kt is not None else hold.speed_kt
+    if request.altitude_ft is None and hold.min_altitude_ft is not None:
+        notes.append(f"{hold.min_altitude_ft:,.0f} ft — the hold's published minimum.")
     if request.ias_kt is None and hold.speed_kt is not None:
-        notes.append(f"{hold.speed_kt:g} kt — the hold's published speed.")
+        # A placard is a ceiling, not a target: the aircraft flies its own
+        # manoeuvring speed clamped to it, never the placard itself.
+        notes.append(f"Published speed restriction: at or below {hold.speed_kt:g} kt.")
     placement = hold_placement(
-        hold.fix.position,
-        inbound_true_deg,
-        hold.turn_direction,
-        altitude_ft,
-        ident=hold.fix.ident,
-        ias_kt=ias_kt,
+        hold,
+        magnetic_variation_deg=variation_deg,
+        altitude_ft=request.altitude_ft,
+        ias_kt=request.ias_kt,
         category=category,
     )
-    notes.append(_speed_note(ias_kt, placement, category))
+    notes.append(_speed_note(request.ias_kt, placement, category))
     return placement, PlacementSchematic(), notes
+
+
+def _neighbouring_fixes(
+    procedure: Procedure, leg: ProcedureLeg
+) -> tuple[Waypoint | None, Waypoint | None]:
+    """The resolved fixes either side of ``leg`` in its own procedure.
+
+    They are what give the placement a heading. Only positionable legs are
+    considered, because an unresolved fix is no more use as a neighbour than it
+    is as a destination.
+    """
+    placeable = positionable_legs(procedure)
+    index = next(
+        (i for i, candidate in enumerate(placeable) if candidate.sequence == leg.sequence),
+        None,
+    )
+    if index is None:
+        return None, None
+    previous = placeable[index - 1].fix if index > 0 else None
+    following = placeable[index + 1].fix if index + 1 < len(placeable) else None
+    return previous, following
 
 
 def _speed_note(
