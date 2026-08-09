@@ -25,26 +25,13 @@ import {
 import type { AircraftSetup } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { Schematic } from './Schematic';
+import { errorMessage } from './errors';
 import { commitGate } from './gate';
 import { formatAltitudeFt, formatSpeedKt } from './placements';
 import { setupOverridden, staleCleared } from './positionSlice';
 
 /** How long the confirmation stays up after a successful commit. MOTION is dialled low. */
 const FLASH_MS = 2400;
-
-/** Pulls a readable sentence out of whatever RTK Query hands back for an error. */
-export function errorMessage(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'data' in error) {
-    const data = (error as { data: unknown }).data;
-    if (typeof data === 'object' && data !== null && 'detail' in data) {
-      const detail = (data as { detail: unknown }).detail;
-      if (typeof detail === 'string') {
-        return detail;
-      }
-    }
-  }
-  return 'The placement could not be applied.';
-}
 
 /** One editable number, with the provenance of its default underneath. */
 function EditableNumber({
@@ -174,7 +161,10 @@ export function StagingBar() {
   return (
     <section className="staging" aria-label="Staged placement">
       <div className="staging__diagram">
-        <Schematic schematic={preview.schematic} headingDeg={preview.placement.heading_deg} />
+        <Schematic
+          schematic={preview.schematic}
+          headingDeg={preview.placement.heading_deg}
+        />
         <p className="staging__label">{preview.placement.label}</p>
       </div>
 

@@ -328,6 +328,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/navdata/navaids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Navaids
+         * @description Navaids by identifier, or every navaid near a point.
+         *
+         *     **Two query forms, one path**, because they answer the same question from
+         *     the two directions an instructor asks it: "where is BRA?" and "what can I
+         *     tune from here?". Exactly one of ``ident`` and ``lat``/``lon`` must be given
+         *     — sending both would leave the server to invent a precedence, and sending
+         *     neither would ask for every navaid on Earth.
+         *
+         *     A list either way: navaid identifiers are **not** globally unique, so the
+         *     single-ident form returns every match sorted by ident then region, and the
+         *     caller disambiguates with ``region``.
+         */
+        get: operations["get_navaids_api_navdata_navaids_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/navdata/fixes": {
         parameters: {
             query?: never;
@@ -632,7 +662,7 @@ export interface components {
              * @description True when any gear touches the ground.
              * @default false
              */
-            on_ground?: boolean;
+            on_ground: boolean;
         };
         /**
          * Airport
@@ -689,12 +719,12 @@ export interface components {
              * Has Tower
              * @default false
              */
-            has_tower?: boolean;
+            has_tower: boolean;
             /**
              * Runway Count
              * @default 0
              */
-            runway_count?: number;
+            runway_count: number;
             /** Longest Runway M */
             longest_runway_m?: number | null;
             /**
@@ -702,7 +732,7 @@ export interface components {
              * @description True when a CIFP file exists for this airport. Set from a directory listing, not from a parse, so the UI can disable the procedure tabs before any lazy load.
              * @default false
              */
-            has_procedures?: boolean;
+            has_procedures: boolean;
         };
         /**
          * AirportSummary
@@ -724,7 +754,7 @@ export interface components {
              * Has Procedures
              * @default false
              */
-            has_procedures?: boolean;
+            has_procedures: boolean;
         };
         /**
          * AltitudeConstraint
@@ -755,13 +785,13 @@ export interface components {
              * @description True when the source published the lower bound as a level.
              * @default false
              */
-            min_is_flight_level?: boolean;
+            min_is_flight_level: boolean;
             /**
              * Max Is Flight Level
              * @description True when the source published the upper bound as a level.
              * @default false
              */
-            max_is_flight_level?: boolean;
+            max_is_flight_level: boolean;
             /**
              * Display
              * @description The constraint as an instructor would read it off a chart.
@@ -799,47 +829,47 @@ export interface components {
              * Can Set Position
              * @default false
              */
-            can_set_position?: boolean;
+            can_set_position: boolean;
             /**
              * Can Set Aircraft State
              * @default false
              */
-            can_set_aircraft_state?: boolean;
+            can_set_aircraft_state: boolean;
             /**
              * Can Set Weather
              * @default false
              */
-            can_set_weather?: boolean;
+            can_set_weather: boolean;
             /**
              * Can Inject Failures
              * @default false
              */
-            can_inject_failures?: boolean;
+            can_inject_failures: boolean;
             /**
              * Can Spawn Traffic
              * @default false
              */
-            can_spawn_traffic?: boolean;
+            can_spawn_traffic: boolean;
             /**
              * Can Control Autopilot
              * @default false
              */
-            can_control_autopilot?: boolean;
+            can_control_autopilot: boolean;
             /**
              * Can Set Fuel Payload
              * @default false
              */
-            can_set_fuel_payload?: boolean;
+            can_set_fuel_payload: boolean;
             /**
              * Can Control Camera
              * @default false
              */
-            can_control_camera?: boolean;
+            can_control_camera: boolean;
             /**
              * Can Pushback
              * @default false
              */
-            can_pushback?: boolean;
+            can_pushback: boolean;
         };
         /**
          * CoordinatePlacementRequest
@@ -852,16 +882,10 @@ export interface components {
              */
             type: "coordinate";
             position: components["schemas"]["GeoPosition"];
-            /**
-             * Heading Deg
-             * @default 0
-             */
-            heading_deg?: number;
-            /**
-             * Ias Kt
-             * @default 0
-             */
-            ias_kt?: number;
+            /** Heading Deg */
+            heading_deg?: number | null;
+            /** Ias Kt */
+            ias_kt?: number | null;
         };
         /**
          * Fix
@@ -938,7 +962,7 @@ export interface components {
              * @description Feet above mean sea level.
              * @default 0
              */
-            altitude_ft?: number;
+            altitude_ft: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1018,6 +1042,12 @@ export interface components {
         /**
          * HoldPlacementRequest
          * @description In a published holding pattern, over its fix, established inbound.
+         *
+         *     ``core.geodesy`` can also place at the other three points of the racetrack
+         *     (``HOLD_PLACEMENTS``) and before the fix on an entry course
+         *     (``hold_entry_placement``). Neither is exposed here yet: the fix is the one
+         *     point of a hold an instructor names, and adding the rest is a request-model
+         *     change with a UI control behind it rather than something to smuggle in.
          */
         HoldPlacementRequest: {
             /**
@@ -1035,12 +1065,8 @@ export interface components {
             altitude_ft?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
-            /**
-             * Category
-             * @default B
-             * @enum {string}
-             */
-            category?: "A" | "B" | "C" | "D" | "E";
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
         /**
          * Ils
@@ -1118,7 +1144,7 @@ export interface components {
              * @description True when a DME is collocated.
              * @default false
              */
-            has_dme?: boolean;
+            has_dme: boolean;
         };
         /**
          * IndexProgress
@@ -1163,6 +1189,63 @@ export interface components {
             beacon?: boolean | null;
             /** Strobe */
             strobe?: boolean | null;
+        };
+        /**
+         * Navaid
+         * @description A ground-based navigation aid.
+         *
+         *     :attr:`tunable_radio` says where the frequency goes rather than merely
+         *     whether it is usable, because the three cases are genuinely different: a VOR
+         *     goes in NAV1, an NDB goes in the ADF, and a glideslope is not tuned by the
+         *     instructor at all. A boolean would collapse the first two, and an NDB's
+         *     380 kHz does not even pass ``AircraftSetup.nav1_freq_khz`` validation.
+         */
+        Navaid: {
+            /** Ident */
+            ident: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "vor" | "vor_dme" | "vortac" | "dme" | "ndb" | "tacan" | "localizer" | "glideslope" | "gls";
+            /** Name */
+            name?: string | null;
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Frequency Khz
+             * @description Frequency in kHz. VHF navaids share the unit of AircraftSetup.nav1_freq_khz (108000-117950); NDBs are in their own band (190-1750). The source stores VHF in units of 10 kHz and NDBs in kHz, and both are normalised here.
+             */
+            frequency_khz?: number | null;
+            /**
+             * Channel
+             * @description TACAN channel, e.g. "112X".
+             */
+            channel?: string | null;
+            /**
+             * Range Nm
+             * @description Published service volume.
+             */
+            range_nm?: number | null;
+            /** Magnetic Variation Deg */
+            magnetic_variation_deg?: number | null;
+            /** Region Code */
+            region_code?: string | null;
+            /**
+             * Airport Icao
+             * @description Terminal navaids only.
+             */
+            airport_icao?: string | null;
+            /**
+             * Runway Ident
+             * @description Localizers and glideslopes only.
+             */
+            runway_ident?: string | null;
+            /**
+             * Tunable Radio
+             * @description Which radio tunes this: "nav" for VHF navaids and localizers, "adf" for NDBs, None for glideslopes, GLS and markers.
+             * @default nav
+             */
+            tunable_radio: ("nav" | "adf") | null;
         };
         /**
          * NavdataStatus
@@ -1271,7 +1354,7 @@ export interface components {
              * @description Accepted types: "heavy", "jets", "turboprops", "props", "helos".
              * @default []
              */
-            aircraft_types?: string[];
+            aircraft_types: string[];
             /** Operation */
             operation?: ("none" | "general_aviation" | "airline" | "cargo" | "military") | null;
             /**
@@ -1279,7 +1362,7 @@ export interface components {
              * @description ICAO airline codes the stand is assigned to, e.g. ("ibe", "baw").
              * @default []
              */
-            airline_codes?: string[];
+            airline_codes: string[];
         };
         /**
          * Placement
@@ -1328,7 +1411,7 @@ export interface components {
              * @description Where each pre-filled number came from — a published constraint, a glideslope computation, or a category default. The staging bar renders these verbatim so the instructor can tell a charted altitude from a guessed one.
              * @default []
              */
-            notes?: string[];
+            notes: string[];
         };
         /**
          * PlacementResult
@@ -1356,7 +1439,7 @@ export interface components {
              * Points
              * @default []
              */
-            points?: components["schemas"]["SchematicPoint"][];
+            points: components["schemas"]["SchematicPoint"][];
         };
         /**
          * Procedure
@@ -1378,14 +1461,14 @@ export interface components {
              * Runway Idents
              * @default []
              */
-            runway_idents?: string[];
+            runway_idents: string[];
             /** Approach Type */
             approach_type?: ("ils" | "loc" | "rnav" | "gps" | "vor" | "vor_dme" | "ndb" | "ndb_dme" | "lda" | "sdf" | "gls" | "mls" | "igs" | "unknown") | null;
             /**
              * Legs
              * @default []
              */
-            legs?: components["schemas"]["ProcedureLeg"][];
+            legs: components["schemas"]["ProcedureLeg"][];
         };
         /**
          * ProcedureLeg
@@ -1466,32 +1549,32 @@ export interface components {
              * Is Flyover
              * @default false
              */
-            is_flyover?: boolean;
+            is_flyover: boolean;
             /**
              * Is Initial Approach Fix
              * @default false
              */
-            is_initial_approach_fix?: boolean;
+            is_initial_approach_fix: boolean;
             /**
              * Is Final Approach Fix
              * @default false
              */
-            is_final_approach_fix?: boolean;
+            is_final_approach_fix: boolean;
             /**
              * Is Missed Approach Point
              * @default false
              */
-            is_missed_approach_point?: boolean;
+            is_missed_approach_point: boolean;
             /**
              * Is Missed Approach Leg
              * @default false
              */
-            is_missed_approach_leg?: boolean;
+            is_missed_approach_leg: boolean;
             /**
              * Is End Of Procedure
              * @default false
              */
-            is_end_of_procedure?: boolean;
+            is_end_of_procedure: boolean;
             /**
              * Raw
              * @description The source line. Diagnostics only.
@@ -1528,12 +1611,8 @@ export interface components {
             altitude_ft?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
-            /**
-             * Category
-             * @default B
-             * @enum {string}
-             */
-            category?: "A" | "B" | "C" | "D" | "E";
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
         /**
          * ProcedureSummary
@@ -1562,7 +1641,7 @@ export interface components {
              * @description The real runways this serves, expanded: a "RW32B" transition becomes every 32* runway the airport actually has. Empty for a named (non-runway) transition.
              * @default []
              */
-            runway_idents?: string[];
+            runway_idents: string[];
             /**
              * Approach Type
              * @description Approaches only.
@@ -1636,7 +1715,7 @@ export interface components {
              * @description Distance in metres from pavement_end to threshold, along the runway centreline. 0.0 means the threshold is not displaced. apt.dat publishes this in metres and the CIFP RWY: record publishes it in feet; both are converted to metres here.
              * @default 0
              */
-            displaced_threshold_m?: number;
+            displaced_threshold_m: number;
             /**
              * Landing Distance M
              * @description Landing distance available in metres, i.e. length_m minus displaced_threshold_m. None when the displacement is unknown.
@@ -1685,31 +1764,18 @@ export interface components {
             runway_ident: string;
             /** Placement */
             placement: ("final_20nm" | "final_15nm" | "final_10nm" | "final_8nm" | "final_5nm" | "final_3nm" | "short_final") | ("left_upwind" | "left_crosswind" | "left_downwind" | "left_base" | "right_upwind" | "right_crosswind" | "right_downwind" | "right_base");
-            /**
-             * Glideslope Deg
-             * @default 3
-             */
-            glideslope_deg?: number;
+            /** Glideslope Deg */
+            glideslope_deg?: number | null;
             /** Pattern Altitude Ft */
             pattern_altitude_ft?: number | null;
-            /**
-             * Pattern Width Nm
-             * @default 1
-             */
-            pattern_width_nm?: number;
-            /**
-             * Leg Distance Nm
-             * @default 1.5
-             */
-            leg_distance_nm?: number;
+            /** Pattern Width Nm */
+            pattern_width_nm?: number | null;
+            /** Leg Distance Nm */
+            leg_distance_nm?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
-            /**
-             * Category
-             * @default B
-             * @enum {string}
-             */
-            category?: "A" | "B" | "C" | "D" | "E";
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
         /**
          * SchematicPoint
@@ -1750,7 +1816,7 @@ export interface components {
              * @description Raw ARINC descriptor: "+", "-" or blank.
              * @default
              */
-            descriptor?: string;
+            descriptor: string;
             /**
              * Min Kt
              * @description At-or-above bound, knots.
@@ -1843,12 +1909,8 @@ export interface components {
             heading_deg?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
-            /**
-             * Category
-             * @default B
-             * @enum {string}
-             */
-            category?: "A" | "B" | "C" | "D" | "E";
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
     };
     responses: never;
@@ -2027,7 +2089,7 @@ export interface operations {
         parameters: {
             query: {
                 /** @description ICAO, IATA or part of the name. */
-                query: string;
+                q: string;
                 limit?: number;
             };
             header?: never;
@@ -2272,6 +2334,45 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Procedure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_navaids_api_navdata_navaids_get: {
+        parameters: {
+            query?: {
+                /** @description VOR/NDB/DME identifier. */
+                ident?: string | null;
+                /** @description ICAO region code, e.g. 'LE'. */
+                region?: string | null;
+                lat?: number | null;
+                lon?: number | null;
+                radius_nm?: number;
+                kinds?: ("vor" | "vor_dme" | "vortac" | "dme" | "ndb" | "tacan" | "localizer" | "glideslope" | "gls")[] | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Navaid"][];
                 };
             };
             /** @description Validation Error */

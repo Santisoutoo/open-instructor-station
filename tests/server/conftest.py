@@ -22,6 +22,7 @@ from core.navdata.models import (
     AltitudeConstraint,
     Fix,
     Hold,
+    Navaid,
     ParkingStand,
     Procedure,
     ProcedureLeg,
@@ -102,6 +103,39 @@ STAND = ParkingStand(
     kind="gate",
 )
 
+#: A VOR on the field, and a second navaid **with the same identifier** in
+#: another region. Navaid idents are not globally unique — that is the whole
+#: reason ``get_navaids`` returns a list — so the fixture has to contain a
+#: collision or the route's list-ness is never actually exercised.
+VOR_ZZT = Navaid(
+    ident="ZZT",
+    kind="vor_dme",
+    name="Testfield VOR",
+    position=GeoPosition(latitude=40.01, longitude=-3.0, altitude_ft=1000.0),
+    frequency_khz=113_700,
+    range_nm=130.0,
+    region_code="ZZ",
+)
+
+VOR_ZZT_ELSEWHERE = Navaid(
+    ident="ZZT",
+    kind="vor",
+    name="Faraway VOR",
+    position=GeoPosition(latitude=10.0, longitude=10.0, altitude_ft=0.0),
+    frequency_khz=115_200,
+    region_code="YY",
+)
+
+NDB_ZZN = Navaid(
+    ident="ZZN",
+    kind="ndb",
+    name="Testfield NDB",
+    position=GeoPosition(latitude=39.98, longitude=-3.0, altitude_ft=1000.0),
+    frequency_khz=380,
+    region_code="ZZ",
+    tunable_radio="adf",
+)
+
 FIX_GOXOL = Fix(
     ident="GOXOL",
     position=GeoPosition(latitude=40.5, longitude=-3.0),
@@ -115,6 +149,22 @@ HOLD_GOXOL = Hold(
     leg_time_min=1.0,
     min_altitude_ft=7000.0,
     speed_kt=210.0,
+    airport_icao="ZZZZ",
+)
+
+#: A hold that publishes no altitude window at all. Real ``earth_hold.dat``
+#: records do this, and the placement has to refuse rather than invent one:
+#: guessing would put the aircraft at sea level, which at most fixes is terrain.
+HOLD_NO_ALTITUDE = Hold(
+    fix=Waypoint(
+        ident="NOALTHOLD",
+        kind="fix",
+        position=GeoPosition(latitude=40.7, longitude=-3.0),
+        region_code="ZZ",
+    ),
+    inbound_course_mag_deg=90.0,
+    turn_direction="R",
+    leg_time_min=1.0,
     airport_icao="ZZZZ",
 )
 
@@ -163,8 +213,9 @@ def build_provider() -> InMemoryNavdataProvider:
         airports=[AIRPORT, OTHER_AIRPORT],
         runways=[RUNWAY_36, RUNWAY_18],
         parking=[STAND],
+        navaids=[VOR_ZZT, VOR_ZZT_ELSEWHERE, NDB_ZZN],
         fixes=[FIX_GOXOL],
-        holds=[HOLD_GOXOL],
+        holds=[HOLD_GOXOL, HOLD_NO_ALTITUDE],
         procedures=[SID],
     )
 

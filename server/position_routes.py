@@ -33,6 +33,7 @@ from pydantic import BaseModel, Field
 
 from core.geodesy import (
     APPROACH_CATEGORY_CIRCLING_IAS_KT,
+    APPROACH_CATEGORY_VAT_KT,
     DEFAULT_APPROACH_CATEGORY,
     DEFAULT_GLIDESLOPE_DEG,
     DEFAULT_PATTERN_LEG_DISTANCE_NM,
@@ -48,10 +49,11 @@ from core.geodesy import (
     hold_placement,
     point_at_distance_and_bearing,
     resolve_runway_placement,
+    true_from_magnetic,
     waypoint_placement,
 )
 from core.models import AircraftSetup, AircraftState, GeoPosition, Runway
-from core.navdata.models import Airport, ProcedureKind, ProcedureLeg
+from core.navdata.models import Airport, Hold, ProcedureKind, ProcedureLeg
 from core.navdata.provider import NavdataProvider
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
 from server.deps import get_adapter, get_navdata
@@ -159,7 +161,14 @@ class ProcedureLegPlacementRequest(BaseModel):
 
 
 class HoldPlacementRequest(BaseModel):
-    """In a published holding pattern, over its fix, established inbound."""
+    """In a published holding pattern, over its fix, established inbound.
+
+    ``core.geodesy`` can also place at the other three points of the racetrack
+    (``HOLD_PLACEMENTS``) and before the fix on an entry course
+    (``hold_entry_placement``). Neither is exposed here yet: the fix is the one
+    point of a hold an instructor names, and adding the rest is a request-model
+    change with a UI control behind it rather than something to smuggle in.
+    """
 
     type: Literal["hold"]
     fix_ident: str = Field(min_length=1)
@@ -256,6 +265,23 @@ class PlacementResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _category(category: ApproachCategory | None) -> ApproachCategory:
+    """The requested ICAO approach category, or the module-wide default.
+
+    The request models spell every optional field ``| None`` so that "the caller
+    said nothing" is distinguishable from "the caller said the default", but
+    ``core.geodesy`` takes concrete values. Resolving here, once, keeps the
+    default in exactly one place — ``core.geodesy`` — instead of copying its
+    value into six pydantic ``Field`` declarations.
+    """
+    return DEFAULT_APPROACH_CATEGORY if category is None else category
+
+
+def _or_default(value: float | None, default: float) -> float:
+    """``value`` when the caller stated one, ``default`` otherwise."""
+    return default if value is None else value
+
+
 def _runway(provider: NavdataProvider, icao: str, ident: str) -> Runway:
     runway = provider.get_runway(icao, ident)
     if runway is None:
@@ -302,23 +328,27 @@ def _leg(provider: NavdataProvider, request: ProcedureLegPlacementRequest) -> Pr
     return leg
 
 
-def _magnetic_to_true(course_mag_deg: float, airport: Airport | None) -> tuple[float, str]:
-    """Convert a published magnetic course, saying plainly what was done.
+def _hold_variation_deg(hold: Hold, airport: Airport | None) -> tuple[float, str]:
+    """The variation to hand ``core.geodesy``, saying plainly where it came from.
 
-    This project carries no world magnetic model on purpose, so the only
-    variation available is whatever the airport record published. When there is
-    none the magnetic value is used unconverted — and the note says so, because
-    silently treating a magnetic course as true is the single most common way to
-    be quietly wrong in navigation.
+    ``core.geodesy`` is true throughout and every hold function takes
+    ``magnetic_variation_deg`` as a **required** argument precisely so that no
+    caller can forget the frame. This project carries no world magnetic model on
+    purpose, so the only variation available is whatever the airport record
+    published. When there is none, zero is passed — which leaves the published
+    magnetic course unconverted — and the note says so, because silently
+    treating a magnetic course as true is the single most common way to be
+    quietly wrong in navigation.
     """
+    course_mag_deg = hold.inbound_course_mag_deg
     if airport is not None and airport.magnetic_variation_deg is not None:
         variation = airport.magnetic_variation_deg
-        return (course_mag_deg + variation) % 360.0, (
+        return variation, (
             f"Inbound course {course_mag_deg:g}° magnetic converted to "
-            f"{(course_mag_deg + variation) % 360.0:.1f}° true using {airport.icao}'s "
-            f"published variation of {variation:+g}°."
+            f"{true_from_magnetic(course_mag_deg, variation):.1f}° true using "
+            f"{airport.icao}'s published variation of {variation:+g}°."
         )
-    return course_mag_deg % 360.0, (
+    return 0.0, (
         f"Inbound course {course_mag_deg:g}° is MAGNETIC and was used unconverted: no "
         f"magnetic variation is published for this fix, and this station carries no "
         f"world magnetic model."
@@ -333,20 +363,24 @@ def _resolve(
 
     if isinstance(request, RunwayPlacementRequest):
         runway = _runway(provider, request.airport_icao, request.runway_ident)
+        category = _category(request.category)
+        glideslope_deg = _or_default(request.glideslope_deg, DEFAULT_GLIDESLOPE_DEG)
+        pattern_width_nm = _or_default(request.pattern_width_nm, DEFAULT_PATTERN_WIDTH_NM)
+        leg_distance_nm = _or_default(request.leg_distance_nm, DEFAULT_PATTERN_LEG_DISTANCE_NM)
         placement = resolve_runway_placement(
             runway,
             request.placement,
-            glideslope_deg=request.glideslope_deg,
+            glideslope_deg=glideslope_deg,
             pattern_altitude_ft=request.pattern_altitude_ft,
-            pattern_width_nm=request.pattern_width_nm,
-            leg_distance_nm=request.leg_distance_nm,
+            pattern_width_nm=pattern_width_nm,
+            leg_distance_nm=leg_distance_nm,
             ias_kt=request.ias_kt,
-            category=request.category,
+            category=category,
         )
         distance_nm = FINAL_DISTANCES_NM.get(request.placement)  # type: ignore[arg-type]
         if distance_nm is not None:
             notes.append(
-                f"{placement.altitude_ft:,.0f} ft — {request.glideslope_deg:g}° glidepath "
+                f"{placement.altitude_ft:,.0f} ft — {glideslope_deg:g}° glidepath "
                 f"{distance_nm:g} NM from the {runway.ident} threshold at "
                 f"{runway.elevation_ft:,.0f} ft."
             )
@@ -355,8 +389,8 @@ def _resolve(
                 f"{placement.altitude_ft:,.0f} ft — standard circuit height above the "
                 f"{runway.ident} threshold."
             )
-        notes.append(_speed_note(request.ias_kt, placement, request.category))
-        return placement, _runway_schematic(runway, placement, request), notes
+        notes.append(_speed_note(request.ias_kt, placement, category))
+        return placement, _runway_schematic(runway, placement, request, glideslope_deg), notes
 
     if isinstance(request, ParkingPlacementRequest):
         stands = provider.get_parking(request.airport_icao)
@@ -377,15 +411,22 @@ def _resolve(
 
     if isinstance(request, CoordinatePlacementRequest):
         placement = coordinate_placement(
-            request.position, request.heading_deg, ias_kt=request.ias_kt
+            request.position,
+            _or_default(request.heading_deg, 0.0),
+            ias_kt=_or_default(request.ias_kt, GROUND_IAS_KT),
         )
-        if request.ias_kt == 0.0 and request.position.altitude_ft > 0.0:
+        if placement.ias_kt == GROUND_IAS_KT and request.position.altitude_ft > 0.0:
+            # The warning is keyed on the RESOLVED speed, not on the requested
+            # one: omitting ias_kt resolves to 0 kt just as surely as asking for
+            # it does, and that is the case most likely to be an accident.
             notes.append(
-                "0 kt was requested at a non-zero altitude — the aircraft will be below "
-                "stall speed. Set a speed unless this point is on the ground."
+                "0 kt at a non-zero altitude — the aircraft will be below stall speed. "
+                "Set a speed unless this point is on the ground."
             )
-        else:
+        elif request.ias_kt is not None:
             notes.append(f"{placement.ias_kt:g} kt, exactly as requested.")
+        else:
+            notes.append("0 kt — a bare coordinate is stationary unless a speed is given.")
         return placement, PlacementSchematic(), notes
 
     if isinstance(request, WaypointPlacementRequest):
@@ -405,17 +446,18 @@ def _resolve(
                 f"{len(fixes)} fixes are published as {fix.ident}; the one in region "
                 f"{fix.region_code or 'unknown'} was used. Give a region to disambiguate."
             )
+        category = _category(request.category)
         placement = waypoint_placement(
             fix.position,
             request.altitude_ft,
             ident=fix.ident,
             heading_deg=request.heading_deg,
             ias_kt=request.ias_kt,
-            category=request.category,
+            category=category,
         )
         if request.heading_deg is None:
             notes.append("Heading 000° — a bare fix carries no course, and none was given.")
-        notes.append(_speed_note(request.ias_kt, placement, request.category))
+        notes.append(_speed_note(request.ias_kt, placement, category))
         return placement, PlacementSchematic(), notes
 
     if isinstance(request, ProcedureLegPlacementRequest):
@@ -438,14 +480,15 @@ def _resolve(
         if ias_kt is None and leg.speed is not None and leg.speed.suggested_kt is not None:
             ias_kt = leg.speed.suggested_kt
             notes.append(f"{ias_kt:g} kt — published constraint: {leg.speed.display}.")
+        category = _category(request.category)
         placement = waypoint_placement(
             leg.fix.position,
             altitude_ft,
             ident=leg.fix.ident,
             ias_kt=ias_kt,
-            category=request.category,
+            category=category,
         )
-        notes.append(_speed_note(ias_kt, placement, request.category))
+        notes.append(_speed_note(ias_kt, placement, category))
         notes.append(
             f"{leg.path_terminator} leg {leg.sequence} of {request.ident.upper()}, "
             f"over {leg.fix.ident}."
@@ -464,47 +507,56 @@ def _resolve(
         )
     hold = holds[0]
     airport = provider.get_airport(hold.airport_icao) if hold.airport_icao is not None else None
-    inbound_true_deg, course_note = _magnetic_to_true(hold.inbound_course_mag_deg, airport)
+    variation_deg, course_note = _hold_variation_deg(hold, airport)
     notes.append(course_note)
-    altitude_ft = request.altitude_ft
-    if altitude_ft is None:
-        altitude_ft = hold.min_altitude_ft
-        if altitude_ft is not None:
-            notes.append(f"{altitude_ft:,.0f} ft — the hold's published minimum.")
-    if altitude_ft is None:
-        raise HTTPException(
-            status_code=UNPOSITIONABLE_STATUS,
-            detail="This hold publishes no minimum altitude, so an altitude must be given.",
+    category = _category(request.category)
+    try:
+        # Altitude, speed and the racetrack geometry are all resolved inside
+        # core.geodesy: the published window, the speed placard and the leg
+        # time are read there, once, rather than being re-derived here where
+        # the two copies could disagree.
+        placement = hold_placement(
+            hold,
+            magnetic_variation_deg=variation_deg,
+            altitude_ft=request.altitude_ft,
+            ias_kt=request.ias_kt,
+            category=category,
         )
-    ias_kt = request.ias_kt if request.ias_kt is not None else hold.speed_kt
+    except ValueError as exc:
+        # The hold publishes no altitude and none was given. 422 rather than
+        # 404: the hold was found, it simply cannot be placed on as it stands.
+        raise HTTPException(status_code=UNPOSITIONABLE_STATUS, detail=str(exc)) from exc
+    if request.altitude_ft is None:
+        notes.append(f"{placement.altitude_ft:,.0f} ft — the hold's published altitude.")
     if request.ias_kt is None and hold.speed_kt is not None:
-        notes.append(f"{hold.speed_kt:g} kt — the hold's published speed.")
-    placement = hold_placement(
-        hold.fix.position,
-        inbound_true_deg,
-        hold.turn_direction,
-        altitude_ft,
-        ident=hold.fix.ident,
-        ias_kt=ias_kt,
-        category=request.category,
-    )
-    notes.append(_speed_note(ias_kt, placement, request.category))
+        notes.append(
+            f"The hold is placarded at {hold.speed_kt:g} kt. That is a ceiling, not a "
+            f"target: the category speed is used and only clamped by it."
+        )
+    notes.append(_speed_note(request.ias_kt, placement, category))
     return placement, PlacementSchematic(), notes
 
 
 def _speed_note(
     requested_kt: float | None, placement: Placement, category: ApproachCategory
 ) -> str:
-    """State where the commanded speed came from — the caller, or the category table."""
+    """State where the commanded speed came from — the caller, or the category table.
+
+    The third case is real and not a fallback: a published speed restriction
+    clamps the category's manoeuvring speed rather than replacing it, so the
+    commanded value matches neither table. Calling that "threshold speed" would
+    be the note quietly disagreeing with the number beside it.
+    """
     if requested_kt is not None:
         return f"{placement.ias_kt:g} kt, as requested."
     if placement.ias_kt == GROUND_IAS_KT:
         return "0 kt — this placement is on the ground."
-    table = (
-        "circling speed"
-        if placement.ias_kt == APPROACH_CATEGORY_CIRCLING_IAS_KT[category]
-        else "threshold speed (V_AT)"
-    )
+    if placement.ias_kt == APPROACH_CATEGORY_CIRCLING_IAS_KT[category]:
+        table = "circling speed"
+    elif placement.ias_kt == APPROACH_CATEGORY_VAT_KT[category]:
+        table = "threshold speed (V_AT)"
+    else:
+        table = "manoeuvring speed, clamped by a published restriction"
     return (
         f"{placement.ias_kt:g} kt — ICAO category {category} {table}. This is a category "
         f"default, not this airframe's number; set a speed if you know it."
@@ -512,7 +564,10 @@ def _speed_note(
 
 
 def _runway_schematic(
-    runway: Runway, placement: Placement, request: RunwayPlacementRequest
+    runway: Runway,
+    placement: Placement,
+    request: RunwayPlacementRequest,
+    glideslope_deg: float,
 ) -> PlacementSchematic:
     """Project the runway and the placement into the runway's own tangent plane."""
     axis = runway.true_bearing_deg
@@ -549,7 +604,7 @@ def _runway_schematic(
         runway_ident=runway.ident,
         runway_true_bearing_deg=axis,
         runway_length_m=runway.length_m,
-        glidepath_deg=request.glideslope_deg if is_final else None,
+        glidepath_deg=glideslope_deg if is_final else None,
         points=tuple(points),
     )
 

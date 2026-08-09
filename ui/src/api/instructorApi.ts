@@ -94,11 +94,17 @@ export const instructorApi = createApi({
       query: () => ({ url: 'navdata/index', method: 'POST' }),
       invalidatesTags: ['NavdataStatus'],
     }),
-    /** Type-ahead over every airport in the index. */
+    /**
+     * Type-ahead over every airport in the index.
+     *
+     * The wire parameter is `q`, as the navdata design specifies. The argument keeps the
+     * longer name because `query` is also RTK Query's own key for the request descriptor,
+     * and two different `query`s in one object literal reads as a mistake.
+     */
     searchAirports: builder.query<AirportSummary[], { query: string; limit?: number }>({
       query: ({ query, limit = 12 }) => ({
         url: 'navdata/airports',
-        params: { query, limit },
+        params: { q: query, limit },
       }),
     }),
     /** Every runway **end** of an airport: 18L and 36R are two entries. */
@@ -121,7 +127,10 @@ export const instructorApi = createApi({
       }),
       providesTags: (_result, _error, { icao }) => [{ type: 'Airport', id: icao }],
     }),
-    getProcedures: builder.query<ProcedureSummary[], { icao: string; kind?: ProcedureKind }>({
+    getProcedures: builder.query<
+      ProcedureSummary[],
+      { icao: string; kind?: ProcedureKind }
+    >({
       query: ({ icao, kind }) => ({
         url: `navdata/airports/${icao}/procedures`,
         params: kind === undefined ? {} : { kind },

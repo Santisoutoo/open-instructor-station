@@ -252,10 +252,26 @@ class TestProcedureLegs:
 
 
 class TestHoldPlacement:
-    def test_it_uses_the_published_minimum_and_speed(self, client: TestClient) -> None:
+    def test_it_uses_the_published_minimum_altitude(self, client: TestClient) -> None:
         body = preview(client, {"type": "hold", "fix_ident": "GOXOL"})
         assert body["placement"]["position"]["altitude_ft"] == 7000.0
-        assert body["placement"]["ias_kt"] == 210.0
+
+    def test_the_published_speed_is_a_ceiling_and_not_a_target(self, client: TestClient) -> None:
+        """The hold is placarded at 210 kt; a category B aeroplane still flies 135.
+
+        Flying the placard would put a light aircraft 75 kt above its
+        manoeuvring speed. ``core.geodesy`` clamps rather than adopts, and the
+        note has to say which of the two produced the number.
+        """
+        body = preview(client, {"type": "hold", "fix_ident": "GOXOL"})
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_CIRCLING_IAS_KT["B"]
+        notes = " ".join(body["notes"])
+        assert "210 kt" in notes
+        assert "ceiling" in notes
+
+    def test_an_explicit_speed_beats_the_placard_and_the_category(self, client: TestClient) -> None:
+        body = preview(client, {"type": "hold", "fix_ident": "GOXOL", "ias_kt": 200.0})
+        assert body["placement"]["ias_kt"] == 200.0
 
     def test_the_magnetic_course_is_converted_and_the_note_says_so(
         self, client: TestClient
@@ -266,6 +282,23 @@ class TestHoldPlacement:
         notes = " ".join(body["notes"])
         assert "magnetic" in notes
         assert "variation" in notes
+
+    def test_it_places_over_the_fix(self, client: TestClient) -> None:
+        """The default point of a hold is its fix — the one point on a chart."""
+        body = preview(client, {"type": "hold", "fix_ident": "GOXOL"})
+        position = body["placement"]["position"]
+        assert position["latitude"] == pytest.approx(40.5)
+        assert position["longitude"] == pytest.approx(-3.0)
+
+    def test_a_hold_with_no_published_altitude_is_refused_rather_than_invented(
+        self, client: TestClient
+    ) -> None:
+        with client:
+            response = client.post(
+                "/api/position/preview", json={"type": "hold", "fix_ident": "NOALTHOLD"}
+            )
+        assert response.status_code == UNPOSITIONABLE_STATUS
+        assert "altitude" in response.json()["detail"]
 
     def test_an_unknown_hold_is_404(self, client: TestClient) -> None:
         with client:

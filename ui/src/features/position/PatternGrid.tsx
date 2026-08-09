@@ -17,7 +17,13 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { FINAL_TILES, PATTERN_TILES } from './placements';
 import { placementStaged } from './positionSlice';
 
-export function PatternGrid({ icao, runwayIdent }: { icao: string; runwayIdent: string }) {
+export function PatternGrid({
+  icao,
+  runwayIdent,
+}: {
+  icao: string;
+  runwayIdent: string;
+}) {
   const dispatch = useAppDispatch();
   const staged = useAppSelector((state) => state.position.staged);
 
