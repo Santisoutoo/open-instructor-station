@@ -17,7 +17,13 @@ import { useAppDispatch, useAppSelector } from '../../store';
 import { FINAL_TILES, PATTERN_TILES } from './placements';
 import { placementStaged } from './positionSlice';
 
-export function PatternGrid({ icao, runwayIdent }: { icao: string; runwayIdent: string }) {
+export function PatternGrid({
+  icao,
+  runwayIdent,
+}: {
+  icao: string;
+  runwayIdent: string;
+}) {
   const dispatch = useAppDispatch();
   const staged = useAppSelector((state) => state.position.staged);
 
@@ -53,8 +59,13 @@ export function PatternGrid({ icao, runwayIdent }: { icao: string; runwayIdent: 
           </button>
         ))}
 
-        {/* The runway, drawn as the anchor the tiles are arranged around. */}
+        {/*
+          The runway, drawn as the anchor the tiles are arranged around. It is a strip
+          rather than a labelled box on purpose: the grid only reads as a circuit if the
+          thing in the middle looks like the thing the circuit is flown around.
+        */}
         <div className="pattern__runway" style={{ gridColumn: 2, gridRow: '1 / 5' }}>
+          <span className="pattern__runway-strip" aria-hidden="true" />
           <span className="pattern__runway-ident mono">{runwayIdent}</span>
           <span className="pattern__runway-hint">Approach from below</span>
         </div>

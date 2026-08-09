@@ -311,6 +311,7 @@
 }
 
 .pattern__runway {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -322,9 +323,36 @@
   border-radius: 8px;
 }
 
+/*
+ * The pavement itself, with a dashed centreline down it. Drawn rather than merely
+ * labelled: the grid only reads as a circuit if the object in the middle reads as the
+ * runway the circuit is flown around.
+ */
+.pattern__runway-strip {
+  position: absolute;
+  top: 12%;
+  bottom: 12%;
+  width: 26px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background-image: linear-gradient(var(--text-dim) 50%, transparent 0);
+  background-size: 2px 14px;
+  background-repeat: repeat-y;
+  background-position: center;
+}
+
 .pattern__runway-ident {
+  position: relative;
+  padding: 0.1rem 0.4rem;
+  background: var(--bg);
+  border-radius: 4px;
   font-size: 1.6rem;
   font-weight: 700;
+}
+
+.pattern__runway-hint {
+  position: relative;
 }
 
 .pattern__runway-hint {

@@ -45,7 +45,8 @@ export function commitGate(
   if (!capabilities.can_set_position) {
     return {
       open: false,
-      reason: 'This adapter does not declare can_set_position, so it cannot be repositioned.',
+      reason:
+        'This adapter does not declare can_set_position, so it cannot be repositioned.',
     };
   }
   if (!capabilities.can_set_aircraft_state) {
@@ -63,7 +64,11 @@ export function commitGate(
 export type NavdataGate =
   | { readonly kind: 'ready' }
   | { readonly kind: 'loading'; readonly reason: string }
-  | { readonly kind: 'building'; readonly reason: string; readonly fraction: number | null }
+  | {
+      readonly kind: 'building';
+      readonly reason: string;
+      readonly fraction: number | null;
+    }
   | { readonly kind: 'blocked'; readonly reason: string; readonly canBuild: boolean };
 
 /**

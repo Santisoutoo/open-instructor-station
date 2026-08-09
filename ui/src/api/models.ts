@@ -128,7 +128,8 @@ export type RunwayPlacementName =
   components['schemas']['RunwayPlacementRequest']['placement'];
 
 /** ICAO approach category, used to default a speed when the caller states none. */
-export type ApproachCategory = components['schemas']['RunwayPlacementRequest']['category'];
+export type ApproachCategory =
+  components['schemas']['RunwayPlacementRequest']['category'];
 
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [

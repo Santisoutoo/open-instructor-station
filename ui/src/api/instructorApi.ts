@@ -121,7 +121,10 @@ export const instructorApi = createApi({
       }),
       providesTags: (_result, _error, { icao }) => [{ type: 'Airport', id: icao }],
     }),
-    getProcedures: builder.query<ProcedureSummary[], { icao: string; kind?: ProcedureKind }>({
+    getProcedures: builder.query<
+      ProcedureSummary[],
+      { icao: string; kind?: ProcedureKind }
+    >({
       query: ({ icao, kind }) => ({
         url: `navdata/airports/${icao}/procedures`,
         params: kind === undefined ? {} : { kind },

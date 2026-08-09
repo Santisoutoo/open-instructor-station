@@ -45,7 +45,8 @@ export function ParkingList({ icao }: { icao: string }) {
       ? stands
       : stands.filter((stand) => stand.name.toLowerCase().includes(needle));
 
-  const stagedName = staged !== null && staged.type === 'parking' ? staged.stand_name : null;
+  const stagedName =
+    staged !== null && staged.type === 'parking' ? staged.stand_name : null;
 
   return (
     <div className="parking">

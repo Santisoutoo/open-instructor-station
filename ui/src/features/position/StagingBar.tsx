@@ -25,6 +25,7 @@ import {
 import type { AircraftSetup } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { Schematic } from './Schematic';
+import { errorMessage } from './errors';
 import { commitGate } from './gate';
 import { formatAltitudeFt, formatSpeedKt } from './placements';
 import { setupOverridden, staleCleared } from './positionSlice';
@@ -32,21 +33,15 @@ import { setupOverridden, staleCleared } from './positionSlice';
 /** How long the confirmation stays up after a successful commit. MOTION is dialled low. */
 const FLASH_MS = 2400;
 
-/** Pulls a readable sentence out of whatever RTK Query hands back for an error. */
-export function errorMessage(error: unknown): string {
-  if (typeof error === 'object' && error !== null && 'data' in error) {
-    const data = (error as { data: unknown }).data;
-    if (typeof data === 'object' && data !== null && 'detail' in data) {
-      const detail = (data as { detail: unknown }).detail;
-      if (typeof detail === 'string') {
-        return detail;
-      }
-    }
-  }
-  return 'The placement could not be applied.';
-}
-
-/** One editable number, with the provenance of its default underneath. */
+/**
+ * One editable number, with the provenance of its default underneath.
+ *
+ * **Rounded for display.** A 3° glidepath 10 NM out works out at 4184.357192657228 ft, and
+ * showing an instructor twelve decimal places of a figure they are about to round to the
+ * nearest hundred is noise pretending to be precision. Rounding here is safe because an
+ * untouched field is never sent — the overlay carries only what was actually edited, so the
+ * server's own full-precision value is what gets applied.
+ */
 function EditableNumber({
   label,
   unit,
@@ -69,7 +64,7 @@ function EditableNumber({
         <input
           type="number"
           className="staging__number"
-          value={value ?? ''}
+          value={value == null ? '' : Math.round(value)}
           disabled={disabled}
           onChange={(event) => {
             const raw = event.target.value;
@@ -126,7 +121,9 @@ export function StagingBar() {
   if (previewFailed) {
     return (
       <section className="staging staging--error" aria-label="Staged placement">
-        <p className="panel__error">{errorMessage(previewError)}</p>
+        <p className="panel__error">
+          {errorMessage(previewError, 'This placement could not be worked out.')}
+        </p>
         <button
           type="button"
           className="staging__dismiss"
@@ -174,7 +171,10 @@ export function StagingBar() {
   return (
     <section className="staging" aria-label="Staged placement">
       <div className="staging__diagram">
-        <Schematic schematic={preview.schematic} headingDeg={preview.placement.heading_deg} />
+        <Schematic
+          schematic={preview.schematic}
+          headingDeg={preview.placement.heading_deg}
+        />
         <p className="staging__label">{preview.placement.label}</p>
       </div>
 
@@ -230,7 +230,9 @@ export function StagingBar() {
       <div className="staging__commit">
         {!gate.open && <p className="staging__blocked">{gate.reason}</p>}
         {applyState.isError && (
-          <p className="panel__error">{errorMessage(applyState.error)}</p>
+          <p className="panel__error">
+            {errorMessage(applyState.error, 'The placement could not be applied.')}
+          </p>
         )}
         {flash !== null && <p className="staging__flash">{flash}</p>}
         <button

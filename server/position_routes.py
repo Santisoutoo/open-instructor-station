@@ -325,28 +325,44 @@ def _magnetic_to_true(course_mag_deg: float, airport: Airport | None) -> tuple[f
     )
 
 
+def request_category(request: PlacementRequest) -> ApproachCategory:
+    """The stated approach category, or the project's default.
+
+    **The wire says "not stated" with ``null``, not with "B".** Every one of these fields
+    could have carried its default in the schema instead, but then a generated client would
+    be forced to send a category on every request and the server could never tell an
+    instructor who chose B from one who said nothing — which is exactly the distinction the
+    preview's notes exist to report.
+    """
+    stated = getattr(request, "category", None)
+    return DEFAULT_APPROACH_CATEGORY if stated is None else stated
+
+
 def _resolve(
     request: PlacementRequest, provider: NavdataProvider
 ) -> tuple[Placement, PlacementSchematic, list[str]]:
     """Resolve any request into a placement, its diagram and its provenance notes."""
     notes: list[str] = []
 
+    category = request_category(request)
+
     if isinstance(request, RunwayPlacementRequest):
         runway = _runway(provider, request.airport_icao, request.runway_ident)
+        glideslope_deg = request.glideslope_deg or DEFAULT_GLIDESLOPE_DEG
         placement = resolve_runway_placement(
             runway,
             request.placement,
-            glideslope_deg=request.glideslope_deg,
+            glideslope_deg=glideslope_deg,
             pattern_altitude_ft=request.pattern_altitude_ft,
-            pattern_width_nm=request.pattern_width_nm,
-            leg_distance_nm=request.leg_distance_nm,
+            pattern_width_nm=request.pattern_width_nm or DEFAULT_PATTERN_WIDTH_NM,
+            leg_distance_nm=request.leg_distance_nm or DEFAULT_PATTERN_LEG_DISTANCE_NM,
             ias_kt=request.ias_kt,
-            category=request.category,
+            category=category,
         )
         distance_nm = FINAL_DISTANCES_NM.get(request.placement)  # type: ignore[arg-type]
         if distance_nm is not None:
             notes.append(
-                f"{placement.altitude_ft:,.0f} ft — {request.glideslope_deg:g}° glidepath "
+                f"{placement.altitude_ft:,.0f} ft — {glideslope_deg:g}° glidepath "
                 f"{distance_nm:g} NM from the {runway.ident} threshold at "
                 f"{runway.elevation_ft:,.0f} ft."
             )
@@ -355,8 +371,9 @@ def _resolve(
                 f"{placement.altitude_ft:,.0f} ft — standard circuit height above the "
                 f"{runway.ident} threshold."
             )
-        notes.append(_speed_note(request.ias_kt, placement, request.category))
-        return placement, _runway_schematic(runway, placement, request), notes
+        notes.append(_speed_note(request.ias_kt, placement, category))
+        schematic = _runway_schematic(runway, placement, request.placement, glideslope_deg)
+        return placement, schematic, notes
 
     if isinstance(request, ParkingPlacementRequest):
         stands = provider.get_parking(request.airport_icao)
@@ -377,9 +394,11 @@ def _resolve(
 
     if isinstance(request, CoordinatePlacementRequest):
         placement = coordinate_placement(
-            request.position, request.heading_deg, ias_kt=request.ias_kt
+            request.position,
+            request.heading_deg or 0.0,
+            ias_kt=request.ias_kt if request.ias_kt is not None else GROUND_IAS_KT,
         )
-        if request.ias_kt == 0.0 and request.position.altitude_ft > 0.0:
+        if placement.ias_kt == 0.0 and request.position.altitude_ft > 0.0:
             notes.append(
                 "0 kt was requested at a non-zero altitude — the aircraft will be below "
                 "stall speed. Set a speed unless this point is on the ground."
@@ -411,11 +430,11 @@ def _resolve(
             ident=fix.ident,
             heading_deg=request.heading_deg,
             ias_kt=request.ias_kt,
-            category=request.category,
+            category=category,
         )
         if request.heading_deg is None:
             notes.append("Heading 000° — a bare fix carries no course, and none was given.")
-        notes.append(_speed_note(request.ias_kt, placement, request.category))
+        notes.append(_speed_note(request.ias_kt, placement, category))
         return placement, PlacementSchematic(), notes
 
     if isinstance(request, ProcedureLegPlacementRequest):
@@ -443,9 +462,9 @@ def _resolve(
             altitude_ft,
             ident=leg.fix.ident,
             ias_kt=ias_kt,
-            category=request.category,
+            category=category,
         )
-        notes.append(_speed_note(ias_kt, placement, request.category))
+        notes.append(_speed_note(ias_kt, placement, category))
         notes.append(
             f"{leg.path_terminator} leg {leg.sequence} of {request.ident.upper()}, "
             f"over {leg.fix.ident}."
@@ -486,9 +505,9 @@ def _resolve(
         altitude_ft,
         ident=hold.fix.ident,
         ias_kt=ias_kt,
-        category=request.category,
+        category=category,
     )
-    notes.append(_speed_note(ias_kt, placement, request.category))
+    notes.append(_speed_note(ias_kt, placement, category))
     return placement, PlacementSchematic(), notes
 
 
@@ -512,9 +531,16 @@ def _speed_note(
 
 
 def _runway_schematic(
-    runway: Runway, placement: Placement, request: RunwayPlacementRequest
+    runway: Runway,
+    placement: Placement,
+    placement_name: RunwayPlacement,
+    glideslope_deg: float,
 ) -> PlacementSchematic:
-    """Project the runway and the placement into the runway's own tangent plane."""
+    """Project the runway and the placement into the runway's own tangent plane.
+
+    Takes the **resolved** glidepath angle rather than the request, so the diagram can
+    never disagree with the altitude that was actually computed from it.
+    """
     axis = runway.true_bearing_deg
     length_nm = runway.length_m / METRES_PER_NAUTICAL_MILE
     departure_end = point_at_distance_and_bearing(runway.threshold, length_nm, axis)
@@ -544,12 +570,12 @@ def _runway_schematic(
             role="placement",
         ),
     ]
-    is_final = request.placement in FINAL_DISTANCES_NM
+    is_final = placement_name in FINAL_DISTANCES_NM
     return PlacementSchematic(
         runway_ident=runway.ident,
         runway_true_bearing_deg=axis,
         runway_length_m=runway.length_m,
-        glidepath_deg=request.glideslope_deg if is_final else None,
+        glidepath_deg=glideslope_deg if is_final else None,
         points=tuple(points),
     )
 

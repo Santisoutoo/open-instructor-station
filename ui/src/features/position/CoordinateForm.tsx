@@ -103,8 +103,8 @@ export function CoordinateForm() {
           </label>
         </div>
         <p className="coordinate__warning">
-          Leave the speed at 0 only for a point on the ground. An airborne placement at 0 kt
-          arrives below stall speed.
+          Leave the speed at 0 only for a point on the ground. An airborne placement at 0
+          kt arrives below stall speed.
         </p>
         <button type="submit" className="coordinate__submit" disabled={!coordinateReady}>
           Stage coordinate
