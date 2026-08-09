@@ -19,9 +19,11 @@ from core.atmosphere import (
     density_altitude_ft,
     density_ratio,
     ias_from_tas,
+    isa_deviation_c,
     isa_temperature_c,
     pressure_ratio,
     tas_from_ias,
+    temperature_from_deviation_c,
 )
 
 #: ``(pressure altitude ft, standard temperature °C, pressure ratio, density
@@ -207,6 +209,61 @@ def test_zero_speed_stays_zero() -> None:
     """A parked aircraft is parked at every altitude."""
     assert tas_from_ias(0.0, 10_000.0) == 0.0
     assert ias_from_tas(0.0, 10_000.0) == 0.0
+
+
+def test_isa_deviation_is_zero_on_a_standard_day() -> None:
+    """The definition, at every altitude and in both layers."""
+    for altitude_ft in (0.0, 5_000.0, 18_000.0, 36_089.24, 45_000.0):
+        assert isa_deviation_c(isa_temperature_c(altitude_ft), altitude_ft) == pytest.approx(
+            0.0, abs=1e-9
+        )
+
+
+def test_isa_deviation_is_signed_the_way_pilots_say_it() -> None:
+    """ISA+15 means 15 °C warmer than standard, whatever the altitude."""
+    assert isa_deviation_c(30.0, 0.0) == pytest.approx(15.0, abs=1e-9)
+    assert isa_deviation_c(0.0, 0.0) == pytest.approx(-15.0, abs=1e-9)
+    # A -4.812 °C standard day at 10 000 ft: 10.188 °C is the same ISA+15.
+    assert isa_deviation_c(10.188, 10_000.0) == pytest.approx(15.0, abs=0.001)
+
+
+def test_temperature_from_deviation_inverts_isa_deviation() -> None:
+    for altitude_ft, temperature_c in ((0.0, 30.0), (7_500.0, -2.0), (41_000.0, -70.0)):
+        deviation_c = isa_deviation_c(temperature_c, altitude_ft)
+
+        assert temperature_from_deviation_c(altitude_ft, deviation_c) == pytest.approx(
+            temperature_c, abs=1e-9
+        )
+
+
+def test_carrying_a_deviation_up_cools_the_air_with_height() -> None:
+    """A 25 °C surface reading is ISA+10, which is 5.2 °C at 10 000 ft — not 25.
+
+    This is the whole point of the pair: the air aloft is colder than the air at
+    the field even on a hot day, and the *deviation* is what survives the trip.
+    """
+    deviation_c = isa_deviation_c(25.0, 0.0)
+
+    assert deviation_c == pytest.approx(10.0, abs=1e-9)
+    assert temperature_from_deviation_c(10_000.0, deviation_c) == pytest.approx(5.188, abs=0.01)
+
+
+def test_carrying_the_deviation_beats_carrying_the_temperature() -> None:
+    """The error this pair removes, in knots of true airspeed.
+
+    210 kt indicated at 10 000 ft on an ISA+10 day is 248.9 kt true. Taking the
+    25 °C surface temperature up unchanged claims 257.6 kt — an 8.7 kt overshoot,
+    because it models air far thinner up there than it is.
+    """
+    surface_c = 25.0
+    aloft_c = temperature_from_deviation_c(10_000.0, isa_deviation_c(surface_c, 0.0))
+
+    correct_kt = tas_from_ias(210.0, 10_000.0, aloft_c)
+    naive_kt = tas_from_ias(210.0, 10_000.0, surface_c)
+
+    assert correct_kt == pytest.approx(248.88, abs=0.01)
+    assert naive_kt == pytest.approx(257.59, abs=0.01)
+    assert naive_kt - correct_kt == pytest.approx(8.7, abs=0.1)
 
 
 def test_the_constants_come_from_the_metric_definitions() -> None:

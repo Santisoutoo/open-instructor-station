@@ -17,18 +17,25 @@ methods that would.
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import pytest
 
 from adapters.xplane import xplane_adapter
 from adapters.xplane.xplane_adapter import XPlaneSimAdapter
+from core.atmosphere import isa_deviation_c, tas_from_ias, temperature_from_deviation_c
 from core.models import AircraftSetup, GeoPosition, LightsSetup
 
 #: The aircraft's starting position in the recorded fixture. Arbitrary, but
 #: reused as the teleport target so ``_await_arrival`` succeeds on its first
 #: poll instead of spending the timeout waiting for a simulator that is not there.
 HOME = GeoPosition(latitude=40.4700, longitude=-3.5700, altitude_ft=2000.0)
+
+#: The fixture's ambient air, as the recorded values report it: 15 °C measured at
+#: HOME's 2 000 ft, which is ISA+3.96.
+HOME_TEMPERATURE_C = 15.0
+KNOTS_PER_METRE_PER_SECOND = 1.0 / 0.514444
 
 OVERRIDE = "override_planepath"
 ATTITUDE = ("psi", "theta", "phi")
@@ -67,6 +74,10 @@ class _RecordingAdapter(XPlaneSimAdapter):
         }
         self.writes: list[tuple[str, Any]] = []
         self.commands: list[str] = []
+        #: Reads and writes interleaved in the order they happened, as
+        #: ``("read" | "write", short key)``. Ordering between the two is what
+        #: says whether a value was sampled before the aircraft was moved.
+        self.traffic: list[tuple[str, str]] = []
         #: Short key of a dataref whose write should blow up, to prove the
         #: override still comes off. ``None`` means every write succeeds.
         self.fail_on: str | None = None
@@ -77,10 +88,12 @@ class _RecordingAdapter(XPlaneSimAdapter):
         return True
 
     async def _read(self, key: str) -> Any:
+        self.traffic.append(("read", key))
         return self.values[key]
 
     async def _write(self, key: str, value: float | int | bool, index: int | None = None) -> None:
         self.writes.append((key, value))
+        self.traffic.append(("write", key))
         if key == self.fail_on:
             raise RuntimeError(f"simulated failure writing {key!r}")
         self.values[key] = value
@@ -105,6 +118,28 @@ def adapter(monkeypatch: pytest.MonkeyPatch) -> _RecordingAdapter:
     monkeypatch.setattr(xplane_adapter, "_OVERRIDE_SETTLE_S", 0.0)
     monkeypatch.setattr(xplane_adapter, "_RELEASE_SETTLE_S", 0.0)
     return _RecordingAdapter()
+
+
+def written_speed_kt(adapter: _RecordingAdapter) -> float:
+    """The magnitude of the velocity vector the adapter wrote, in knots.
+
+    Read back out of the recorded writes rather than out of the adapter, so the
+    assertion sees exactly what X-Plane would have been sent.
+    """
+    return math.hypot(adapter.values["local_vx"], adapter.values["local_vz"]) * (
+        KNOTS_PER_METRE_PER_SECOND
+    )
+
+
+def expected_true_airspeed_kt(ias_kt: float, altitude_ft: float) -> float:
+    """The true airspeed the fixture's air implies at ``altitude_ft``.
+
+    Composed from :mod:`core.atmosphere`, which is asserted against the published
+    ISA table in ``tests/core/test_atmosphere.py``. What is under test here is not
+    the physics but which *altitude* and which *temperature* the adapter feeds it.
+    """
+    deviation_c = isa_deviation_c(HOME_TEMPERATURE_C, HOME.altitude_ft)
+    return tas_from_ias(ias_kt, altitude_ft, temperature_from_deviation_c(altitude_ft, deviation_c))
 
 
 def assert_frozen_around(written: list[str], keys: tuple[str, ...]) -> None:
@@ -243,6 +278,109 @@ async def test_set_position_releases_the_override_when_a_write_fails(
         await adapter.set_position(HOME, heading_deg=270.0)
 
     assert adapter.writes[-1] == (OVERRIDE, 0)
+
+
+# --------------------------------------------------------------------------
+# IAS -> TAS — issue #11
+# --------------------------------------------------------------------------
+
+
+async def test_velocity_vector_points_along_the_commanded_heading(
+    adapter: _RecordingAdapter,
+) -> None:
+    """+x is east and +z is south, so a heading of 090 is all ``local_vx``."""
+    await adapter.set_position(HOME.model_copy(update={"altitude_ft": 2000.0}), heading_deg=90.0)
+
+    assert adapter.values["local_vx"] > 0.0
+    assert adapter.values["local_vz"] == pytest.approx(0.0, abs=1e-9)
+    assert adapter.values["local_vy"] == 0.0
+
+    await adapter.set_position(HOME, heading_deg=0.0)
+
+    assert adapter.values["local_vx"] == pytest.approx(0.0, abs=1e-9)
+    assert adapter.values["local_vz"] < 0.0, "north is -z in the local frame"
+
+
+async def test_set_position_converts_the_speed_for_the_target_altitude(
+    adapter: _RecordingAdapter,
+) -> None:
+    """The conversion must use where the aircraft is going, not where it is.
+
+    A placement is a jump. The aircraft in the fixture is at 2 000 ft indicating
+    120 kt when the speed is resolved; sending it to FL100 and converting at
+    2 000 ft would apply a 4 % correction where 17 % was needed, which is most of
+    issue #11 straight back. The sim cannot be asked about the destination's air
+    either — ``elevation`` is derived from the local frame and only catches up a
+    frame or two after the write, which is why ``_await_arrival`` polls.
+    """
+    target = GeoPosition(latitude=HOME.latitude, longitude=HOME.longitude, altitude_ft=10_000.0)
+
+    await adapter.set_position(target, heading_deg=90.0)
+
+    speed_kt = written_speed_kt(adapter)
+    assert speed_kt == pytest.approx(expected_true_airspeed_kt(120.0, 10_000.0), abs=0.01)
+    # Anchored, so the numbers are visible rather than only derived: 120 kt
+    # indicated at FL100 in this air is 140.7 kt true.
+    assert speed_kt == pytest.approx(140.7, abs=0.1)
+    # And what the departure altitude would have produced, which is the defect.
+    assert speed_kt - expected_true_airspeed_kt(120.0, HOME.altitude_ft) > 15.0
+
+
+async def test_apply_setup_converts_the_speed_for_the_commanded_altitude(
+    adapter: _RecordingAdapter,
+) -> None:
+    """Same defect, same fix, on the setup path: the altitude is written first."""
+    await adapter.apply_setup(AircraftSetup(altitude_ft=10_000.0, ias_kt=210.0))
+
+    written = adapter.written_keys
+    assert written.index("local_y") < written.index("local_vx"), (
+        "the altitude write must still precede the speed write"
+    )
+    assert written_speed_kt(adapter) == pytest.approx(
+        expected_true_airspeed_kt(210.0, 10_000.0), abs=0.01
+    )
+
+
+async def test_apply_setup_without_an_altitude_uses_the_current_one(
+    adapter: _RecordingAdapter,
+) -> None:
+    """Nothing moves the aircraft vertically, so its own altitude is the right one."""
+    await adapter.apply_setup(AircraftSetup(ias_kt=120.0))
+
+    assert written_speed_kt(adapter) == pytest.approx(
+        expected_true_airspeed_kt(120.0, HOME.altitude_ft), abs=0.01
+    )
+
+
+async def test_a_stationary_aircraft_is_written_a_zero_vector(
+    adapter: _RecordingAdapter,
+) -> None:
+    """The conversion scales a speed; it must not invent one for a parked aircraft."""
+    await adapter.apply_setup(AircraftSetup(ias_kt=0.0))
+
+    assert adapter.values["local_vx"] == 0.0
+    assert adapter.values["local_vy"] == 0.0
+    assert adapter.values["local_vz"] == 0.0
+
+
+async def test_the_conversion_reads_the_air_before_the_aircraft_moves(
+    adapter: _RecordingAdapter,
+) -> None:
+    """Temperature and altitude are sampled ahead of the freeze, not inside it.
+
+    Reading them after the position write would sample an atmosphere in
+    transition: the derived world coordinates lag the local-frame write, so the
+    pair could come back from two different altitudes.
+    """
+    await adapter.set_position(
+        GeoPosition(latitude=HOME.latitude, longitude=HOME.longitude, altitude_ft=10_000.0),
+        heading_deg=90.0,
+    )
+
+    assert ("read", "temperature_ambient_deg_c") in adapter.traffic, "the air was never sampled"
+    sampled = adapter.traffic.index(("read", "temperature_ambient_deg_c"))
+    moved = adapter.traffic.index(("write", "local_y"))
+    assert sampled < moved, f"the air was sampled after the aircraft moved: {adapter.traffic}"
 
 
 # --------------------------------------------------------------------------
