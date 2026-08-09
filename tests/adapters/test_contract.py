@@ -23,6 +23,7 @@ The history behind those rules is in ``docs/designs/live-contract-suite.md``.
 """
 
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 import pytest
 from pydantic import ValidationError
@@ -143,6 +144,32 @@ async def _stabilise(adapter: SimAdapter) -> None:
             ias_kt=STABILISED_IAS_KT,
         )
     )
+
+
+@asynccontextmanager
+async def _frozen_for_readback(adapter: SimAdapter) -> AsyncIterator[None]:
+    """Hold the aircraft still so a read-back measures the write, not later flight.
+
+    ``_stabilise`` deliberately leaves a live aircraft airborne at
+    :data:`STABILISED_IAS_KT` with nobody flying it, so between a write and the
+    read-back that verifies it the aeroplane keeps going: heading errors of 4°
+    to 170° were measured against X-Plane, far outside the 1° the assertions
+    allow (issue #48). Writing *and* reading inside one freeze makes the
+    read-back a measurement of the adapter instead of a measurement of a second
+    of uncommanded flight.
+
+    Discovered by duck typing rather than through :class:`SimAdapter`: freezing
+    a flight model is an X-Plane mechanic and has no place in the sim-agnostic
+    seam. Same precedent as the Fake-only ``applied_setup`` affordance. An
+    adapter without the method needs no freeze — the Fake has no flight model,
+    so its state does not move between calls.
+    """
+    freeze = getattr(adapter, "frozen_flight_model", None)
+    if freeze is None:
+        yield
+        return
+    async with freeze():
+        yield
 
 
 @pytest.fixture(params=ADAPTER_PARAMS)
@@ -298,7 +325,8 @@ async def test_set_position_moves_the_aircraft(adapter: SimAdapter) -> None:
 
     The hop is short and measured from wherever the aircraft already is, and it
     is undone in ``finally`` — see :data:`HOP_DISTANCE_NM` for why an absolute
-    target is the wrong shape for this assertion.
+    target is the wrong shape for this assertion. The teleport and the read-back
+    share one freeze (:func:`_frozen_for_readback`); the restore is outside it.
     """
     if not adapter.capabilities.can_set_position:
         pytest.skip(f"{adapter.name} does not declare can_set_position")
@@ -307,8 +335,9 @@ async def test_set_position_moves_the_aircraft(adapter: SimAdapter) -> None:
     home = _position_of(original)
     target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 0.0)
     try:
-        await adapter.set_position(target, heading_deg=270.0)
-        moved = await adapter.get_aircraft_state()
+        async with _frozen_for_readback(adapter):
+            await adapter.set_position(target, heading_deg=270.0)
+            moved = await adapter.get_aircraft_state()
         here = GeoPosition(latitude=moved.latitude, longitude=moved.longitude)
         error_nm, _ = distance_and_bearing(here, target)
         assert error_nm * METRES_PER_NAUTICAL_MILE <= POSITION_TOLERANCE_M[adapter.name]
@@ -345,8 +374,9 @@ async def test_set_position_normalises_the_heading(adapter: SimAdapter) -> None:
     home = _position_of(original)
     target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 180.0)
     try:
-        await adapter.set_position(target, heading_deg=450.0)
-        state = await adapter.get_aircraft_state()
+        async with _frozen_for_readback(adapter):
+            await adapter.set_position(target, heading_deg=450.0)
+            state = await adapter.get_aircraft_state()
         assert 0.0 <= state.heading_deg <= 360.0
         assert state.heading_deg == pytest.approx(90.0, abs=1.0)
     finally:
@@ -366,16 +396,21 @@ async def test_apply_setup_applies_only_the_provided_fields(adapter: SimAdapter)
     underground, and the ``adapter`` fixture has just arrested any inherited
     free fall, so the 100 ft window measures the write rather than the seconds
     of descent that used to happen between it and the read-back.
+
+    The whole before/apply/after sequence runs inside one freeze: the
+    ``roll_deg`` assertion compares two reads, so both of them have to be taken
+    off an aircraft that is not flying between them (issue #48).
     """
     if not adapter.capabilities.can_set_aircraft_state:
         pytest.skip(f"{adapter.name} does not declare can_set_aircraft_state")
 
-    before = await adapter.get_aircraft_state()
-    target_altitude_ft = before.altitude_ft + HOP_CLIMB_FT
-    await adapter.apply_setup(
-        AircraftSetup(altitude_ft=target_altitude_ft, heading_deg=123.0, pitch_deg=4.0)
-    )
-    after = await adapter.get_aircraft_state()
+    async with _frozen_for_readback(adapter):
+        before = await adapter.get_aircraft_state()
+        target_altitude_ft = before.altitude_ft + HOP_CLIMB_FT
+        await adapter.apply_setup(
+            AircraftSetup(altitude_ft=target_altitude_ft, heading_deg=123.0, pitch_deg=4.0)
+        )
+        after = await adapter.get_aircraft_state()
 
     # Provided fields moved.
     assert after.altitude_ft == pytest.approx(target_altitude_ft, abs=100.0)
@@ -386,11 +421,18 @@ async def test_apply_setup_applies_only_the_provided_fields(adapter: SimAdapter)
 
 
 async def test_apply_setup_with_nothing_set_changes_nothing(adapter: SimAdapter) -> None:
+    """An empty setup writes nothing, so the two reads must agree.
+
+    Frozen for the same reason as the test above: nothing is written here, and
+    the difference the assertions were catching live was simply the aircraft
+    flying between the ``before`` read and the ``after`` one (issue #48).
+    """
     if not adapter.capabilities.can_set_aircraft_state:
         pytest.skip(f"{adapter.name} does not declare can_set_aircraft_state")
-    before = await adapter.get_aircraft_state()
-    await adapter.apply_setup(AircraftSetup())
-    after = await adapter.get_aircraft_state()
+    async with _frozen_for_readback(adapter):
+        before = await adapter.get_aircraft_state()
+        await adapter.apply_setup(AircraftSetup())
+        after = await adapter.get_aircraft_state()
     assert after.altitude_ft == pytest.approx(before.altitude_ft, abs=100.0)
     assert after.heading_deg == pytest.approx(before.heading_deg, abs=1.0)
 
