@@ -6,9 +6,8 @@ watch a live map — **without ever alt-tabbing into the simulator**.
 
 X-Plane 12 is the reference target. MSFS comes later through the same abstraction.
 
-**This is a private, proprietary project.** No license file. Do not add license headers. Never
-copy code from third-party projects (Little Navmap is GPL-3 — study its design, never its code).
-Documentation, code, comments and commit messages are written in **English**.
+Never copy code from third-party projects (Little Navmap is GPL-3 — study its design, never its
+code). Documentation, code, comments and commit messages are written in **English**.
 
 ---
 
