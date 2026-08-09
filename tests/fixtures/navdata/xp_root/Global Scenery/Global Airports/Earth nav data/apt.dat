@@ -1,0 +1,46 @@
+I
+1200 Version - HAND-WRITTEN FIXTURE. Every value below is invented.
+# Not a byte of this file came from any X-Plane installation. ZZZZ and ZZZY are
+# in the ICAO "no location" block, and the coordinates are round numbers so the
+# expected geodesy is checkable with a calculator.
+#
+# ZZZZ: two runway ends (09/27) along the 40N parallel, threshold at exactly
+#       40 00 00 N 003 00 00 W, no displacement, one gate and one tie-down.
+# ZZZY: a 300 m displaced threshold on 18, plus a hangar and a misc stand.
+# ZZZH: a heliport header (row 17). It must NOT be indexed as an airport, and
+#       its ramp start must not attach itself to ZZZY.
+
+1    2000 1 0 ZZZZ Zulu Fictional
+1302 icao_code ZZZZ
+1302 iata_code ZZZ
+1302 city Nowhere
+1302 country Neverland
+1302 region_code LE
+1302 datum_lat 40.00000000
+1302 datum_lon -3.00000000
+1302 transition_alt 6000
+1302 transition_level FL70
+100 45.00 1 0 0.00 1 2 1 09 40.00000000 -3.00000000 0.00 0.00 1 0 0 1 27 40.00000000 -2.96480000 0.00 0.00 1 0 0 1
+1300 40.00200000 -3.00200000 180.000 gate jets|heavy R32
+1301 F airline ibe baw
+1300 40.00300000 -3.00300000 90.000 tie_down props GA1
+1301 A general_aviation
+110 1 0.00 0.0 A taxiway polygon that must never reach the parser
+111 40.00500000 -3.00500000
+100 45.00 1 0 0.00 1 2 1 TRUNCATED-RUNWAY-ROW
+
+1    1000 0 0 ZZZY Zulu Secondary
+1302 icao_code ZZZY
+1302 city Elsewhere
+1302 country Neverland
+1302 region_code LE
+1302 datum_lat 41.00000000
+1302 datum_lon -3.00000000
+100 30.00 3 0 0.25 0 0 0 18 41.01080000 -3.00000000 300.00 0.00 1 0 0 0 36 41.00000000 -3.00000000 0.00 0.00 1 0 0 0
+1300 41.00100000 -3.00100000 300.000 hangar helos Hangar 1
+1301 A none
+1300 41.00200000 -3.00200000 15.000 misc turboprops Remote 5
+
+17   1500 0 0 ZZZH Zulu Heliport
+1300 42.00000000 -3.00000000 0.000 gate helos H1 must not attach to ZZZY
+99

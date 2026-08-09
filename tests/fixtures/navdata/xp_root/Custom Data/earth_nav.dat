@@ -1,0 +1,21 @@
+I
+1200 Version - HAND-WRITTEN FIXTURE. Every value below is invented.
+# Covers one of each family the provider has to tell apart:
+#   3  VOR/DME   ZUL   113.70 -> 113 700 kHz, tuned on NAV
+#   2  NDB       ZB       380 kHz already, tuned on the ADF
+#  13  TACAN     ZTC    named as a TACAN, which is where the source puts it
+#   4  LOC       IZZZ   32850.000 -> 91 deg magnetic, 90.000 deg true
+#   6  GS        IZZZ  300090.000 -> 3.00 deg glidepath on 90.000 deg true
+#  12  DME       IZZZ   collocated, so ZZZZ 09 reports has_dme
+#   7  marker    recognised and deliberately not indexed
+#   4  LOC       IZZY   a MALFORMED bearing: skipped and counted, never fatal
+
+3  40.05000000 -3.05000000 2000 11370 130     -2.000 ZUL  ENRT LE Zulu VOR/DME
+2  40.10000000 -3.10000000 2000   380  50      0.000 ZB   ENRT LE Zulu Beacon NDB
+13 40.30000000 -3.30000000 2000 11570 130      0.000 ZTC  ENRT LE Zulu TACAN
+4  40.00000000 -2.96000000 2000 10950  25  32850.000 IZZZ ZZZZ LE 09 ILS-cat-I
+6  40.00000000 -2.99000000 2000 10950  10 300090.000 IZZZ ZZZZ LE 09 GS
+12 40.00000000 -2.98000000 2000 10950  25      0.000 IZZZ ZZZZ LE 09 DME-ILS
+7  39.95000000 -3.10000000 2000     0   0      0.000 ZZ   ZZZZ LE 09 OM
+4  41.00000000 -3.00000000 1000 10930  25 not-a-bearing IZZY ZZZY LE 36 ILS-cat-I
+99

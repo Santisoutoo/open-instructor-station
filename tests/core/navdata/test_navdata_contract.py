@@ -31,11 +31,14 @@ expected values checkable by hand: the runway threshold sits at exactly
 from __future__ import annotations
 
 import threading
+from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
 from core.geodesy import distance_and_bearing
 from core.models import GeoPosition, Ils, Runway
+from core.navdata.cifp_source import CifpAirport
 from core.navdata.in_memory import InMemoryNavdataProvider
 from core.navdata.models import (
     Airport,
@@ -50,6 +53,8 @@ from core.navdata.models import (
     Waypoint,
 )
 from core.navdata.provider import NavdataProvider
+from core.navdata.sources import discover_xplane_root
+from core.navdata.xplane_native.provider import XPNativeNavdataProvider
 
 #: Kind filters, named so the Literal survives into the call. An inline
 #: ``("ndb",)`` is inferred as ``tuple[str]`` and does not type-check.
@@ -258,18 +263,86 @@ def _build_in_memory() -> InMemoryNavdataProvider:
     )
 
 
+#: The hand-written X-Plane data tree the indexed provider is parametrised over.
+#: It encodes exactly the world above: ZZZZ with runways 09/27 and an ILS on 09,
+#: ZZZY 60 NM north, the ZOXOL pair, the ZUL hold.
+FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "navdata" / "xp_root"
+
+
+class _FixtureCifpSource:
+    """The procedures half of the fixture world, until the CIFP parser (#4) lands.
+
+    ``XPNativeNavdataProvider`` parses no procedures itself: it delegates to an
+    injected ``CifpSource``, and what the assertions below exercise on this
+    parametrisation is that delegation, the summarising and the counts — which
+    is precisely the indexed provider's share of the work. When the real parser
+    lands this is replaced by it over ``CIFP/ZZZZ.dat`` and not one assertion
+    in this module changes.
+    """
+
+    def load(self, icao: str) -> CifpAirport | None:
+        if icao != "ZZZZ":
+            return None
+        return CifpAirport(icao="ZZZZ", procedures=(SID_ZULU1A, APPROACH_I09))
+
+    def invalidate(self) -> None:
+        return None
+
+
+def _build_xplane_native(root: Path, cache_dir: Path) -> XPNativeNavdataProvider:
+    provider = XPNativeNavdataProvider(root, cache_dir=cache_dir, cifp_source=_FixtureCifpSource())
+    provider.ensure_index()
+    return provider
+
+
+def _build_xplane_native_over_the_users_install(cache_dir: Path) -> XPNativeNavdataProvider:
+    """The same provider over the developer's real navdata. Never runs in CI.
+
+    A real installation does **not** contain the invented ZZZZ world every
+    assertion in this module is written against, so pointing this suite at one
+    would fail on the first lookup rather than reveal anything. The parser *is*
+    exercised against real data, by the ``@pytest.mark.navdata`` tests in
+    ``test_xplane_provider.py``, which assert on the shape of a real index
+    instead of on fixture idents. This parametrisation therefore runs only when
+    ``OIS_XPLANE_PATH`` points at a tree that really does hold the fixture
+    world.
+    """
+    root = discover_xplane_root()
+    if root is None:
+        pytest.skip("No X-Plane 12 installation found. Set OIS_XPLANE_PATH to run this.")
+    if root.resolve() != FIXTURE_ROOT.resolve():
+        pytest.skip(
+            f"{root} is a real installation and does not contain the invented ZZZZ world this "
+            "suite asserts on. Real-install coverage lives in test_xplane_provider.py, under "
+            "the same marker."
+        )
+    return _build_xplane_native(root, cache_dir)
+
+
 PROVIDER_PARAMS = [
     pytest.param("in_memory", id="in_memory"),
-    # The xplane_native rows arrive with the indexer (#5): one over the committed
-    # fixture tree (CI), one over the developer's install (marks=navdata).
+    pytest.param("xplane_native", id="xplane_native"),
+    pytest.param("xplane_native_install", id="xplane_native_install", marks=pytest.mark.navdata),
 ]
 
 
 @pytest.fixture(params=PROVIDER_PARAMS)
-def provider(request: pytest.FixtureRequest) -> NavdataProvider:
+def provider(request: pytest.FixtureRequest, tmp_path: Path) -> Iterator[NavdataProvider]:
     if request.param == "in_memory":
-        return _build_in_memory()
-    raise ValueError(f"Unknown provider {request.param!r}")
+        yield _build_in_memory()
+        return
+
+    if request.param == "xplane_native":
+        indexed = _build_xplane_native(FIXTURE_ROOT, tmp_path / "cache")
+    elif request.param == "xplane_native_install":
+        indexed = _build_xplane_native_over_the_users_install(tmp_path / "cache")
+    else:
+        raise ValueError(f"Unknown provider {request.param!r}")
+
+    yield indexed
+    # Windows refuses to delete a file that still has an open handle, and pytest
+    # cleans tmp_path up afterwards.
+    indexed.close()
 
 
 # --------------------------------------------------------------------------
