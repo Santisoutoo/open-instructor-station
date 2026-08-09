@@ -16,6 +16,7 @@ from core.local_frame import (
     LocalFrameOrigin,
     local_to_world,
     origin_from_observation,
+    origin_separation_m,
     world_to_local,
 )
 from core.models import GeoPosition
@@ -189,6 +190,65 @@ def test_origin_recovery_works_when_the_sample_sits_on_the_origin() -> None:
 
     assert origin.latitude == pytest.approx(12.5, abs=1e-9)
     assert origin.longitude == pytest.approx(-70.0, abs=1e-9)
+
+
+def test_origin_separation_is_zero_for_the_same_frame() -> None:
+    """Two measurements of an unmoved frame must not look like a relocation."""
+    assert origin_separation_m(MEASURED_ORIGIN, MEASURED_ORIGIN) == pytest.approx(0.0, abs=1e-9)
+
+
+def test_origin_separation_measures_a_scenery_shift() -> None:
+    """The case it exists for: LEMD's frame against Heathrow's, ~1250 km apart.
+
+    This is the comparison ``XPlaneSimAdapter`` makes to decide whether the
+    frame it aimed a teleport in still exists (issue #36).
+    """
+    madrid = LocalFrameOrigin(latitude=40.5, longitude=-4.0)
+    heathrow = LocalFrameOrigin(latitude=51.5, longitude=-0.5)
+
+    separation_m = origin_separation_m(madrid, heathrow)
+
+    geodesic_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=40.5, longitude=-4.0),
+        GeoPosition(latitude=51.5, longitude=-0.5),
+    )
+    # The chord, so it comes in a little under the surface distance — 0.1 % at
+    # this range, which is why the function does not need a geodesic solve.
+    assert separation_m == pytest.approx(geodesic_nm * METRES_PER_NAUTICAL_MILE, rel=2e-3)
+    assert separation_m > 1_200_000.0
+
+
+def test_origin_separation_agrees_with_the_geodesic_at_a_teleport_scale() -> None:
+    """At the ranges that matter the chord and the geodesic are interchangeable."""
+    origin = LocalFrameOrigin(latitude=40.5, longitude=-4.0)
+    for latitude, longitude in ((40.6, -4.0), (40.5, -3.0), (41.5, -5.0)):
+        moved = LocalFrameOrigin(latitude=latitude, longitude=longitude)
+        geodesic_nm, _ = distance_and_bearing(
+            GeoPosition(latitude=40.5, longitude=-4.0),
+            GeoPosition(latitude=latitude, longitude=longitude),
+        )
+        assert origin_separation_m(origin, moved) == pytest.approx(
+            geodesic_nm * METRES_PER_NAUTICAL_MILE, rel=1e-3
+        )
+
+
+def test_origin_separation_counts_the_vertical_datum() -> None:
+    """Same anchor, different vertical offset, is still a different frame.
+
+    Treating the two as equal would leave a re-aimed teleport at the wrong
+    altitude while every horizontal check passed.
+    """
+    plain = LocalFrameOrigin(latitude=40.5, longitude=-4.0)
+    shifted = LocalFrameOrigin(latitude=40.5, longitude=-4.0, vertical_offset_m=-120.0)
+
+    assert origin_separation_m(plain, shifted) == pytest.approx(120.0, abs=1e-6)
+
+
+def test_origin_separation_is_symmetric() -> None:
+    a = LocalFrameOrigin(latitude=40.5, longitude=-4.0, vertical_offset_m=-0.61)
+    b = LocalFrameOrigin(latitude=51.5, longitude=-0.5, vertical_offset_m=3.2)
+
+    assert origin_separation_m(a, b) == pytest.approx(origin_separation_m(b, a))
 
 
 def test_origin_recovery_round_trips_from_a_distant_frame() -> None:
