@@ -116,9 +116,11 @@ issue before the Position Manager ships "reposition to another airport".**
 
 `pytest`, `ruff check`, `ruff format --check` and `mypy` are all green — see the PR.
 
-**`pytest -m sim` was *not* run against a real X-Plane 12.** The simulator was not running on the
-machine during this work and nothing was listening on `localhost:8086`, so the live run in the
-definition of done could not be performed. Rather than guess, the whole suite was validated
+**When this was written, `pytest -m sim` had *not* been run against a real X-Plane 12.** The
+simulator was not running on the machine during this work and nothing was listening on
+`localhost:8086`, so the live run in the definition of done could not be performed. That gap was
+closed later — see [Live verification](#live-verification--2026-08-09) below. Rather than guess at
+the time, the whole suite was validated
 against a purpose-built stand-in X-Plane Web API that reproduces the exact conditions the issue
 blames:
 
@@ -140,8 +142,51 @@ Against that stand-in:
 
 That covers the harness logic — fixture ordering and scoping, relative hops, restore-in-`finally`,
 session snapshot/restore, and the stabilisation. It does **not** cover X-Plane's real physics or
-Web API timing. A `sim-validator` run against a live X-Plane 12 is still required before this is
-considered closed on the sim side.
+Web API timing, which is what the live run below finally measured.
+
+## Live verification — 2026-08-09
+
+Run from `feature/sim-test-skill` against **X-Plane 12 at LEMD**, stock Cessna 172, with the
+simulator started and shut down by `spikes/sim_lifecycle.py` (`launch` → `wait-ready` → `place` →
+`pytest -m sim` → `quit`). Ready 34 s after launch; the pre-test placement on runway 32L landed
+**0.0 m from the threshold with the commanded heading 322.2° read back as 322.2°**.
+
+### Result: 19 passed, 5 failed, 83 s
+
+**The harness holds.** Everything this document claims about fixture ordering and scoping, the
+relative hops, restore-in-`finally`, the session snapshot/restore and the stabilisation survives
+contact with real physics and real Web API timing. Nothing in the stand-in's verdict was
+contradicted; the aircraft was returned home and the preferences restored on both runs.
+
+**The five failures are all [#48](https://github.com/Santisoutoo/open-instructor-station/issues/48),
+not this work.** Every one is a heading assertion, and the attitude freeze of #37 is present and
+working (`adapters/xplane/xplane_adapter.py:417`, released in a `finally`):
+
+| Test | Read back | Expected |
+|---|---|---|
+| `test_set_position_moves_the_aircraft[xplane]` | 268.19 | 270.0 ±1 |
+| `test_set_position_normalises_the_heading[xplane]` | 93.53 | 90.0 ±1 |
+| `test_apply_setup_applies_only_the_provided_fields[xplane]` | 293.29 | 123.0 ±1 |
+| `test_apply_setup_with_nothing_set_changes_nothing[xplane]` | 234.40 | 230.54 ±1 |
+| `test_live_xplane.py::test_apply_setup_writes_configuration` | 221.23 | 228.94 ±5 |
+
+The 170° error on the third corroborates the 286.66° #48 measured for that same test. **The fourth
+row is new**: `test_apply_setup_with_nothing_set_changes_nothing` is not in #48's affected list and
+fails with the same signature, so a fix scoped to #48's current list will leave the suite red.
+
+### A precondition the suite cannot see
+
+On the validation machine, every Web API request cost **~4.1 s** (and occasionally 8.2 s) — the
+same whether the response was 116 bytes or the 916 KB dataref index, and independent of frame rate,
+which was a healthy 19.9 fps. `XPlaneSimAdapter` defaults to `timeout_s = 5.0` and `connect()`
+fetches the full index as its first call, so **all 24 sim tests errored with `XPlaneNotReachable`**
+before a single assertion ran.
+
+Starting Docker Desktop dropped it to **~5 ms per request** (full index 746 ms) and the suite ran
+normally. Comparing `127.0.0.1` against `localhost` does *not* diagnose this — both are equally
+slow when the cause is present, so it is not name resolution. If a live run reports every adapter
+call as unreachable on a simulator that is demonstrably up and flying, measure a single request
+before touching the adapter.
 
 ## Rules for anyone adding a live test
 
