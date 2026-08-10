@@ -81,7 +81,8 @@ describe('<AirportSearch />', () => {
     await waitFor(() => {
       expect(callsTo(calls, 'navdata/airports')).toHaveLength(1);
     }, AFTER_DEBOUNCE);
-    expect(callsTo(calls, 'navdata/airports')[0]?.url).toContain('query=LEMD');
+    // The wire parameter is `q`; `query` is only the client argument's name.
+    expect(callsTo(calls, 'navdata/airports')[0]?.url).toContain('q=LEMD');
     // Bounded server-side; the panel never pulls the whole index down to filter it.
     expect(callsTo(calls, 'navdata/airports')[0]?.url).toContain('limit=12');
   });
