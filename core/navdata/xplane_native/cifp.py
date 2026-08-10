@@ -31,7 +31,7 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
+from threading import Lock, local
 from typing import Final, Literal, cast
 
 from core.models import GeoPosition
@@ -252,19 +252,27 @@ def parse_cifp(
             is ``None`` nothing resolves: every leg reads as unpositionable with
             a reason naming its fix, and the procedures are still returned —
             which is exactly what an instructor should see while the index is
-            still building.
+            still building. When it is given, a **same-airport runway
+            reference** (the ARINC ``PG`` subsection, which every real approach
+            carries) is answered from the file's own ``RWY:`` records before
+            this callable is consulted — see
+            :func:`_resolving_own_runways_first` for why that is load-bearing
+            and not an optimisation.
 
     Returns:
         Everything the file has to say. **Never raises on bad content**: a record
         that cannot be read is skipped and counted.
     """
-    resolver = resolve_fix if resolve_fix is not None else _resolves_nothing
     airport_icao = normalize_icao(icao)
 
     runways: list[CifpRunway] = []
-    builders: OrderedDict[tuple[ProcedureKind, str, str], _ProcedureBuilder] = OrderedDict()
+    deferred: list[tuple[ProcedureKind, list[str], str]] = []
     skipped = 0
 
+    # First pass: runways only. Real files publish their RWY: records AFTER the
+    # procedures, and the legs need them — a same-airport runway reference is
+    # resolved from these records — so every RWY: record must be in hand before
+    # the first leg is read.
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -285,9 +293,20 @@ def parse_cifp(
             continue
 
         kind = _RECORD_KINDS.get(record_type)
-        if kind is None:
-            continue
+        if kind is not None:
+            deferred.append((kind, fields, line))
 
+    # With no resolver, runway references stay unresolved like every other kind
+    # of fix: "nothing resolves while the index builds" reads uniformly, rather
+    # than runway legs alone lighting up as positionable mid-build.
+    resolver = (
+        _resolves_nothing
+        if resolve_fix is None
+        else _resolving_own_runways_first(resolve_fix, airport_icao, runways)
+    )
+
+    builders: OrderedDict[tuple[ProcedureKind, str, str], _ProcedureBuilder] = OrderedDict()
+    for kind, fields, line in deferred:
         parsed = _parse_procedure_record(kind, fields, line, airport_icao, resolver)
         if parsed is None:
             skipped += 1
@@ -311,6 +330,47 @@ def parse_cifp(
         procedures=procedures,
         skipped_record_count=skipped,
     )
+
+
+def _resolving_own_runways_first(
+    resolve_fix: FixResolver, airport_icao: str, runways: Sequence[CifpRunway]
+) -> FixResolver:
+    """Wrap ``resolve_fix`` so a same-airport runway reference never leaves the file.
+
+    A leg that names its own airport's runway as a fix — ``RW32L,…,P,G``, and
+    every real approach carries one for its missed approach point — must not go
+    to the injected resolver: in the deployed wiring that resolver is the
+    indexed provider, whose runway answer is a **merge that loads this very
+    CIFP file**, and re-entering that load mid-parse recursed until the stack
+    blew — HTTP 500 from every Position endpoint at every airport tried (LEMD,
+    LEBL, KJFK, EGLL, LEZL). The ``RWY:`` records already in hand are also the
+    better answer, not merely the safe one: they carry the CIFP threshold, the
+    same datum the merged runway will publish, so the leg lands exactly on the
+    procedure's own geometry.
+
+    A runway the file has no ``RWY:`` record for falls through to
+    ``resolve_fix``, which may still know it from ``apt.dat`` — under the
+    re-entrancy guard in :meth:`XPNativeCifpSource.load`, so it answers
+    un-merged rather than recursing.
+    """
+    thresholds = {runway.ident: runway for runway in runways if runway.threshold is not None}
+
+    def resolve(ref: FixRef) -> Waypoint | None:
+        # ``_build_fix_ref`` uppercases the key parts, and every ref built from
+        # this file is scoped to this airport; the equality check keeps a
+        # hand-constructed cross-airport ref honest anyway.
+        if ref.section == "P" and ref.subsection == "G" and ref.airport_icao == airport_icao:
+            runway = thresholds.get(normalize_runway_ident(ref.ident))
+            if runway is not None and runway.threshold is not None:
+                return Waypoint(
+                    ident=runway.ident,
+                    kind="runway",
+                    position=runway.threshold,
+                    airport_icao=airport_icao,
+                )
+        return resolve_fix(ref)
+
+    return resolve
 
 
 # ---------------------------------------------------------------------------
@@ -768,6 +828,20 @@ def _resolves_nothing(ref: FixRef) -> Waypoint | None:
 _DEFAULT_CACHE_SIZE: Final = 64
 
 
+class _AirportsBeingParsed(local):
+    """The ICAOs **this thread** is currently parsing — re-entrancy is per call stack.
+
+    ``threading.local`` and not a plain instance attribute, deliberately: the
+    source is shared across FastAPI's threadpool, and a plain flag would make a
+    *concurrent* load on another thread look re-entrant and wrongly answer it
+    with ``None``. Thread-local state keyed on the airport suppresses exactly
+    the recursive case and nothing else.
+    """
+
+    def __init__(self) -> None:
+        self.icaos: set[str] = set()
+
+
 class XPNativeCifpSource:
     """A :class:`~core.navdata.cifp_source.CifpSource` over an X-Plane data tree.
 
@@ -800,6 +874,7 @@ class XPNativeCifpSource:
         self._max_entries = max(1, max_entries)
         self._lock = Lock()
         self._cache: OrderedDict[tuple[str, str, int], CifpAirport] = OrderedDict()
+        self._parsing = _AirportsBeingParsed()
 
     @property
     def root(self) -> Path:
@@ -813,6 +888,13 @@ class XPNativeCifpSource:
         the ~1000 airports whose procedures live only in ``Resources/default
         data/`` are found, and an airport whose file appears in ``Custom Data/``
         after a navdata update is picked up without restarting anything.
+
+        A **re-entrant** load of the airport currently being parsed on this
+        thread returns ``None``. In the deployed wiring the fix resolver is the
+        indexed provider, whose runway merge calls back into this method for
+        the very airport whose legs are being resolved; without the guard that
+        cycle recursed until the stack blew. See the comment at the guard for
+        why the ``None`` cannot contaminate any non-nested answer.
         """
         airport_icao = normalize_icao(icao)
         path = cifp_file(self._root, airport_icao)
@@ -833,6 +915,17 @@ class XPNativeCifpSource:
                 self._cache.move_to_end(key)
                 return cached
 
+        if airport_icao in self._parsing.icaos:
+            # Re-entered from inside this airport's own parse: resolving one of
+            # its legs reached the provider, whose runway merge loads this very
+            # file. "No CIFP" is what breaks the cycle. The nested caller then
+            # sees the **un-merged** apt.dat runway — acceptable, because the
+            # parser only lets a runway reference its own file cannot answer
+            # fall through to here — and it cannot leak into a non-nested
+            # answer: nothing is cached on this path, and the completed parse
+            # below is the only thing a later load can return.
+            return None
+
         try:
             text = path.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -840,7 +933,13 @@ class XPNativeCifpSource:
             # read. "No procedures" is the honest answer; it is not a crash.
             return None
 
-        airport = parse_cifp(text, icao=airport_icao, resolve_fix=self._resolve_fix)
+        self._parsing.icaos.add(airport_icao)
+        try:
+            airport = parse_cifp(text, icao=airport_icao, resolve_fix=self._resolve_fix)
+        finally:
+            # Always released, or one failed parse would freeze the airport as
+            # "no procedures" for the life of the thread.
+            self._parsing.icaos.discard(airport_icao)
 
         with self._lock:
             self._cache[key] = airport
