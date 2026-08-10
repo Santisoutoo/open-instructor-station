@@ -109,21 +109,26 @@ class FakeSimAdapter:
 
     # -- Writes -----------------------------------------------------------
 
-    async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
+    async def set_position(
+        self, position: GeoPosition, heading_deg: float, *, ias_kt: float | None = None
+    ) -> None:
         """Teleport the in-memory aircraft.
 
         Args:
             position: Target position; ``altitude_ft`` is applied as MSL.
             heading_deg: Target true heading in degrees.
+            ias_kt: Indicated airspeed to arrive at. ``None`` keeps the current
+                one, which for the Fake means literally leaving the field alone.
         """
-        self._state = self._state.model_copy(
-            update={
-                "latitude": position.latitude,
-                "longitude": position.longitude,
-                "altitude_ft": position.altitude_ft,
-                "heading_deg": heading_deg % 360.0,
-            }
-        )
+        updates: dict[str, Any] = {
+            "latitude": position.latitude,
+            "longitude": position.longitude,
+            "altitude_ft": position.altitude_ft,
+            "heading_deg": heading_deg % 360.0,
+        }
+        if ias_kt is not None:
+            updates["ias_kt"] = ias_kt
+        self._state = self._state.model_copy(update=updates)
 
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is set, leaving the rest untouched."""

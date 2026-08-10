@@ -207,6 +207,16 @@ per-task decision.
   category B when the caller states nothing, 0 kt only on the ground); an explicit `ias_kt` always
   wins. Speed is only half of it — the flaps and gear that make it a *stabilised* approach are the
   full pre-teleport setup (#8), which extends `to_setup()` rather than replacing it.
+
+  **Resolving the speed in `core/` was not enough to deliver it, and that gap survived for four
+  days because only a live run could see it.** `apply_setup` releases the flight model when it
+  finishes, the aircraft decelerates while it settles, and `set_position` then re-read that
+  *decayed* IAS and faithfully carried it onto the new heading: 120 kt commanded, **82.8 kt**
+  measured at LEMD on 2026-08-10. `set_position` therefore takes a keyword-only `ias_kt` —
+  `None` preserves the current speed, a value commands it — and `apply` passes the resolved
+  speed to **both** calls. The general lesson is worth more than the fix: a value written into
+  one call is not delivered until something reads it back at the other end. The contract suite
+  now asserts the read-back on both adapters.
 - **X-Plane 12 "real weather" mode continuously overwrites manual weather datarefs.** The
   Weather Manager must force manual mode before writing anything.
 - **Navdata sources** (user's install, `Custom Data/` wins over `Resources/default data/`):
