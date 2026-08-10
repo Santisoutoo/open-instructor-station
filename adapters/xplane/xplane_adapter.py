@@ -17,12 +17,21 @@ that settled it are worth stating precisely, because two of them are traps:
   error that would land every teleport in the wrong province. The origin is
   therefore *measured* from the aircraft's own position, which is known in both
   coordinate systems simultaneously. See :func:`core.local_frame.origin_from_observation`.
+* **The frame origin is not stable either.** X-Plane relocates it during the
+  scenery reload a long teleport provokes, and the coordinates written before
+  the reload then denote a different place on earth — Madrid to Heathrow used to
+  poll for the full budget and fail with the write having been accepted
+  (issue #36). A measurement is therefore only good for as long as the frame it
+  described, and :meth:`XPlaneSimAdapter.set_position` re-measures and re-aims
+  rather than trusting the one it started with.
 
 The validated procedure is five steps, and skipping any of them breaks
 something:
 
 1. Freeze the flight model (``override_planepath[0] = 1``).
-2. Write ``local_x``/``local_y``/``local_z``.
+2. Write ``local_x``/``local_y``/``local_z`` — and write them **again**, in the
+   frame that is current afterwards, if the arrival poll says the aircraft is
+   somewhere else because a scenery reload moved the frame under the write.
 3. Write the **velocity vector** (``local_vx/vy/vz``) and heading. Writing zeros
    drops the aircraft out of the sky at stall speed; this adapter carries the
    aircraft's current speed onto the new heading, converted from indicated to
@@ -80,6 +89,7 @@ from core.local_frame import (
     LocalCoordinates,
     LocalFrameOrigin,
     origin_from_observation,
+    origin_separation_m,
     world_to_local,
 )
 from core.models import AircraftSetup, AircraftState, GeoPosition
@@ -198,7 +208,48 @@ _RELEASE_SETTLE_S = 1.0
 #: derived world coordinates are briefly in transit. Polling handles both
 #: without making the common case slow.
 _ARRIVAL_POLL_S = 0.25
-_ARRIVAL_TIMEOUT_S = 30.0
+
+#: How long one write is given to show up before the adapter stops waiting and
+#: asks *why* it has not (issue #36). This is the settle criterion, and the
+#: number is chosen for what it rules out rather than for how long a reload
+#: takes:
+#:
+#: The derived world coordinates lag a local-frame write by one or two frames —
+#: tens of milliseconds. A slice is two orders of magnitude longer than that,
+#: and every poll inside it is a *round trip X-Plane answered*. So when a slice
+#: expires with the aircraft parked somewhere that is not the target, the sim
+#: has demonstrably been running and publishing throughout, and "not there yet"
+#: has been ruled out: the aircraft really is somewhere else, and the frame it
+#: was aimed in is the prime suspect. A simulator stalled mid-reload does not
+#: answer at all, so that case shows up as a slow poll and is absorbed by
+#: :data:`_REPOSITION_TIMEOUT_S` rather than mistaken for a settled frame.
+_ARRIVAL_ATTEMPT_S = 8.0
+
+#: Total wall-clock budget for one :meth:`XPlaneSimAdapter.set_position`, across
+#: every re-aim. Re-aiming must not turn a bounded failure into an unbounded
+#: one, so the loop is bounded twice over: by this deadline and by
+#: :data:`_MAX_REPOSITION_WRITES`.
+_REPOSITION_TIMEOUT_S = 30.0
+
+#: How many times one placement will aim at its target. The first write is the
+#: common case. The second is the one that lands after a scenery reload has
+#: moved the frame, which is the whole of issue #36. The third exists because a
+#: re-measure can itself be overtaken by a second shift; a fourth would be
+#: treating "the frame keeps moving" as something to out-wait, and it is not —
+#: at that point the placement has failed and the instructor should be told.
+_MAX_REPOSITION_WRITES = 3
+
+#: Two frame-origin measurements further apart than this describe different
+#: frames. Measured off the frozen aircraft they agree to millimetres; a scenery
+#: shift moves the anchor by kilometres. The threshold sits between two scales
+#: six orders of magnitude apart, which is why it has never needed tuning.
+_ORIGIN_SHIFT_TOLERANCE_M = 50.0
+
+#: Consecutive agreeing measurements required before a re-measured origin is
+#: aimed with, and the gap between them. One measurement cannot tell a settled
+#: frame from one sampled mid-shift; two that agree can.
+_ORIGIN_STABLE_SAMPLES = 2
+_ORIGIN_SAMPLE_S = 0.25
 
 #: Read-back tolerance after a teleport, in metres. The check runs while the
 #: flight model is still frozen, so the aircraft is not moving and this only has
@@ -495,41 +546,146 @@ class XPlaneSimAdapter:
         arrival is verified *while the flight model is still frozen*, so the
         check measures placement rather than a second of subsequent flight.
 
+        **It aims more than once when it has to (issue #36).** A local-frame
+        coordinate only means something in the frame it was computed in, and a
+        teleport long enough to trigger a scenery reload moves that frame:
+        Madrid to Heathrow used to write coordinates X-Plane accepted, land the
+        aircraft somewhere else entirely, and then poll a target it could never
+        converge on for the full budget. So a placement that has not arrived by
+        the end of its slice is not waited out — the frame is re-measured, the
+        target is recomputed in it, and the placement is written again. The
+        convergence criterion is unchanged and is the only one that cannot lie:
+        the aircraft's *world* position, which X-Plane derives from whatever
+        frame is current, read back through :meth:`_position_matches`.
+
+        The whole loop runs inside one freeze, which matters for the re-measure
+        as much as for the write: the origin is recovered from the aircraft's own
+        position read in two coordinate systems, and on a moving aircraft those
+        reads describe two different instants.
+
         Args:
             position: Target position, ``altitude_ft`` interpreted as MSL.
             heading_deg: Target true heading in degrees.
 
         Raises:
             XPlaneRepositionFailed: if the aircraft did not arrive within
-                :data:`POSITION_WRITE_TOLERANCE_M`. Never reports an unobserved
-                success.
+                :data:`POSITION_WRITE_TOLERANCE_M` after
+                :data:`_MAX_REPOSITION_WRITES` attempts or
+                :data:`_REPOSITION_TIMEOUT_S`, whichever comes first. Never
+                reports an unobserved success.
         """
         origin = await self.measure_local_frame_origin()
-        target = world_to_local(origin, position)
         speed_kt = (await self.get_aircraft_state()).ias_kt
         # Resolved before the aircraft moves and against the *target* altitude:
         # the atmosphere the speed has to be true in is the destination's, and the
         # one the sim can be asked about is the departure's.
         tas_kt = await self._true_airspeed_kt(speed_kt, position.altitude_ft)
 
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + _REPOSITION_TIMEOUT_S
+        attempts = 0
+        arrived = False
+
         async with self.frozen_flight_model():
-            await self._write("local_x", target.x_m)
-            await self._write("local_y", target.y_m)
-            await self._write("local_z", target.z_m)
-            await self._write_velocity_vector(heading_deg, tas_kt)
-            await self._write("psi", heading_deg % 360.0)
-            arrived = await self._await_arrival(position)
+            for attempt in range(_MAX_REPOSITION_WRITES):
+                if attempt:
+                    if loop.time() >= deadline:
+                        break
+                    # The previous aim missed. Either the write never took, or
+                    # the frame it was expressed in no longer exists — and the
+                    # second is both the likelier and the recoverable one.
+                    origin = await self._settled_local_frame_origin(deadline)
+                attempts += 1
+                await self._write_placement(position, heading_deg, tas_kt, origin)
+                arrived = await self._await_arrival(position, deadline)
+                if arrived:
+                    break
 
         await self.clear_crash_state()
 
         if not arrived:
             raise XPlaneRepositionFailed(
                 f"The aircraft did not arrive within {POSITION_WRITE_TOLERANCE_M:.0f} m of "
-                f"{position.latitude:.6f}, {position.longitude:.6f} after writing the local "
-                "frame coordinates. The frame origin measurement or the local axis convention "
-                "may be wrong on this build. Run spikes/xplane_connection.py, which prints the "
-                "calibration residual, before trusting any further placement."
+                f"{position.latitude:.6f}, {position.longitude:.6f} after {attempts} attempt(s) "
+                "at writing the local frame coordinates, each one aimed with a freshly measured "
+                "frame origin. A frame that keeps moving is not the explanation at this point: "
+                "the origin measurement or the local axis convention may be wrong on this build. "
+                "Run spikes/xplane_connection.py, which prints the calibration residual, before "
+                "trusting any further placement."
             )
+
+    async def _write_placement(
+        self,
+        position: GeoPosition,
+        heading_deg: float,
+        tas_kt: float,
+        origin: LocalFrameOrigin,
+    ) -> None:
+        """Steps 2 and 3 of the procedure, expressed in one frame.
+
+        Kept together because they share that frame and must not be split
+        across a re-aim: the local axes are the east/up/north triad **at the
+        anchor**, so an anchor that moved several hundred kilometres has rotated
+        them by the convergence of the meridians between the two. A re-aim that
+        rewrote the coordinates but kept the old velocity vector would put the
+        aircraft in the right place flying a heading it was not asked for.
+
+        Args:
+            position: Target position, ``altitude_ft`` interpreted as MSL.
+            heading_deg: Target true heading in degrees.
+            tas_kt: True airspeed to carry onto that heading, in knots.
+            origin: The frame ``position`` is to be projected into.
+        """
+        target = world_to_local(origin, position)
+        await self._write("local_x", target.x_m)
+        await self._write("local_y", target.y_m)
+        await self._write("local_z", target.z_m)
+        await self._write_velocity_vector(heading_deg, tas_kt)
+        await self._write("psi", heading_deg % 360.0)
+
+    async def _settled_local_frame_origin(self, deadline: float) -> LocalFrameOrigin:
+        """Measure the frame origin, and keep measuring until it stops moving.
+
+        Detecting that the frame moved is easy; knowing *when* the new one can
+        be trusted is the actual problem, because a measurement taken mid-reload
+        is exactly as wrong as the stale one it replaces. Two things make this
+        safe, and neither is a fixed sleep:
+
+        * **This is never called early.** It runs only after a whole
+          :data:`_ARRIVAL_ATTEMPT_S` slice of *answered* polls has failed to see
+          the aircraft arrive — see that constant for why that rules out "the
+          derived coordinates have not caught up yet" and why a simulator
+          stalled inside a reload cannot be mistaken for a settled one.
+        * **One measurement is not enough to conclude anything.** Sampling the
+          instant of a shift yields an origin that is already historical, so
+          :data:`_ORIGIN_STABLE_SAMPLES` consecutive measurements must agree to
+          within :data:`_ORIGIN_SHIFT_TOLERANCE_M` before one is aimed with.
+          Off a frozen aircraft in a settled frame that is satisfied on the
+          first two samples, so the common recovery costs one extra round trip.
+
+        And if both are somehow fooled, the caller's arrival check still refuses
+        the result: a bad origin costs one more attempt, not a false success.
+
+        Args:
+            deadline: Event-loop time the whole reposition must finish by.
+                Reaching it returns the latest measurement rather than raising —
+                the verdict belongs to the arrival check, not to this.
+
+        Returns:
+            The frame origin to aim the next placement with.
+        """
+        loop = asyncio.get_running_loop()
+        origin = await self.measure_local_frame_origin()
+        agreements = 0
+        while agreements < _ORIGIN_STABLE_SAMPLES:
+            if loop.time() >= deadline:
+                return origin
+            await asyncio.sleep(_ORIGIN_SAMPLE_S)
+            latest = await self.measure_local_frame_origin()
+            moved_m = origin_separation_m(origin, latest)
+            agreements = 0 if moved_m > _ORIGIN_SHIFT_TOLERANCE_M else agreements + 1
+            origin = latest
+        return origin
 
     async def _true_airspeed_kt(self, ias_kt: float, altitude_ft: float | None = None) -> float:
         """Convert an indicated airspeed to the true one for where the aircraft is *going*.
@@ -623,17 +779,34 @@ class XPlaneSimAdapter:
         """True if X-Plane currently considers the aircraft wrecked."""
         return bool(await self._read("has_crashed"))
 
-    async def _await_arrival(self, target: GeoPosition) -> bool:
-        """Poll until the aircraft is at ``target``, or until the timeout.
+    async def _await_arrival(self, target: GeoPosition, deadline: float) -> bool:
+        """Poll until the aircraft is at ``target``, or until this attempt's slice ends.
 
         Returns as soon as it has arrived, so a short hop costs one round trip
-        and only a scenery-reload-sized teleport pays the wait.
+        and only a scenery-reload-sized teleport pays any wait at all.
+
+        The slice is :data:`_ARRIVAL_ATTEMPT_S` rather than the whole budget on
+        purpose: waiting longer cannot make an aircraft that is in the wrong
+        place arrive, and it is exactly the mistake issue #36 was — thirty
+        seconds spent polling a target computed in a frame that no longer
+        existed. Failing the slice is what tells the caller to go and look at
+        the frame instead of waiting harder.
+
+        Args:
+            target: Where the aircraft was told to go.
+            deadline: Event-loop time the whole reposition must finish by. The
+                slice never runs past it.
+
+        Returns:
+            True if the aircraft reached ``target`` within
+            :data:`POSITION_WRITE_TOLERANCE_M`.
         """
-        deadline = asyncio.get_running_loop().time() + _ARRIVAL_TIMEOUT_S
+        loop = asyncio.get_running_loop()
+        attempt_deadline = min(deadline, loop.time() + _ARRIVAL_ATTEMPT_S)
         while True:
             if await self._position_matches(target):
                 return True
-            if asyncio.get_running_loop().time() >= deadline:
+            if loop.time() >= attempt_deadline:
                 return False
             await asyncio.sleep(_ARRIVAL_POLL_S)
 

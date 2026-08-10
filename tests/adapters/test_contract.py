@@ -64,8 +64,13 @@ STREAM_INTERVAL_S = 0.05
 #: can turn into a transcontinental jump, and X-Plane relocates its local frame
 #: origin during the scenery reload that provokes, so the read-back races the
 #: loader. The contract under test is "the aircraft ends up where you asked" —
-#: the distance is not part of it. Long-haul repositioning across a scenery
-#: reload is an *adapter* concern, tracked separately; see
+#: the distance is not part of it.
+#:
+#: The adapter now survives that relocation (issue #36) and this stayed short
+#: anyway: convergence across a scenery reload is an X-Plane mechanic, not
+#: something every adapter must implement, and it is pinned where it lives — in
+#: ``tests/adapters/test_xplane_scenery_reload.py`` for CI and in
+#: ``tests/sim/test_live_xplane.py`` for a real simulator. See
 #: ``docs/designs/live-contract-suite.md``.
 HOP_DISTANCE_NM = 5.0
 
