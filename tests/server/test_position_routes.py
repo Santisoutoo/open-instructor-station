@@ -421,38 +421,65 @@ class TestApplyOrdersTheWrites:
     """The setup goes in before the teleport, always."""
 
     @pytest.fixture
-    def recording_client(self, monkeypatch: pytest.MonkeyPatch) -> tuple[TestClient, list[str]]:
+    def recording_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> tuple[TestClient, list[str], list[float | None]]:
         calls: list[str] = []
+        speeds: list[float | None] = []
 
         class RecordingAdapter(FakeSimAdapter):
             async def apply_setup(self, setup: AircraftSetup) -> None:
                 calls.append("apply_setup")
                 await super().apply_setup(setup)
 
-            async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
+            async def set_position(
+                self,
+                position: GeoPosition,
+                heading_deg: float,
+                *,
+                ias_kt: float | None = None,
+            ) -> None:
                 calls.append("set_position")
-                await super().set_position(position, heading_deg)
+                speeds.append(ias_kt)
+                await super().set_position(position, heading_deg, ias_kt=ias_kt)
 
         provider = build_provider()
         monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: provider)
         monkeypatch.setattr(server.deps, "_build_adapter", lambda _settings: RecordingAdapter())
         reset_adapter()
         reset_navdata()
-        return TestClient(create_app()), calls
+        return TestClient(create_app()), calls, speeds
 
     def test_setup_is_written_before_the_teleport(
-        self, recording_client: tuple[TestClient, list[str]]
+        self, recording_client: tuple[TestClient, list[str], list[float | None]]
     ) -> None:
-        client, calls = recording_client
+        client, calls, _speeds = recording_client
         with client:
             response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
         assert response.status_code == 200, response.text
         assert calls == ["apply_setup", "set_position"]
 
-    def test_the_aircraft_ends_up_where_the_placement_said(
-        self, recording_client: tuple[TestClient, list[str]]
+    def test_the_teleport_is_told_the_speed_as_well(
+        self, recording_client: tuple[TestClient, list[str], list[float | None]]
     ) -> None:
-        client, _calls = recording_client
+        """Writing the speed once, into the setup, is not enough.
+
+        ``apply_setup`` releases the flight model when it finishes and the aircraft
+        decelerates while it settles, so an adapter left to read the speed for itself
+        carries the decayed value onto the new heading — 120 kt commanded, 83 kt
+        measured at LEMD (issue #39). The route must hand the speed to the teleport
+        too, and only the call itself shows whether it did.
+        """
+        client, _calls, speeds = recording_client
+        with client:
+            response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
+        assert response.status_code == 200, response.text
+        assert speeds == [APPROACH_CATEGORY_VAT_KT["B"]]
+
+    def test_the_aircraft_ends_up_where_the_placement_said(
+        self, recording_client: tuple[TestClient, list[str], list[float | None]]
+    ) -> None:
+        client, _calls, _speeds = recording_client
         with client:
             response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
         body = response.json()
