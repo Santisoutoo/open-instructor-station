@@ -9,6 +9,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
+import server.app
 import server.deps
 from adapters.fake import FakeSimAdapter
 from core.models import AircraftState
@@ -128,21 +129,35 @@ def test_control_manifest_lists_every_panel_control(client: TestClient) -> None:
 
 
 def test_controls_backed_by_an_aircraft_setup_field_are_supported(client: TestClient) -> None:
+    """``FakeSimAdapter`` declares every capability, so every control must now be writable.
+
+    The trim and the whole autopilot block joined this list with issue #41. Until
+    then they were the live example of the "declared but not modelled" gap; the
+    branch that reports it is pinned by
+    :func:`test_a_control_with_no_aircraft_setup_field_is_disabled_with_a_reason`.
+    """
     controls = _controls(client)
-    for control in ("flaps", "speedbrake", "gear", "autobrake", "lights", "altitude"):
-        assert controls[control]["supported"] is True, control
-        assert controls[control]["reason"] is None, control
+    assert [control for control, entry in controls.items() if not entry["supported"]] == []
+    assert all(entry["reason"] is None for entry in controls.values())
 
 
-def test_controls_without_an_aircraft_setup_field_are_disabled_with_a_reason(
-    client: TestClient,
+def test_a_control_with_no_aircraft_setup_field_is_disabled_with_a_reason(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """``FakeSimAdapter`` declares every capability, so only the model gap can disable these."""
+    """A control the server offers but ``AircraftSetup`` cannot carry fails closed.
+
+    Every real control has its field today, so the gap is staged rather than
+    waited for: this is the branch that keeps a panel honest during the window
+    between adding a control identifier and adding the field behind it.
+    """
+    staged = dict(server.app._CONTROL_FIELDS)
+    staged["flaps"] = ("not_a_field_on_aircraft_setup", "can_set_aircraft_state")
+    monkeypatch.setattr(server.app, "_CONTROL_FIELDS", staged)
+
     controls = _controls(client)
-    for control in ("trim", "autopilot_master", "autopilot_nav", "target_altitude"):
-        assert controls[control]["supported"] is False, control
-        reason = controls[control]["reason"]
-        assert isinstance(reason, str) and "AircraftSetup has no" in reason, control
+    assert controls["flaps"]["supported"] is False
+    reason = controls["flaps"]["reason"]
+    assert isinstance(reason, str) and "AircraftSetup has no" in reason
 
 
 def test_an_undeclared_capability_disables_its_controls(read_only_client: TestClient) -> None:

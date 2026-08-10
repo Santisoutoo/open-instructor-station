@@ -112,6 +112,22 @@ re-measure and re-write after the reload settles, rather than polling a stale ta
 adapter change and out of scope for this issue, which is about the harness. **It needs its own
 issue before the Position Manager ships "reposition to another airport".**
 
+**Closed by [#36](https://github.com/Santisoutoo/open-instructor-station/issues/36).**
+`set_position` now re-measures the frame origin and re-aims when a placement does not arrive,
+bounded by `_MAX_REPOSITION_WRITES` and one `_REPOSITION_TIMEOUT_S` budget. The settle criterion —
+the part that is actually hard, since a measurement taken mid-reload is as wrong as the stale one
+it replaces — is that a re-measure is only taken *after* a whole `_ARRIVAL_ATTEMPT_S` slice of
+answered polls has failed to see the aircraft arrive, and that two consecutive measurements must
+agree before one is aimed with. It is proved in CI by
+`tests/adapters/test_xplane_scenery_reload.py`, against a stand-in that derives its world
+coordinates from a local frame and relocates that frame on demand, and live by
+`test_teleports_across_a_scenery_reload_and_restores` under `-m sim`.
+
+**The contract suite deliberately did not change.** Its hops stay short and relative for the
+reasons above — an absolute target from an arbitrary starting position is still a landmine, and
+"the aircraft ends up where you asked" is still the contract, with the distance no part of it.
+Long-haul convergence is an X-Plane-specific mechanic and is tested where it lives.
+
 ## Verification
 
 `pytest`, `ruff check`, `ruff format --check` and `mypy` are all green — see the PR.

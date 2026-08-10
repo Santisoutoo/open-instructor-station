@@ -65,6 +65,16 @@ class AircraftSetup(BaseModel):
     Every field is optional: ``None`` means *leave that aspect of the aircraft
     untouched*. An adapter must apply exactly the fields that are set and must
     not reset the others to a default.
+
+    **This model is the whole write surface of the aircraft**, autopilot
+    included. There is deliberately no separate ``set_autopilot`` seam on
+    :class:`~core.sim_adapter.SimAdapter`: an instructor arming HDG and dialling
+    the heading bug is one intent, and splitting it across two calls would make
+    it two half-applied states an aircraft can be caught between. The fields are
+    still gated separately — the autopilot block needs
+    :attr:`~core.sim_adapter.Capabilities.can_control_autopilot`, everything else
+    needs ``can_set_aircraft_state`` — so an adapter that cannot drive an
+    autopilot refuses those fields and honours the rest.
     """
 
     # --- Flight state -----------------------------------------------------
@@ -94,6 +104,12 @@ class AircraftSetup(BaseModel):
     speedbrake_ratio: float | None = Field(
         default=None, ge=0.0, le=1.0, description="0 = retracted, 1 = fully deployed."
     )
+    elevator_trim_ratio: float | None = Field(
+        default=None,
+        ge=-1.0,
+        le=1.0,
+        description="-1 = full nose down, 0 = neutral, +1 = full nose up.",
+    )
     gear_down: bool | None = Field(default=None, description="True = gear down and locked.")
     autobrake_level: int | None = Field(
         default=None, ge=0, le=5, description="0 = off, increasing = stronger deceleration."
@@ -115,6 +131,51 @@ class AircraftSetup(BaseModel):
     )
     obs2_deg: float | None = Field(
         default=None, ge=0.0, le=360.0, description="NAV2 OBS course in degrees."
+    )
+
+    # --- Autopilot --------------------------------------------------------
+    # Requires Capabilities.can_control_autopilot. Two conventions are pinned
+    # here because getting either wrong is silent:
+    #
+    # * The mode flags are *selections*, not a description of what the aircraft
+    #   is doing. Arming NAV does not make the aircraft turn — the servos do,
+    #   and those are `autopilot_master`.
+    # * `target_heading_deg` is MAGNETIC, unlike every other heading in this
+    #   module. A heading bug is magnetic on the real aeroplane and in every
+    #   simulator that models one, the same way `obs1_deg` is.
+    autopilot_master: bool | None = Field(
+        default=None, description="True = autopilot servos engaged and flying the aircraft."
+    )
+    flight_director: bool | None = Field(
+        default=None,
+        description=(
+            "True = flight director bars shown. Engaging the autopilot implies a flight "
+            "director; switching the flight director off switches the autopilot off with it."
+        ),
+    )
+    autopilot_nav: bool | None = Field(
+        default=None, description="True = NAV (VOR/LOC/GPS) selected as the lateral mode."
+    )
+    autopilot_app: bool | None = Field(
+        default=None, description="True = APPROACH selected as the lateral mode."
+    )
+    autopilot_hdg: bool | None = Field(
+        default=None, description="True = HEADING selected as the lateral mode."
+    )
+    target_altitude_ft: float | None = Field(
+        default=None, description="Autopilot altitude selector, feet MSL. Not the aircraft's."
+    )
+    target_ias_kt: float | None = Field(
+        default=None, ge=0.0, description="Autopilot speed selector, indicated knots."
+    )
+    target_heading_deg: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=360.0,
+        description="Autopilot heading bug, MAGNETIC degrees (a heading selector always is).",
+    )
+    target_vertical_speed_fpm: float | None = Field(
+        default=None, description="Autopilot vertical speed selector, feet per minute."
     )
 
 

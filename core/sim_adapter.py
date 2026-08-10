@@ -46,6 +46,14 @@ class Capabilities(BaseModel):
     can_set_weather: bool = False
     can_inject_failures: bool = False
     can_spawn_traffic: bool = False
+    #: The adapter honours the autopilot block of
+    #: :class:`~core.models.AircraftSetup` — the mode flags
+    #: (``autopilot_master``, ``flight_director``, ``autopilot_nav``,
+    #: ``autopilot_app``, ``autopilot_hdg``) and the four selectors
+    #: (``target_altitude_ft``, ``target_ias_kt``, ``target_heading_deg``,
+    #: ``target_vertical_speed_fpm``). There is no separate autopilot method:
+    #: the autopilot is written through :meth:`SimAdapter.apply_setup` like
+    #: every other switch, and this flag is what gates those fields.
     can_control_autopilot: bool = False
     can_set_fuel_payload: bool = False
     can_control_camera: bool = False
@@ -116,7 +124,19 @@ class SimAdapter(Protocol):
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is not ``None``, leaving the rest untouched.
 
-        Requires :attr:`Capabilities.can_set_aircraft_state`.
+        **This is the only write path into the aircraft's configuration**, and
+        that is a decision rather than an accident (issue #41). The autopilot in
+        particular does *not* get its own method: arming a mode and dialling the
+        selector it flies to is one instructor intent, and two calls would leave
+        an aircraft reachable in the half-applied state between them.
+
+        Most fields require :attr:`Capabilities.can_set_aircraft_state`. Two
+        groups are gated separately and an adapter that is handed one of them
+        without declaring the flag must raise :class:`CapabilityNotSupported`
+        rather than silently ignore it or half-apply the setup:
+
+        * the autopilot block — :attr:`Capabilities.can_control_autopilot`;
+        * ``gross_weight_kg`` / ``fuel_kg`` — :attr:`Capabilities.can_set_fuel_payload`.
         """
         ...
 
