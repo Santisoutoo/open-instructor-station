@@ -85,6 +85,16 @@ HOP_CLIMB_FT = 2000.0
 #: read-back stays comfortably inside :data:`POSITION_TOLERANCE_M`.
 STABILISED_IAS_KT = 140.0
 
+#: Speed a placement commands in :func:`test_set_position_delivers_the_commanded_speed`.
+#: Well below :data:`STABILISED_IAS_KT` so "the commanded value" and "whatever the
+#: aircraft happened to be doing" cannot be confused for one another — the bug this
+#: pins read back 83 kt against 120 commanded (issue #39).
+COMMANDED_IAS_KT = 90.0
+
+#: Tolerance on that read-back. The Fake stores what it is handed; a live aircraft
+#: is flying, and the freeze is released before the state is read.
+COMMANDED_IAS_TOLERANCE_KT = {"fake": 0.1, "xplane": 15.0}
+
 #: How far a grounded aircraft is lifted before the tests run. Vertical only —
 #: the horizontal position is untouched, so this never triggers a scenery
 #: reload.
@@ -379,6 +389,55 @@ async def test_set_position_sets_the_altitude(adapter: SimAdapter) -> None:
         await adapter.set_position(target, heading_deg=90.0)
         state = await adapter.get_aircraft_state()
         assert state.altitude_ft == pytest.approx(target.altitude_ft, abs=100.0)
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
+
+
+async def test_set_position_delivers_the_commanded_speed(adapter: SimAdapter) -> None:
+    """A commanded ``ias_kt`` must arrive, not be quietly replaced by the current one.
+
+    The failure this pins is not a refusal — it is a faithful preservation of the
+    wrong number. A placement applies its setup, the flight model is released, the
+    aircraft decelerates while it settles, and an adapter that reads the speed for
+    itself carries the decayed value onto the new heading: 120 kt commanded, 83 kt
+    measured at LEMD (issue #39). Only a read-back can tell the two apart.
+    """
+    if not adapter.capabilities.can_set_position:
+        pytest.skip(f"{adapter.name} does not declare can_set_position")
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 45.0)
+    try:
+        await adapter.set_position(target, heading_deg=45.0, ias_kt=COMMANDED_IAS_KT)
+        state = await adapter.get_aircraft_state()
+        assert state.ias_kt == pytest.approx(
+            COMMANDED_IAS_KT, abs=COMMANDED_IAS_TOLERANCE_KT[adapter.name]
+        )
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
+
+
+async def test_set_position_without_a_speed_preserves_the_current_one(
+    adapter: SimAdapter,
+) -> None:
+    """The other half of the contract: ``None`` means "carry what it has".
+
+    This is what moving an already-flying aeroplane wants, and it is the default,
+    so it has to keep working after the commanded case was added.
+    """
+    if not adapter.capabilities.can_set_position:
+        pytest.skip(f"{adapter.name} does not declare can_set_position")
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 135.0)
+    try:
+        await adapter.set_position(target, heading_deg=135.0)
+        state = await adapter.get_aircraft_state()
+        assert state.ias_kt == pytest.approx(
+            original.ias_kt, abs=COMMANDED_IAS_TOLERANCE_KT[adapter.name]
+        )
     finally:
         await adapter.set_position(home, heading_deg=original.heading_deg)
 

@@ -938,7 +938,12 @@ async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
         # Speed, altitude and heading BEFORE the move. Reversing these two lines
         # puts a parked aircraft on a final at 0 kt (#39).
         await adapter.apply_setup(setup)
-        await adapter.set_position(placement.position, placement.heading_deg)
+        # The speed goes in again here, and that is not redundant: apply_setup
+        # releases the flight model when it finishes, the aircraft decelerates
+        # while it settles, and an adapter left to read the speed for itself
+        # would carry the decayed value onto the new heading. Measured at LEMD:
+        # 120 kt commanded, 83 kt on arrival.
+        await adapter.set_position(placement.position, placement.heading_deg, ias_kt=setup.ias_kt)
     except CapabilityNotSupported as exc:  # defence in depth; gated above
         raise HTTPException(status_code=CAPABILITY_UNAVAILABLE_STATUS, detail=str(exc)) from exc
 

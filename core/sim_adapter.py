@@ -114,8 +114,25 @@ class SimAdapter(Protocol):
         """Read one snapshot of the user aircraft."""
         ...
 
-    async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
+    async def set_position(
+        self, position: GeoPosition, heading_deg: float, *, ias_kt: float | None = None
+    ) -> None:
         """Teleport the aircraft to ``position`` facing ``heading_deg`` (true degrees).
+
+        ``ias_kt`` decides what the aircraft is flying when it gets there, and the
+        two cases are genuinely different intents:
+
+        * ``None`` — carry the speed the aircraft has now onto the new heading.
+          Right for *moving* an aeroplane that is already flying.
+        * a value — arrive at that indicated airspeed. Right for a *placement*,
+          where the speed is part of what was asked for.
+
+        The default is ``None`` because preserving is the safe answer for a
+        caller that has no opinion. A placement always has one: a caller that
+        applies a setup and then teleports must pass the speed here as well,
+        because the aircraft decelerates between the two calls and an adapter
+        that re-reads the state would faithfully preserve the decayed value
+        (issue #39 — measured at 83 kt against 120 commanded).
 
         Requires :attr:`Capabilities.can_set_position`.
         """
