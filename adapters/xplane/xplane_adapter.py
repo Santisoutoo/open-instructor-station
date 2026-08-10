@@ -26,8 +26,10 @@ something:
 3. Write the **velocity vector** (``local_vx/vy/vz``) and heading. Writing zeros
    drops the aircraft out of the sky at stall speed; this adapter carries the
    aircraft's current speed onto the new heading, converted from indicated to
-   true airspeed for the density altitude it is being placed at (the local
-   frame's velocity is a true one — see :meth:`XPlaneSimAdapter._write_velocity_vector`).
+   true airspeed for the density altitude it is being placed *at* — the local
+   frame's velocity is a true one. See
+   :meth:`XPlaneSimAdapter._true_airspeed_kt`, which runs before the aircraft
+   moves, because the atmosphere it needs is the one at the destination.
 4. Release the override.
 5. Clear the crash state (``sim/operation/fix_all_systems``). X-Plane reads a
    teleport as an impact and marks the aircraft as wrecked otherwise.
@@ -72,7 +74,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-from core.atmosphere import tas_from_ias
+from core.atmosphere import isa_deviation_c, tas_from_ias, temperature_from_deviation_c
 from core.geodesy import METRES_PER_NAUTICAL_MILE, distance_and_bearing
 from core.local_frame import (
     LocalCoordinates,
@@ -505,12 +507,16 @@ class XPlaneSimAdapter:
         origin = await self.measure_local_frame_origin()
         target = world_to_local(origin, position)
         speed_kt = (await self.get_aircraft_state()).ias_kt
+        # Resolved before the aircraft moves and against the *target* altitude:
+        # the atmosphere the speed has to be true in is the destination's, and the
+        # one the sim can be asked about is the departure's.
+        tas_kt = await self._true_airspeed_kt(speed_kt, position.altitude_ft)
 
         async with self.frozen_flight_model():
             await self._write("local_x", target.x_m)
             await self._write("local_y", target.y_m)
             await self._write("local_z", target.z_m)
-            await self._write_velocity_vector(heading_deg, speed_kt)
+            await self._write_velocity_vector(heading_deg, tas_kt)
             await self._write("psi", heading_deg % 360.0)
             arrived = await self._await_arrival(position)
 
@@ -525,45 +531,80 @@ class XPlaneSimAdapter:
                 "calibration residual, before trusting any further placement."
             )
 
-    async def _write_velocity_vector(self, heading_deg: float, ias_kt: float) -> None:
-        """Set the local velocity vector to ``ias_kt`` *indicated* along ``heading_deg``.
+    async def _true_airspeed_kt(self, ias_kt: float, altitude_ft: float | None = None) -> float:
+        """Convert an indicated airspeed to the true one for where the aircraft is *going*.
 
-        Writing zeros instead is what drops a repositioned aircraft out of the
-        sky below stall speed, so the caller's speed is always carried over.
+        ``local_vx/vy/vz`` is a **true** velocity, while every speed in this
+        project's vocabulary is indicated (see :class:`core.models.AircraftSetup`).
+        The two diverge with density altitude: at FL100 the same needle reading is
+        16 % faster through the air, so a 210 kt final placed there arrived at
+        244 kt indicated. :mod:`core.atmosphere` owns the maths; this method only
+        supplies it with an atmosphere.
 
-        ``local_vx/vy/vz`` is a **true** velocity in metres per second, while
-        every speed in this project's vocabulary is indicated (see
-        :class:`core.models.AircraftSetup`). The two diverge with density
-        altitude: at FL100 the same needle reading is 16 % faster through the
-        air, so a 210 kt final placed there was arriving at 244 kt indicated.
-        The requested speed is therefore converted to true airspeed first, from
-        the aircraft's own altitude and the ambient temperature X-Plane
-        reports — see :mod:`core.atmosphere`, which owns the maths.
+        **The altitude that matters is the target one, and it is why this is a
+        separate method.** A placement is normally a jump. An aircraft parked at
+        LEMD and sent to a hold at FL100 is still on the ground at the moment the
+        speed is resolved, so reading its altitude back would apply the 3 %
+        correction for 2 000 ft where 16 % was needed — silently reinstating most
+        of the defect the conversion exists to remove. The caller states the
+        destination, and calls this **before** writing the position, so the
+        conversion never races the derived world coordinates the sim republishes
+        a frame or two after a teleport.
 
-        Two approximations survive the fix, both deliberate:
+        The ambient temperature can only be read where the aircraft is now, so it
+        is carried to the target altitude at constant ISA deviation rather than
+        used as-is: air cools with height on a hot day too, and a surface reading
+        applied unchanged at FL100 pushes true airspeed the wrong way. See
+        :func:`core.atmosphere.temperature_from_deviation_c`.
 
-        * The MSL elevation derived from the local frame is used as the pressure
-          altitude, which assumes standard pressure. A 30 hPa QNH deviation is
-          worth about 1.5 % of true airspeed, against the 16 % this replaces.
-        * The vector written is a *ground* velocity, so it is exact in still air
-          and off by the along-track wind component otherwise. Correcting that
-          needs the wind datarefs and is a separate piece of work.
+        Two approximations survive, both deliberate and both tracked by issue #42:
+
+        * The MSL altitude is used as the pressure altitude, which assumes
+          standard pressure. A 30 hPa QNH deviation is worth about 1.5 % of true
+          airspeed, against the 16 % this replaces.
+        * The vector built from the result is a *ground* velocity, so it is exact
+          in still air and off by the along-track wind component otherwise.
+          Correcting that needs the wind datarefs.
 
         Args:
-            heading_deg: True heading to fly, in degrees.
-            ias_kt: Indicated airspeed in knots. Negative values are clamped to
-                zero rather than flying the aircraft backwards.
+            ias_kt: Indicated airspeed in knots.
+            altitude_ft: MSL altitude the speed is meant for, or ``None`` to use
+                the aircraft's current one — correct only when nothing in the
+                same operation is moving it vertically.
+
+        Returns:
+            True airspeed in knots.
         """
         altitude_m, temperature_c = await asyncio.gather(
             self._read("elevation"),
             self._read("temperature_ambient_deg_c"),
         )
-        tas_kt = tas_from_ias(
-            max(0.0, ias_kt),
-            float(altitude_m) / _METRES_PER_FOOT,
-            float(temperature_c),
+        observed_ft = float(altitude_m) / _METRES_PER_FOOT
+        deviation_c = isa_deviation_c(float(temperature_c), observed_ft)
+        target_ft = observed_ft if altitude_ft is None else altitude_ft
+        return tas_from_ias(
+            ias_kt,
+            target_ft,
+            temperature_from_deviation_c(target_ft, deviation_c),
         )
-        speed_ms = tas_kt * _METRES_PER_SECOND_PER_KNOT
+
+    async def _write_velocity_vector(self, heading_deg: float, tas_kt: float) -> None:
+        """Set the local velocity vector to ``tas_kt`` **true** along ``heading_deg``.
+
+        Writing zeros instead is what drops a repositioned aircraft out of the
+        sky below stall speed, so the caller's speed is always carried over.
+
+        This is the mechanical half only. The vector X-Plane consumes is a true
+        one; turning the instructor's *indicated* speed into it belongs to
+        :meth:`_true_airspeed_kt`, which the caller runs before the aircraft
+        moves.
+
+        Args:
+            heading_deg: True heading to fly, in degrees.
+            tas_kt: True airspeed in knots. Negative values are clamped to zero
+                rather than flying the aircraft backwards.
+        """
+        speed_ms = max(0.0, tas_kt) * _METRES_PER_SECOND_PER_KNOT
         heading = math.radians(heading_deg % 360.0)
         await self._write("local_vx", speed_ms * math.sin(heading))
         await self._write("local_vy", 0.0)
@@ -785,6 +826,16 @@ class XPlaneSimAdapter:
         if not direct and setup.altitude_ft is None and setup.ias_kt is None:
             return
 
+        # Resolved here, ahead of the freeze, because a setup that carries both an
+        # altitude and a speed moves the aircraft before the speed is written: the
+        # atmosphere the conversion needs is the one it is going to, and the only
+        # one the sim can be asked about is the one it is leaving.
+        tas_kt = (
+            None
+            if setup.ias_kt is None
+            else await self._true_airspeed_kt(setup.ias_kt, setup.altitude_ft)
+        )
+
         async with self.frozen_flight_model():
             for key, value in direct:
                 await self._write(key, value)
@@ -800,11 +851,11 @@ class XPlaneSimAdapter:
             # Airspeed is not a dataref you can assign: it is derived from the
             # velocity vector, so it is written last, along whichever heading the
             # setup asked for (or the aircraft's current one).
-            if setup.ias_kt is not None:
+            if tas_kt is not None:
                 heading = setup.heading_deg
                 if heading is None:
                     heading = float(await self._read("psi"))
-                await self._write_velocity_vector(heading, setup.ias_kt)
+                await self._write_velocity_vector(heading, tas_kt)
 
     async def _write_altitude(self, altitude_ft: float) -> None:
         """Move the aircraft vertically, leaving its horizontal position alone."""

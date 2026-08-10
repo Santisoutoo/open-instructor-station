@@ -113,6 +113,341 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/navdata/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Status
+         * @description What the navdata provider can currently answer, and why not when it cannot.
+         *
+         *     This is to navdata what ``GET /api/capabilities`` is to the simulator: the
+         *     UI gates the whole Position panel on it and states the reason, so an
+         *     instructor never discovers missing navdata by clicking a control that fails.
+         */
+        get: operations["status_api_navdata_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/index": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Build Index
+         * @description Start building the navigation index, and report the status right away.
+         *
+         *     Idempotent: calling it again while a build is running is a no-op that
+         *     returns the current status. An impatient tablet retrying cannot turn this
+         *     into a fork bomb over one SQLite file.
+         */
+        post: operations["build_index_api_navdata_index_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Search Airports
+         * @description Type-ahead over every airport in the index. Ranked, always bounded.
+         *
+         *     The parameter is ``q``, as the design specifies: the UI client is generated
+         *     from this schema, so the name is published surface and renaming it later
+         *     would break every caller silently.
+         */
+        get: operations["search_airports_api_navdata_airports_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/near": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Airports Near
+         * @description Airports within ``radius_nm`` of a point, nearest first.
+         */
+        get: operations["airports_near_api_navdata_airports_near_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/{icao}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Airport
+         * @description One airport by ICAO code.
+         */
+        get: operations["get_airport_api_navdata_airports__icao__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/{icao}/runways": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Runways
+         * @description Every runway **end** of an airport.
+         *
+         *     18L and 36R are two entries, not one: a placement is always relative to one
+         *     end, and the UI offers one button per end for exactly that reason.
+         */
+        get: operations["get_runways_api_navdata_airports__icao__runways_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/{icao}/runways/{runway_ident}/ils": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Ils
+         * @description The ILS serving one runway end.
+         */
+        get: operations["get_ils_api_navdata_airports__icao__runways__runway_ident__ils_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/{icao}/parking": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Parking
+         * @description Gates, stands, tie-downs and hangars, optionally filtered by kind.
+         */
+        get: operations["get_parking_api_navdata_airports__icao__parking_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/{icao}/procedures": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Procedures
+         * @description Procedure summaries — enough to list them without parsing every leg.
+         */
+        get: operations["get_procedures_api_navdata_airports__icao__procedures_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/airports/{icao}/procedures/{kind}/{ident}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Procedure
+         * @description One procedure with every leg resolved.
+         *
+         *     Legs that carry no defensible coordinate come back too, flagged
+         *     ``is_positionable = false`` with a reason: an instructor reading a SID needs
+         *     to see the climb leg even though it can never be a placement.
+         */
+        get: operations["get_procedure_api_navdata_airports__icao__procedures__kind___ident__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/navaids": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Navaids
+         * @description Navaids by identifier, or every navaid near a point.
+         *
+         *     **Two query forms, one path**, because they answer the same question from
+         *     the two directions an instructor asks it: "where is BRA?" and "what can I
+         *     tune from here?". Exactly one of ``ident`` and ``lat``/``lon`` must be given
+         *     — sending both would leave the server to invent a precedence, and sending
+         *     neither would ask for every navaid on Earth.
+         *
+         *     A list either way: navaid identifiers are **not** globally unique, so the
+         *     single-ident form returns every match sorted by ident then region, and the
+         *     caller disambiguates with ``region``.
+         */
+        get: operations["get_navaids_api_navdata_navaids_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/fixes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fixes
+         * @description Fixes by identifier — a list, because fix idents are not globally unique.
+         */
+        get: operations["get_fixes_api_navdata_fixes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/navdata/holds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Holds
+         * @description Published holds from ``earth_hold.dat``.
+         *
+         *     Procedure holds — the ``HM``/``HA``/``HF`` legs — arrive through the
+         *     procedure endpoint instead, and the two sets are deliberately not merged.
+         */
+        get: operations["get_holds_api_navdata_holds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/position/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Placement
+         * @description Resolve a placement without moving anything.
+         *
+         *     Synchronous, because everything it does is a navdata query and arithmetic —
+         *     it never awaits the simulator, and that is the point.
+         */
+        post: operations["preview_placement_api_position_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/position/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Placement
+         * @description Place the aircraft. Setup first, then the teleport — see the module docstring.
+         */
+        post: operations["apply_placement_api_position_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -394,6 +729,155 @@ export interface components {
             on_ground: boolean;
         };
         /**
+         * Airport
+         * @description One airport, as published by ``apt.dat``.
+         */
+        Airport: {
+            /**
+             * Icao
+             * @description ICAO code, e.g. "LEMD".
+             */
+            icao: string;
+            /**
+             * Iata
+             * @description IATA code, e.g. "MAD".
+             */
+            iata?: string | null;
+            /**
+             * Name
+             * @description Published airport name.
+             */
+            name: string;
+            /** City */
+            city?: string | null;
+            /** Country */
+            country?: string | null;
+            /**
+             * Region Code
+             * @description ICAO region code, e.g. "LE".
+             */
+            region_code?: string | null;
+            /** @description Airport reference point (the published datum). */
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Elevation Ft
+             * @description Airport elevation, feet MSL.
+             */
+            elevation_ft: number;
+            /**
+             * Transition Altitude Ft
+             * @description Published transition altitude, feet MSL.
+             */
+            transition_altitude_ft?: number | null;
+            /**
+             * Transition Level Ft
+             * @description Published transition level, feet.
+             */
+            transition_level_ft?: number | null;
+            /**
+             * Magnetic Variation Deg
+             * @description Published variation, degrees, positive east.
+             */
+            magnetic_variation_deg?: number | null;
+            /**
+             * Has Tower
+             * @default false
+             */
+            has_tower: boolean;
+            /**
+             * Runway Count
+             * @default 0
+             */
+            runway_count: number;
+            /** Longest Runway M */
+            longest_runway_m?: number | null;
+            /**
+             * Has Procedures
+             * @description True when a CIFP file exists for this airport. Set from a directory listing, not from a parse, so the UI can disable the procedure tabs before any lazy load.
+             * @default false
+             */
+            has_procedures: boolean;
+        };
+        /**
+         * AirportSummary
+         * @description The subset of :class:`Airport` a list or a search result needs.
+         */
+        AirportSummary: {
+            /** Icao */
+            icao: string;
+            /** Iata */
+            iata?: string | null;
+            /** Name */
+            name: string;
+            position: components["schemas"]["GeoPosition"];
+            /** Elevation Ft */
+            elevation_ft: number;
+            /** Longest Runway M */
+            longest_runway_m?: number | null;
+            /**
+             * Has Procedures
+             * @default false
+             */
+            has_procedures: boolean;
+        };
+        /**
+         * AltitudeConstraint
+         * @description An altitude restriction, straight off the leg record.
+         *
+         *     Flight levels are normalised to feet with a flag, rather than kept as a
+         *     string, so the conversion happens once here instead of in every consumer
+         *     while the UI can still render the published form.
+         */
+        AltitudeConstraint: {
+            /**
+             * Descriptor
+             * @description Raw ARINC descriptor character: "+", "-", "B", "J", …
+             */
+            descriptor: string;
+            /**
+             * Min Ft
+             * @description At-or-above bound, feet MSL.
+             */
+            min_ft?: number | null;
+            /**
+             * Max Ft
+             * @description At-or-below bound, feet MSL.
+             */
+            max_ft?: number | null;
+            /**
+             * Min Is Flight Level
+             * @description True when the source published the lower bound as a level.
+             * @default false
+             */
+            min_is_flight_level: boolean;
+            /**
+             * Max Is Flight Level
+             * @description True when the source published the upper bound as a level.
+             * @default false
+             */
+            max_is_flight_level: boolean;
+            /**
+             * Display
+             * @description The constraint as an instructor would read it off a chart.
+             *
+             *     A **computed field**, not a plain property, so it crosses the API: the leg table
+             *     renders this string verbatim rather than reimplementing "at or above FL140" in
+             *     TypeScript. Formatting a published constraint is navdata's job, and doing it twice
+             *     is how the two copies come to disagree.
+             */
+            readonly display: string;
+        };
+        /**
+         * ApplyPlacementRequest
+         * @description Commit a staged placement, with the staging bar's edits on top.
+         */
+        ApplyPlacementRequest: {
+            /** Placement */
+            placement: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            /** @description The instructor's edits. Merged OVER the preview's setup rather than replacing it, so a client that omits a field cannot silently drop the geometry-derived altitude. */
+            setup?: components["schemas"]["AircraftSetup"] | null;
+        };
+        /**
          * Capabilities
          * @description What a given adapter supports, as declared by the adapter itself.
          *
@@ -451,6 +935,99 @@ export interface components {
              */
             can_pushback: boolean;
         };
+        /**
+         * CoordinatePlacementRequest
+         * @description An arbitrary latitude/longitude/altitude.
+         */
+        CoordinatePlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "coordinate";
+            position: components["schemas"]["GeoPosition"];
+            /** Heading Deg */
+            heading_deg?: number | null;
+            /** Ias Kt */
+            ias_kt?: number | null;
+        };
+        /**
+         * Fix
+         * @description A named waypoint from ``earth_fix.dat``.
+         */
+        Fix: {
+            /** Ident */
+            ident: string;
+            position: components["schemas"]["GeoPosition"];
+            /** Region Code */
+            region_code?: string | null;
+            /**
+             * Terminal Airport Icao
+             * @description The airport a terminal fix belongs to. None means enroute (the source spells this ENRT). Terminal scope is not decoration: it is what makes a procedure leg's 4-part ARINC key resolvable at all.
+             */
+            terminal_airport_icao?: string | null;
+            /** Name */
+            name?: string | null;
+        };
+        /**
+         * FixRef
+         * @description The 4-part ARINC 424 key a procedure leg names its fix with.
+         *
+         *     Four fields and not one, because idents are **not** unique and terminal
+         *     fixes are scoped to an airport. ``(section, subsection)`` says which table
+         *     to look in — a ``D`` with a blank subsection is a VHF navaid, a ``P``/``C``
+         *     is a terminal waypoint of this file's airport — and getting that wrong makes
+         *     roughly half the legs of a typical SID unresolvable.
+         */
+        FixRef: {
+            /**
+             * Ident
+             * @description e.g. "MD800", "NVS", "GOXOL".
+             */
+            ident: string;
+            /**
+             * Region Code
+             * @description ICAO region code, e.g. "LE".
+             */
+            region_code: string;
+            /**
+             * Section
+             * @description ARINC 424 section: "D", "E", "P", "PN".
+             */
+            section: string;
+            /**
+             * Subsection
+             * @description ARINC 424 subsection: "C", "A", "I", "G" or blank.
+             */
+            subsection: string;
+            /**
+             * Airport Icao
+             * @description The CIFP file's airport, used to scope terminal fixes.
+             */
+            airport_icao?: string | null;
+        };
+        /**
+         * GeoPosition
+         * @description A point on the WGS84 ellipsoid with an MSL altitude.
+         */
+        GeoPosition: {
+            /**
+             * Latitude
+             * @description Degrees, WGS84, positive north.
+             */
+            latitude: number;
+            /**
+             * Longitude
+             * @description Degrees, WGS84, positive east.
+             */
+            longitude: number;
+            /**
+             * Altitude Ft
+             * @description Feet above mean sea level.
+             * @default 0
+             */
+            altitude_ft: number;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -482,6 +1059,180 @@ export interface components {
             connected: boolean;
         };
         /**
+         * Hold
+         * @description A published holding pattern from ``earth_hold.dat``.
+         *
+         *     :attr:`inbound_course_mag_deg` is **magnetic**, verified rather than
+         *     assumed: cross-checking this file against the ``HM`` legs of the same fixes
+         *     in the CIFP — which are magnetic by ARINC definition — gives exact agreement
+         *     at airports with double-digit variation, which is only possible if both are
+         *     in the same frame.
+         */
+        Hold: {
+            /** @description The fix the pattern is held over. */
+            fix: components["schemas"]["Waypoint"];
+            /**
+             * Inbound Course Mag Deg
+             * @description Inbound leg course, MAGNETIC degrees.
+             */
+            inbound_course_mag_deg: number;
+            /**
+             * Turn Direction
+             * @enum {string}
+             */
+            turn_direction: "L" | "R";
+            /**
+             * Leg Time Min
+             * @description Leg length as time. Exactly one of time/length is set.
+             */
+            leg_time_min?: number | null;
+            /**
+             * Leg Length Nm
+             * @description Leg length as distance. Exactly one of time/length.
+             */
+            leg_length_nm?: number | null;
+            /** Min Altitude Ft */
+            min_altitude_ft?: number | null;
+            /** Max Altitude Ft */
+            max_altitude_ft?: number | null;
+            /** Speed Kt */
+            speed_kt?: number | null;
+            /**
+             * Airport Icao
+             * @description None means an enroute hold.
+             */
+            airport_icao?: string | null;
+        };
+        /**
+         * HoldPlacementRequest
+         * @description In a published holding pattern, over its fix, established inbound.
+         */
+        HoldPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "hold";
+            /** Fix Ident */
+            fix_ident: string;
+            /** Region Code */
+            region_code?: string | null;
+            /** Airport Icao */
+            airport_icao?: string | null;
+            /** Altitude Ft */
+            altitude_ft?: number | null;
+            /** Ias Kt */
+            ias_kt?: number | null;
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
+        };
+        /**
+         * Ils
+         * @description The ILS serving one runway end, ready to feed :class:`AircraftSetup`.
+         *
+         *     Every field is in the unit and the reference frame the consumer needs, so
+         *     tuning an approach is assignment and never arithmetic:
+         *     :attr:`frequency_khz` goes straight into ``AircraftSetup.ils_freq_khz``,
+         *     :attr:`localizer_mag_deg` into ``AircraftSetup.obs1_deg`` (an OBS course is
+         *     **magnetic**), and :attr:`glideslope_deg` into
+         *     ``core.geodesy.glideslope_altitude_ft``.
+         *
+         *     **Both localizer bearings are carried because the source publishes both.**
+         *     ``earth_nav.dat`` packs the true bearing and the magnetic front course into
+         *     a single field, and neither is derivable from the other without a world
+         *     magnetic model. The true one is what geometry is computed in; the magnetic
+         *     one is what the aircraft's OBS and the approach plate are numbered in.
+         *
+         *     This model lives here rather than in ``core/navdata/`` because
+         *     :class:`Runway` carries one: putting it the other way round would make
+         *     ``core/models.py`` and ``core/navdata/models.py`` import each other.
+         */
+        Ils: {
+            /**
+             * Airport Icao
+             * @description ICAO code, e.g. "LEMD".
+             */
+            airport_icao: string;
+            /**
+             * Runway Ident
+             * @description Runway served, e.g. "18L" — never "RW18L".
+             */
+            runway_ident: string;
+            /**
+             * Localizer Ident
+             * @description Localizer identifier, e.g. "IML".
+             */
+            localizer_ident: string;
+            /**
+             * Frequency Khz
+             * @description Localizer frequency in kHz, the same unit as AircraftSetup.ils_freq_khz.
+             */
+            frequency_khz: number;
+            /** @description Localizer antenna position. */
+            localizer_position: components["schemas"]["GeoPosition"];
+            /**
+             * Localizer True Deg
+             * @description Localizer front course, TRUE degrees.
+             */
+            localizer_true_deg: number;
+            /**
+             * Localizer Mag Deg
+             * @description Localizer front course, MAGNETIC degrees — the published value, and what AircraftSetup.obs1_deg expects.
+             */
+            localizer_mag_deg: number;
+            /**
+             * Localizer Width Deg
+             * @description Full course width in degrees, when published.
+             */
+            localizer_width_deg?: number | null;
+            /**
+             * Glideslope Deg
+             * @description Glidepath angle in degrees, e.g. 3.00. None when the runway has no GS.
+             */
+            glideslope_deg?: number | null;
+            /** @description Glideslope antenna position, when the runway has one. */
+            glideslope_position?: components["schemas"]["GeoPosition"] | null;
+            /**
+             * Category
+             * @description ILS category. None when the source publishes nothing recognisable — an unexpected code is never allowed to fail a parse.
+             */
+            category?: ("I" | "II" | "III") | null;
+            /**
+             * Has Dme
+             * @description True when a DME is collocated.
+             * @default false
+             */
+            has_dme: boolean;
+        };
+        /**
+         * IndexProgress
+         * @description One frame of index-build progress, pushed over the live WebSocket.
+         */
+        IndexProgress: {
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "airports" | "runways" | "parking" | "navaids" | "fixes" | "holds" | "finalising";
+            /**
+             * Stage Index
+             * @description 1-based.
+             */
+            stage_index: number;
+            /** Stage Count */
+            stage_count: number;
+            /**
+             * Fraction
+             * @description Overall completion, 0.0 … 1.0.
+             */
+            fraction: number;
+            /**
+             * Detail
+             * @description Human-readable, e.g. "apt.dat — 8.1 M / 12.4 M lines".
+             */
+            detail?: string | null;
+        };
+        /**
          * LightsSetup
          * @description Exterior light switches. ``None`` means "leave this switch untouched".
          */
@@ -497,6 +1248,652 @@ export interface components {
             /** Strobe */
             strobe?: boolean | null;
         };
+        /**
+         * Navaid
+         * @description A ground-based navigation aid.
+         *
+         *     :attr:`tunable_radio` says where the frequency goes rather than merely
+         *     whether it is usable, because the three cases are genuinely different: a VOR
+         *     goes in NAV1, an NDB goes in the ADF, and a glideslope is not tuned by the
+         *     instructor at all. A boolean would collapse the first two, and an NDB's
+         *     380 kHz does not even pass ``AircraftSetup.nav1_freq_khz`` validation.
+         */
+        Navaid: {
+            /** Ident */
+            ident: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "vor" | "vor_dme" | "vortac" | "dme" | "ndb" | "tacan" | "localizer" | "glideslope" | "gls";
+            /** Name */
+            name?: string | null;
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Frequency Khz
+             * @description Frequency in kHz. VHF navaids share the unit of AircraftSetup.nav1_freq_khz (108000-117950); NDBs are in their own band (190-1750). The source stores VHF in units of 10 kHz and NDBs in kHz, and both are normalised here.
+             */
+            frequency_khz?: number | null;
+            /**
+             * Channel
+             * @description TACAN channel, e.g. "112X".
+             */
+            channel?: string | null;
+            /**
+             * Range Nm
+             * @description Published service volume.
+             */
+            range_nm?: number | null;
+            /** Magnetic Variation Deg */
+            magnetic_variation_deg?: number | null;
+            /** Region Code */
+            region_code?: string | null;
+            /**
+             * Airport Icao
+             * @description Terminal navaids only.
+             */
+            airport_icao?: string | null;
+            /**
+             * Runway Ident
+             * @description Localizers and glideslopes only.
+             */
+            runway_ident?: string | null;
+            /**
+             * Tunable Radio
+             * @description Which radio tunes this: "nav" for VHF navaids and localizers, "adf" for NDBs, None for glideslopes, GLS and markers.
+             * @default nav
+             */
+            tunable_radio: ("nav" | "adf") | null;
+        };
+        /**
+         * NavdataStatus
+         * @description What the provider can currently answer, and why not when it cannot.
+         *
+         *     This is to navdata what ``GET /api/capabilities`` is to the simulator: **the
+         *     UI disables what is unavailable and states the reason.** An instructor never
+         *     discovers missing navdata by clicking a control that fails.
+         *
+         *     Frozen, and published by whole-object assignment rather than field-by-field
+         *     mutation, so a reader on a request thread never sees a torn mix of a build
+         *     thread's updates.
+         */
+        NavdataStatus: {
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "unavailable" | "building" | "ready" | "error";
+            /**
+             * Reason
+             * @description Human-readable. Always set when state is not "ready".
+             */
+            reason?: string | null;
+            /**
+             * Provider
+             * @description "xplane_native" | "in_memory" | "msfs_bgl".
+             */
+            provider: string;
+            /**
+             * Source Root
+             * @description The resolved install path, as a string so it serialises.
+             */
+            source_root?: string | null;
+            /**
+             * Airac Cycle
+             * @description e.g. "2607".
+             */
+            airac_cycle?: string | null;
+            /** Cycle Valid From */
+            cycle_valid_from?: string | null;
+            /** Cycle Valid To */
+            cycle_valid_to?: string | null;
+            /** Built At */
+            built_at?: string | null;
+            /** Airport Count */
+            airport_count?: number | null;
+            /** Runway Count */
+            runway_count?: number | null;
+            /** Navaid Count */
+            navaid_count?: number | null;
+            /** Fix Count */
+            fix_count?: number | null;
+            /** @description Populated only while state is "building". */
+            progress?: components["schemas"]["IndexProgress"] | null;
+        };
+        /**
+         * ParkingPlacementRequest
+         * @description A gate, stand, tie-down or hangar position.
+         *
+         *     Gates and stands are one request because ``apt.dat`` publishes one record
+         *     type with a ``kind`` field — see ``ParkingStand``.
+         */
+        ParkingPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "parking";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Stand Name */
+            stand_name: string;
+        };
+        /**
+         * ParkingStand
+         * @description A parking position, gate or stand.
+         *
+         *     **One model, not two.** The feature spec lists "gate" and "parking stand"
+         *     as separate placements, but ``apt.dat`` publishes one record type with a
+         *     ``kind`` field. Splitting them in Python would invent a distinction the data
+         *     does not make; the UI filters on :attr:`kind` and :attr:`operation`.
+         */
+        ParkingStand: {
+            /** Airport Icao */
+            airport_icao: string;
+            /**
+             * Name
+             * @description Published stand name, e.g. "R32".
+             */
+            name: string;
+            /** @description Where the aircraft's nose wheel sits. apt.dat carries no per-stand elevation, so altitude_ft is the airport elevation — harmless, because a stand placement puts the aircraft on the ground anyway. */
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Heading True Deg
+             * @description Heading of the parked aircraft, TRUE degrees.
+             */
+            heading_true_deg: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "gate" | "hangar" | "tie_down" | "misc";
+            /**
+             * Aircraft Types
+             * @description Accepted types: "heavy", "jets", "turboprops", "props", "helos".
+             * @default []
+             */
+            aircraft_types: string[];
+            /** Operation */
+            operation?: ("none" | "general_aviation" | "airline" | "cargo" | "military") | null;
+            /**
+             * Airline Codes
+             * @description ICAO airline codes the stand is assigned to, e.g. ("ibe", "baw").
+             * @default []
+             */
+            airline_codes: string[];
+        };
+        /**
+         * Placement
+         * @description A resolved placement: where to put the aircraft, facing where, doing what speed.
+         *
+         *     Everything an instructor station needs to reposition, and nothing about how
+         *     the repositioning happens — writing it is the adapter's job.
+         *
+         *     ``ias_kt`` has **no default on purpose**. It is the one field of this model
+         *     that cannot be inferred from geometry, and leaving it out is precisely the
+         *     defect that put an aircraft on a perfect 10 NM final at 0 kt, so a new
+         *     placement type cannot be written without answering the question.
+         */
+        Placement: {
+            /** @description Target position; its altitude_ft is the target altitude, feet MSL. */
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Heading Deg
+             * @description True heading to fly at that point, degrees.
+             */
+            heading_deg: number;
+            /**
+             * Ias Kt
+             * @description Indicated airspeed to command at that point, knots. Zero only for a placement that is not flying — a gate, a stand, a runway threshold.
+             */
+            ias_kt: number;
+            /**
+             * Label
+             * @description Human-readable description, e.g. "LEMD 32L 10 NM final".
+             */
+            label: string;
+        };
+        /**
+         * PlacementPreview
+         * @description What *would* happen. Computed without touching the simulator.
+         */
+        PlacementPreview: {
+            /** Request */
+            request: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            placement: components["schemas"]["Placement"];
+            /** @description The state to apply before the teleport. */
+            setup: components["schemas"]["AircraftSetup"];
+            schematic: components["schemas"]["PlacementSchematic"];
+            /**
+             * Notes
+             * @description Where each pre-filled number came from — a published constraint, a glideslope computation, or a category default. The staging bar renders these verbatim so the instructor can tell a charted altitude from a guessed one.
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * PlacementResult
+         * @description What actually happened.
+         */
+        PlacementResult: {
+            placement: components["schemas"]["Placement"];
+            applied: components["schemas"]["AircraftSetup"];
+            state: components["schemas"]["AircraftState"];
+        };
+        /**
+         * PlacementSchematic
+         * @description Everything the staging bar's SVG needs, and nothing it does not.
+         */
+        PlacementSchematic: {
+            /** Runway Ident */
+            runway_ident?: string | null;
+            /** Runway True Bearing Deg */
+            runway_true_bearing_deg?: number | null;
+            /** Runway Length M */
+            runway_length_m?: number | null;
+            /** Glidepath Deg */
+            glidepath_deg?: number | null;
+            /**
+             * Points
+             * @default []
+             */
+            points: components["schemas"]["SchematicPoint"][];
+        };
+        /**
+         * Procedure
+         * @description A published procedure with every leg resolved.
+         */
+        Procedure: {
+            /** Airport Icao */
+            airport_icao: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "sid" | "star" | "approach";
+            /** Ident */
+            ident: string;
+            /** Transition */
+            transition?: string | null;
+            /**
+             * Runway Idents
+             * @default []
+             */
+            runway_idents: string[];
+            /** Approach Type */
+            approach_type?: ("ils" | "loc" | "rnav" | "gps" | "vor" | "vor_dme" | "ndb" | "ndb_dme" | "lda" | "sdf" | "gls" | "mls" | "igs" | "unknown") | null;
+            /**
+             * Legs
+             * @default []
+             */
+            legs: components["schemas"]["ProcedureLeg"][];
+        };
+        /**
+         * ProcedureLeg
+         * @description One leg of a published procedure.
+         *
+         *     :attr:`is_positionable` is computed by the provider and carried here, so the
+         *     UI never has to know ARINC 424 leg types. It requires **both** a positionable
+         *     path terminator and a resolved fix, and :attr:`unpositionable_reason`
+         *     distinguishes the two failures in words the UI shows verbatim — confusing
+         *     "this leg has no defensible coordinate" with "this leg's fix is missing from
+         *     the index" would be a silent bug.
+         *
+         *     Unpositionable legs are still returned and still displayed: an instructor
+         *     reading a SID needs to see the climb leg. They are simply not offered.
+         */
+        ProcedureLeg: {
+            /**
+             * Sequence
+             * @description Sequence number from the source record: 10, 20, 30 …
+             */
+            sequence: number;
+            /**
+             * Path Terminator
+             * @enum {string}
+             */
+            path_terminator: "IF" | "TF" | "CF" | "DF" | "AF" | "RF" | "CA" | "VA" | "FM" | "VM" | "CD" | "CI" | "CR" | "VD" | "VI" | "VR" | "FA" | "FC" | "FD" | "HA" | "HF" | "HM" | "PI";
+            /**
+             * Is Positionable
+             * @description True iff the terminator carries a fix AND that fix resolved.
+             */
+            is_positionable: boolean;
+            /**
+             * Unpositionable Reason
+             * @description Set iff is_positionable is False. Shown to the user verbatim.
+             */
+            unpositionable_reason?: string | null;
+            /** @description The raw 4-part ARINC key, kept even when the fix did not resolve — it is what makes an unresolved fix diagnosable instead of merely absent. */
+            fix_ref?: components["schemas"]["FixRef"] | null;
+            /** @description The resolved fix, when there is one. */
+            fix?: components["schemas"]["Waypoint"] | null;
+            recommended_navaid?: components["schemas"]["Waypoint"] | null;
+            /**
+             * Theta Mag Deg
+             * @description Bearing FROM the recommended navaid, magnetic.
+             */
+            theta_mag_deg?: number | null;
+            /**
+             * Rho Nm
+             * @description Distance FROM the recommended navaid.
+             */
+            rho_nm?: number | null;
+            /**
+             * Arc Radius Nm
+             * @description RF legs only.
+             */
+            arc_radius_nm?: number | null;
+            /** Outbound Course Mag Deg */
+            outbound_course_mag_deg?: number | null;
+            /** Distance Nm */
+            distance_nm?: number | null;
+            /**
+             * Time Min
+             * @description Holding legs are published in time, not distance.
+             */
+            time_min?: number | null;
+            /** Turn Direction */
+            turn_direction?: ("L" | "R") | null;
+            /**
+             * Vertical Angle Deg
+             * @description Published descent angle, negative for a descent.
+             */
+            vertical_angle_deg?: number | null;
+            altitude?: components["schemas"]["AltitudeConstraint"] | null;
+            speed?: components["schemas"]["SpeedConstraint"] | null;
+            /** Transition Altitude Ft */
+            transition_altitude_ft?: number | null;
+            /**
+             * Is Flyover
+             * @default false
+             */
+            is_flyover: boolean;
+            /**
+             * Is Initial Approach Fix
+             * @default false
+             */
+            is_initial_approach_fix: boolean;
+            /**
+             * Is Final Approach Fix
+             * @default false
+             */
+            is_final_approach_fix: boolean;
+            /**
+             * Is Missed Approach Point
+             * @default false
+             */
+            is_missed_approach_point: boolean;
+            /**
+             * Is Missed Approach Leg
+             * @default false
+             */
+            is_missed_approach_leg: boolean;
+            /**
+             * Is End Of Procedure
+             * @default false
+             */
+            is_end_of_procedure: boolean;
+            /**
+             * Raw
+             * @description The source line. Diagnostics only.
+             */
+            raw?: string | null;
+        };
+        /**
+         * ProcedureLegPlacementRequest
+         * @description On one leg of a published SID, STAR or approach.
+         */
+        ProcedureLegPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "procedure_leg";
+            /** Airport Icao */
+            airport_icao: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "sid" | "star" | "approach";
+            /** Ident */
+            ident: string;
+            /** Transition */
+            transition?: string | null;
+            /**
+             * Sequence
+             * @description The leg's own sequence number: 10, 20, 30 …
+             */
+            sequence: number;
+            /** Altitude Ft */
+            altitude_ft?: number | null;
+            /** Ias Kt */
+            ias_kt?: number | null;
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
+        };
+        /**
+         * ProcedureSummary
+         * @description Enough of a procedure to list it without parsing its legs.
+         */
+        ProcedureSummary: {
+            /** Airport Icao */
+            airport_icao: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "sid" | "star" | "approach";
+            /**
+             * Ident
+             * @description e.g. "BARD3B", "I18LY".
+             */
+            ident: string;
+            /**
+             * Transition
+             * @description Named transition, e.g. "ADUXO". None for the common route.
+             */
+            transition?: string | null;
+            /**
+             * Runway Idents
+             * @description The real runways this serves, expanded: a "RW32B" transition becomes every 32* runway the airport actually has. Empty for a named (non-runway) transition.
+             * @default []
+             */
+            runway_idents: string[];
+            /**
+             * Approach Type
+             * @description Approaches only.
+             */
+            approach_type?: ("ils" | "loc" | "rnav" | "gps" | "vor" | "vor_dme" | "ndb" | "ndb_dme" | "lda" | "sdf" | "gls" | "mls" | "igs" | "unknown") | null;
+            /** Leg Count */
+            leg_count: number;
+            /** Positionable Leg Count */
+            positionable_leg_count: number;
+        };
+        /**
+         * Runway
+         * @description A single runway end, as read from the user's own navdata.
+         *
+         *     **A runway end has two distinct anchor points and they are not
+         *     interchangeable.** The paved surface starts at the *pavement end*; the
+         *     *landing threshold* is where an aircraft on final aims, and on a runway with
+         *     a displaced threshold it sits some way down the pavement from that end. The
+         *     two navdata sources this model is populated from disagree on which one they
+         *     publish:
+         *
+         *     * the CIFP ``RWY:`` record gives the **displaced landing threshold**;
+         *     * ``apt.dat`` gives the **pavement end**, plus the displacement separately.
+         *
+         *     At LEMD 18L those points are ~496 m apart — 0.27 NM of error on a 10 NM
+         *     final if the two are conflated. So the convention is pinned here, once:
+         *
+         *     * :attr:`threshold` is **always the displaced landing threshold**, and it is
+         *       the origin every approach placement is measured from.
+         *     * :attr:`pavement_end` is the other point, carried separately.
+         *     * :attr:`length_m` is **always the pavement length**, because that is what
+         *       traffic-pattern geometry is built on. Landing distance available is the
+         *       separate :attr:`landing_distance_m`.
+         *
+         *     A source that only knows the pavement end must walk it forward along the
+         *     runway axis by :attr:`displaced_threshold_m` before filling
+         *     :attr:`threshold` — it must never assign the pavement end to it.
+         */
+        Runway: {
+            /**
+             * Airport Icao
+             * @description ICAO code, e.g. "LEMD".
+             */
+            airport_icao: string;
+            /**
+             * Ident
+             * @description Runway identifier, e.g. "32L".
+             */
+            ident: string;
+            /** @description The displaced landing threshold — the point an aircraft on final aims at, NOT the start of the pavement (see pavement_end). This is the origin a final approach is measured back from. */
+            threshold: components["schemas"]["GeoPosition"];
+            /**
+             * True Bearing Deg
+             * @description Runway centreline bearing, true degrees.
+             */
+            true_bearing_deg: number;
+            /**
+             * Length M
+             * @description Pavement length in metres, from one physical runway end to the other. This is the full paved length, NOT the landing distance available (see landing_distance_m).
+             */
+            length_m: number;
+            /**
+             * Elevation Ft
+             * @description Elevation of the landing threshold, in feet above mean sea level.
+             */
+            elevation_ft: number;
+            /** @description Undisplaced start of the paved surface. Equal to the threshold when nothing is displaced; None when the source does not publish it. */
+            pavement_end?: components["schemas"]["GeoPosition"] | null;
+            /**
+             * Displaced Threshold M
+             * @description Distance in metres from pavement_end to threshold, along the runway centreline. 0.0 means the threshold is not displaced. apt.dat publishes this in metres and the CIFP RWY: record publishes it in feet; both are converted to metres here.
+             * @default 0
+             */
+            displaced_threshold_m: number;
+            /**
+             * Landing Distance M
+             * @description Landing distance available in metres, i.e. length_m minus displaced_threshold_m. None when the displacement is unknown.
+             */
+            landing_distance_m?: number | null;
+            /**
+             * Opposite Ident
+             * @description The other end of the same strip, e.g. "36R" for "18L".
+             */
+            opposite_ident?: string | null;
+            /**
+             * Width M
+             * @description Pavement width in metres.
+             */
+            width_m?: number | null;
+            /**
+             * Surface
+             * @description Surface type, or None when the source does not publish one.
+             */
+            surface?: ("asphalt" | "concrete" | "grass" | "dirt" | "gravel" | "dry_lakebed" | "water" | "snow" | "transparent" | "unknown") | null;
+            /**
+             * Threshold Crossing Height Ft
+             * @description Height of the glidepath over the threshold, in feet AGL, when published.
+             */
+            threshold_crossing_height_ft?: number | null;
+            /** @description The ILS serving this end, when there is one. Carried on the runway so that placing an aircraft on an ILS final is a single lookup: threshold, bearing, elevation, frequency and OBS course arrive together, and no caller can place an aircraft on an approach while forgetting to tune it. */
+            ils?: components["schemas"]["Ils"] | null;
+        };
+        /**
+         * RunwayPlacementRequest
+         * @description A final or a circuit leg, relative to one runway end.
+         *
+         *     **One request for both**, because ``core.geodesy.resolve_runway_placement``
+         *     is one function for both. Splitting finals from circuit legs here would
+         *     invent a taxonomy the geometry does not have.
+         */
+        RunwayPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "runway";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+            /** Placement */
+            placement: ("final_20nm" | "final_15nm" | "final_10nm" | "final_8nm" | "final_5nm" | "final_3nm" | "short_final") | ("left_upwind" | "left_crosswind" | "left_downwind" | "left_base" | "right_upwind" | "right_crosswind" | "right_downwind" | "right_base");
+            /** Glideslope Deg */
+            glideslope_deg?: number | null;
+            /** Pattern Altitude Ft */
+            pattern_altitude_ft?: number | null;
+            /** Pattern Width Nm */
+            pattern_width_nm?: number | null;
+            /** Leg Distance Nm */
+            leg_distance_nm?: number | null;
+            /** Ias Kt */
+            ias_kt?: number | null;
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
+        };
+        /**
+         * SchematicPoint
+         * @description One point of the preview diagram, already projected for the UI to draw.
+         *
+         *     ``x_nm``/``y_nm`` are a runway-local tangent plane. The flat-earth error
+         *     that makes such a frame unusable for *positioning* does not apply here:
+         *     these coordinates only ever draw a diagram, and the authoritative answer is
+         *     the ``position`` beside them. The UI does no geodesy.
+         */
+        SchematicPoint: {
+            /** Label */
+            label: string;
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * X Nm
+             * @description Along the centreline; positive away from the threshold.
+             */
+            x_nm: number;
+            /**
+             * Y Nm
+             * @description Across it; positive right, seen from the approach.
+             */
+            y_nm: number;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "threshold" | "runway_end" | "placement" | "glidepath" | "leg" | "fix";
+        };
+        /**
+         * SpeedConstraint
+         * @description A speed restriction, straight off the leg record.
+         */
+        SpeedConstraint: {
+            /**
+             * Descriptor
+             * @description Raw ARINC descriptor: "+", "-" or blank.
+             * @default
+             */
+            descriptor: string;
+            /**
+             * Min Kt
+             * @description At-or-above bound, knots.
+             */
+            min_kt?: number | null;
+            /**
+             * Max Kt
+             * @description At-or-below bound, knots.
+             */
+            max_kt?: number | null;
+            /**
+             * Display
+             * @description The constraint as an instructor would read it off a chart.
+             *
+             *     A computed field for the same reason as :attr:`AltitudeConstraint.display`: the UI
+             *     shows this string and never formats a constraint itself.
+             */
+            readonly display: string;
+        };
         /** ValidationError */
         ValidationError: {
             /** Location */
@@ -509,6 +1906,69 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * Waypoint
+         * @description Anything positionable, reduced to what a placement needs.
+         *
+         *     Procedure legs point at one of these and :meth:`NavdataProvider.resolve_fix`
+         *     returns one, so the Position Manager consumes a single shape whether the
+         *     anchor started life as a fix, a navaid, a runway threshold or an airport.
+         */
+        Waypoint: {
+            /**
+             * Ident
+             * @description Published identifier, e.g. "GOXOL".
+             */
+            ident: string;
+            /**
+             * Kind
+             * @description What kind of object this identifier names.
+             * @enum {string}
+             */
+            kind: "fix" | "vor" | "ndb" | "dme" | "tacan" | "localizer" | "runway" | "airport" | "gls";
+            /** @description Where it is. */
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Region Code
+             * @description ICAO region code, e.g. "LE". Idents are unique only within one.
+             */
+            region_code?: string | null;
+            /**
+             * Airport Icao
+             * @description Set for terminal-scoped waypoints; None for enroute ones.
+             */
+            airport_icao?: string | null;
+            /**
+             * Name
+             * @description Plain-language name, when published.
+             */
+            name?: string | null;
+        };
+        /**
+         * WaypointPlacementRequest
+         * @description Over a named fix, at a chosen altitude.
+         */
+        WaypointPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "waypoint";
+            /** Ident */
+            ident: string;
+            /** Region Code */
+            region_code?: string | null;
+            /** Terminal Airport */
+            terminal_airport?: string | null;
+            /** Altitude Ft */
+            altitude_ft: number;
+            /** Heading Deg */
+            heading_deg?: number | null;
+            /** Ias Kt */
+            ias_kt?: number | null;
+            /** Category */
+            category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
     };
     responses: never;
@@ -619,6 +2079,490 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AircraftSetupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    status_api_navdata_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NavdataStatus"];
+                };
+            };
+        };
+    };
+    build_index_api_navdata_index_post: {
+        parameters: {
+            query?: {
+                force?: boolean;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["NavdataStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    search_airports_api_navdata_airports_get: {
+        parameters: {
+            query: {
+                /** @description ICAO, IATA or part of the name. */
+                q: string;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AirportSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    airports_near_api_navdata_airports_near_get: {
+        parameters: {
+            query: {
+                lat: number;
+                lon: number;
+                radius_nm?: number;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AirportSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_airport_api_navdata_airports__icao__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                icao: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Airport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_runways_api_navdata_airports__icao__runways_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                icao: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Runway"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_ils_api_navdata_airports__icao__runways__runway_ident__ils_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                icao: string;
+                runway_ident: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Ils"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_parking_api_navdata_airports__icao__parking_get: {
+        parameters: {
+            query?: {
+                kind?: ("gate" | "hangar" | "tie_down" | "misc") | null;
+            };
+            header?: never;
+            path: {
+                icao: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ParkingStand"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_procedures_api_navdata_airports__icao__procedures_get: {
+        parameters: {
+            query?: {
+                kind?: ("sid" | "star" | "approach") | null;
+            };
+            header?: never;
+            path: {
+                icao: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcedureSummary"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_procedure_api_navdata_airports__icao__procedures__kind___ident__get: {
+        parameters: {
+            query?: {
+                transition?: string | null;
+            };
+            header?: never;
+            path: {
+                icao: string;
+                kind: "sid" | "star" | "approach";
+                ident: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Procedure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_navaids_api_navdata_navaids_get: {
+        parameters: {
+            query?: {
+                /** @description VOR/NDB/DME identifier. */
+                ident?: string | null;
+                /** @description ICAO region code, e.g. 'LE'. */
+                region?: string | null;
+                lat?: number | null;
+                lon?: number | null;
+                radius_nm?: number;
+                kinds?: ("vor" | "vor_dme" | "vortac" | "dme" | "ndb" | "tacan" | "localizer" | "glideslope" | "gls")[] | null;
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Navaid"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_fixes_api_navdata_fixes_get: {
+        parameters: {
+            query: {
+                ident: string;
+                region?: string | null;
+                terminal_airport?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Fix"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_holds_api_navdata_holds_get: {
+        parameters: {
+            query?: {
+                fix_ident?: string | null;
+                region?: string | null;
+                airport_icao?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Hold"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_placement_api_position_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_placement_api_position_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ApplyPlacementRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlacementResult"];
                 };
             };
             /** @description Validation Error */

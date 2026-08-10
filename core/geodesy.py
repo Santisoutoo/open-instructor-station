@@ -23,6 +23,28 @@ point, so an API layer enumerates and dispatches without knowing any geometry.
 :func:`coordinate_placement` and :func:`waypoint_placement` cover the two
 placements that need no runway.
 
+**Placements driven by published navdata.** A holding pattern and a procedure
+leg are not geometry an instructor station gets to invent: the fix, the inbound
+course, the turn direction, the leg length, the altitude and the speed are all
+*published*, and the only honest thing to do with them is read them.
+:func:`hold_placement`, :func:`hold_entry_placement` and
+:func:`procedure_leg_placement` therefore take the models
+:mod:`core.navdata.models` already publishes — :class:`~core.navdata.models.Hold`
+and :class:`~core.navdata.models.ProcedureLeg` — and compute only what the
+source genuinely leaves open: where the racetrack lies on the ground, and which
+entry an arriving aircraft would fly. Importing those models is safe in this
+direction and only in this direction: they depend on :mod:`core.models` alone,
+while :mod:`core.navdata` depends on this module.
+
+**Published courses are magnetic and this module is true.** ``earth_hold.dat``
+and the CIFP publish courses in magnetic degrees; every bearing here is true.
+Converting needs a world magnetic model, which this project deliberately does
+not carry, so the conversion is the caller's — :func:`true_from_magnetic` is
+where it happens, and every function that consumes a magnetic course takes
+``magnetic_variation_deg`` as a **required** argument. Defaulting it to zero
+would silently rotate a whole holding pattern by the local variation, which is
+13° at KJFK.
+
 **A placement commands its own speed.** Carrying the aircraft's *current* speed
 onto the new position is the right rule for moving an aeroplane that is already
 flying and the wrong one for a placement: a parked aircraft put on a 10 NM final
@@ -37,55 +59,76 @@ The default comes from the aircraft's **ICAO approach category**
 a 737 do not fly the same final. See :data:`APPROACH_CATEGORY_VAT_KT` for what
 the defaults are worth and where they stop being trustworthy.
 
-Holding entries and procedure (SID/STAR/approach) legs are deliberately absent:
-both resolve against published navdata — ``earth_hold.dat`` and the CIFP — and
-inventing their geometry here instead of reading the published values would be
-wrong.
 """
 
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from types import MappingProxyType
 from typing import Literal, assert_never
 
 from geographiclib.geodesic import Geodesic
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.atmosphere import tas_from_ias
 from core.models import AircraftSetup, GeoPosition, Runway
+from core.navdata.models import Hold, Procedure, ProcedureLeg, Waypoint
 
 __all__ = [
     "APPROACH_CATEGORY_CIRCLING_IAS_KT",
     "APPROACH_CATEGORY_VAT_KT",
     "DEFAULT_APPROACH_CATEGORY",
     "DEFAULT_GLIDESLOPE_DEG",
+    "DEFAULT_HOLD_ENTRY_DISTANCE_NM",
     "DEFAULT_PATTERN_ALTITUDE_AGL_FT",
     "DEFAULT_PATTERN_LEG_DISTANCE_NM",
     "DEFAULT_PATTERN_WIDTH_NM",
     "FEET_PER_NAUTICAL_MILE",
     "FINAL_DISTANCES_NM",
     "GROUND_IAS_KT",
+    "HOLD_LEG_TIME_ALTITUDE_FT",
+    "HOLD_LEG_TIME_HIGH_MIN",
+    "HOLD_LEG_TIME_LOW_MIN",
+    "HOLD_MAX_BANK_DEG",
+    "HOLD_PLACEMENTS",
+    "HOLD_RATE_OF_TURN_DEG_PER_S",
     "METRES_PER_NAUTICAL_MILE",
+    "PARALLEL_ENTRY_SECTOR_DEG",
     "PATTERN_PLACEMENTS",
     "RUNWAY_PLACEMENTS",
     "SHORT_FINAL_DISTANCE_NM",
+    "TEARDROP_ENTRY_SECTOR_DEG",
     "ApproachCategory",
     "FinalPlacement",
+    "HoldEntry",
+    "HoldPlacement",
     "PatternLeg",
     "PatternPlacement",
     "PatternSide",
     "Placement",
     "RunwayPlacement",
+    "TurnDirection",
     "coordinate_placement",
     "distance_and_bearing",
     "final_approach_point",
     "final_placement",
     "glideslope_altitude_ft",
+    "hold_entry",
+    "hold_entry_placement",
+    "hold_leg_length_nm",
+    "hold_placement",
+    "holding_entry",
+    "holding_pattern_point",
     "pattern_placement",
     "point_at_distance_and_bearing",
+    "positionable_legs",
+    "procedure_leg_placement",
+    "procedure_placement",
     "resolve_runway_placement",
     "traffic_pattern_point",
+    "true_from_magnetic",
+    "turn_radius_nm",
     "waypoint_placement",
 ]
 
@@ -125,6 +168,36 @@ PatternPlacement = Literal[
 #: Every placement that is defined relative to a runway.
 RunwayPlacement = FinalPlacement | PatternPlacement
 
+#: Which way an aircraft turns in a pattern. Spelled exactly as the navdata
+#: publishes it, so :attr:`core.navdata.models.Hold.turn_direction` and
+#: :attr:`core.navdata.models.ProcedureLeg.turn_direction` pass straight in.
+TurnDirection = Literal["L", "R"]
+
+#: The three ICAO holding entries.
+HoldEntry = Literal["direct", "parallel", "teardrop"]
+
+#: The four points of a holding pattern an aircraft can be placed at, going
+#: round the racetrack in the order they are flown from the fix.
+HoldPlacement = Literal["hold_fix", "hold_outbound", "hold_outbound_end", "hold_inbound"]
+
+#: The hold placements, in menu order.
+HOLD_PLACEMENTS: tuple[HoldPlacement, ...] = (
+    "hold_fix",
+    "hold_outbound",
+    "hold_outbound_end",
+    "hold_inbound",
+)
+
+#: How each hold placement reads in a menu.
+_HOLD_PLACEMENT_LABELS: Mapping[HoldPlacement, str] = MappingProxyType(
+    {
+        "hold_fix": "over the fix",
+        "hold_outbound": "outbound abeam the fix",
+        "hold_outbound_end": "end of the outbound leg",
+        "hold_inbound": "established inbound",
+    }
+)
+
 #: ICAO standard glidepath angle, degrees.
 DEFAULT_GLIDESLOPE_DEG: float = 3.0
 
@@ -142,6 +215,32 @@ DEFAULT_PATTERN_WIDTH_NM: float = 1.0
 #: How far beyond the departure end the upwind/crosswind legs sit, and how far
 #: before the threshold the base leg sits, nautical miles.
 DEFAULT_PATTERN_LEG_DISTANCE_NM: float = 1.5
+
+#: ICAO Doc 8168 turn criterion for holding: 25° of bank, or a rate of 3° per
+#: second, **whichever requires the lesser bank**. The two cross at about
+#: 170 kt true: below it the rate is the binding constraint, above it the bank
+#: is. "Lesser bank" is the same statement as "larger radius", which is how
+#: :func:`turn_radius_nm` applies it.
+HOLD_RATE_OF_TURN_DEG_PER_S: float = 3.0
+HOLD_MAX_BANK_DEG: float = 25.0
+
+#: Standard holding leg times, minutes, and the altitude that selects between
+#: them: one minute at or below 14 000 ft, one and a half above it. Used only
+#: when the published hold states neither a leg time nor a leg length.
+HOLD_LEG_TIME_LOW_MIN: float = 1.0
+HOLD_LEG_TIME_HIGH_MIN: float = 1.5
+HOLD_LEG_TIME_ALTITUDE_FT: float = 14_000.0
+
+#: Width of the parallel-entry sector, degrees, measured from the reciprocal of
+#: the inbound course towards the non-holding side; and of the teardrop sector,
+#: which fills the rest of that half. The remaining 180° is the direct entry.
+PARALLEL_ENTRY_SECTOR_DEG: float = 110.0
+TEARDROP_ENTRY_SECTOR_DEG: float = 70.0
+
+#: How far before the fix a hold *entry* placement sits, nautical miles. Far
+#: enough that the student flies the entry rather than arriving mid-turn, close
+#: enough that the fix is the next thing that happens.
+DEFAULT_HOLD_ENTRY_DISTANCE_NM: float = 3.0
 
 #: ICAO approach categories. PANS-OPS (Doc 8168) sorts aircraft into five
 #: categories by ``Vat`` — the indicated airspeed at the threshold at maximum
@@ -243,6 +342,13 @@ PATTERN_PLACEMENTS: Mapping[PatternPlacement, tuple[PatternLeg, PatternSide]] = 
 RUNWAY_PLACEMENTS: tuple[RunwayPlacement, ...] = (*FINAL_DISTANCES_NM, *PATTERN_PLACEMENTS)
 
 _WGS84: Geodesic = Geodesic.WGS84
+
+#: 1 kt = 1852 m / 3600 s = 0.514444 m/s. Exact, by the definition above.
+_METRES_PER_SECOND_PER_KNOT: float = METRES_PER_NAUTICAL_MILE / 3600.0
+
+#: Standard gravity, m/s². Only a turn radius needs it, and only through
+#: ``v² / (g tan φ)``.
+_STANDARD_GRAVITY_M_PER_S2: float = 9.806_65
 
 
 class Placement(BaseModel):
@@ -552,6 +658,99 @@ def _resolve_ias_kt(
     return table[category] if ias_kt is None else ias_kt
 
 
+def _constrained_ias_kt(
+    ias_kt: float | None,
+    category: ApproachCategory,
+    *,
+    min_kt: float | None = None,
+    max_kt: float | None = None,
+) -> float:
+    """A manoeuvring speed for the category, folded into a *published* band.
+
+    Navdata publishes speed **restrictions**, not target speeds: a hold placarded
+    at 230 kt and a STAR leg placarded at 250 kt are ceilings that a Cessna is
+    never expected to reach. Flying the placard would put a category A trainer
+    100 kt over its manoeuvring speed, so the aircraft's own circling speed is
+    the starting point and the published values only clamp it.
+
+    An explicit ``ias_kt`` bypasses the whole thing: a caller that names a speed
+    knows the airframe, which is more than either the category table or the
+    chart does.
+
+    The result is never below the category's threshold speed, whatever the
+    source says. An implausibly low published ceiling — a mis-parsed field, a
+    restriction meant for a different aircraft class — must not be able to hand
+    an aeroplane a stall, which is the exact failure mode issue #39 exists for.
+    """
+    if ias_kt is not None:
+        return ias_kt
+    speed = APPROACH_CATEGORY_CIRCLING_IAS_KT[category]
+    if max_kt is not None:
+        speed = min(speed, max_kt)
+    if min_kt is not None:
+        speed = max(speed, min_kt)
+    return max(speed, APPROACH_CATEGORY_VAT_KT[category])
+
+
+def _position_of(fix: GeoPosition | Waypoint) -> GeoPosition:
+    """Accept either a bare point or a navdata waypoint wherever a point is wanted."""
+    return fix if isinstance(fix, GeoPosition) else fix.position
+
+
+def _contextual_heading_deg(
+    point: GeoPosition,
+    heading_deg: float | None,
+    next_fix: GeoPosition | Waypoint | None,
+    previous_fix: GeoPosition | Waypoint | None,
+) -> float:
+    """The heading to face at a bare fix, in order of preference.
+
+    1. ``heading_deg``, when the caller states one — an explicit choice always
+       wins.
+    2. The initial true bearing towards ``next_fix``: the aircraft arrives
+       already tracking the leg it is about to fly.
+    3. The bearing at which the leg from ``previous_fix`` *arrives* over the
+       point, so the aircraft appears established on the inbound course. This is
+       the final bearing of that geodesic, not its initial one.
+    4. Failing all of that, due north — arbitrary, but deterministic and
+       obvious, rather than pretending a direction was inferred.
+
+    A published magnetic course is never used as a fallback here: this module is
+    true throughout, and converting one needs a magnetic model the project does
+    not carry. A caller holding a variation converts it with
+    :func:`true_from_magnetic` and passes the result as ``heading_deg``.
+    """
+    if heading_deg is not None:
+        return _normalise_bearing(heading_deg)
+    if next_fix is not None:
+        _, bearing = distance_and_bearing(point, _position_of(next_fix))
+        return bearing
+    if previous_fix is not None:
+        return _arrival_bearing(_position_of(previous_fix), point)
+    return 0.0
+
+
+def true_from_magnetic(magnetic_deg: float, variation_deg: float) -> float:
+    """Convert a published magnetic course to a true one.
+
+    Args:
+        magnetic_deg: The published course, magnetic degrees.
+        variation_deg: Local magnetic variation, degrees, **positive east** —
+            the convention ``apt.dat`` and ``earth_nav.dat`` publish.
+
+    Returns:
+        The true course, normalised to ``[0, 360)``: ``magnetic + variation``.
+        "East is least, west is best" runs the other way because it converts
+        *true to magnetic*; this is that identity rearranged.
+
+    This is the only place in the project where the two frames meet, and it is
+    deliberately a function the caller has to reach for: ``core/`` carries no
+    world magnetic model, so the variation is always something the caller read
+    from navdata rather than something this module can look up.
+    """
+    return _normalise_bearing(magnetic_deg + variation_deg)
+
+
 def final_placement(
     runway: Runway,
     placement: FinalPlacement,
@@ -755,13 +954,13 @@ def coordinate_placement(
 
 
 def waypoint_placement(
-    waypoint: GeoPosition,
+    waypoint: GeoPosition | Waypoint,
     altitude_ft: float,
     *,
-    ident: str = "waypoint",
+    ident: str | None = None,
     heading_deg: float | None = None,
-    next_fix: GeoPosition | None = None,
-    previous_fix: GeoPosition | None = None,
+    next_fix: GeoPosition | Waypoint | None = None,
+    previous_fix: GeoPosition | Waypoint | None = None,
     ias_kt: float | None = None,
     category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
 ) -> Placement:
@@ -781,10 +980,13 @@ def waypoint_placement(
        obvious, rather than pretending a direction was inferred.
 
     Args:
-        waypoint: The fix to sit over. Its own ``altitude_ft`` is ignored in
-            favour of ``altitude_ft``, because navdata fixes carry no altitude.
+        waypoint: The fix to sit over, either as a bare point or as a
+            :class:`~core.navdata.models.Waypoint` straight out of the navdata
+            index. Its own ``altitude_ft`` is ignored in favour of
+            ``altitude_ft``, because navdata fixes carry no altitude.
         altitude_ft: Target altitude, feet MSL.
-        ident: Fix name, used only for the label.
+        ident: Fix name, used only for the label. ``None`` takes the ident of a
+            navdata waypoint, and falls back to ``"waypoint"`` for a bare point.
         heading_deg: Explicit true heading in degrees, or ``None``.
         next_fix: The fix the aircraft would fly to next, or ``None``.
         previous_fix: The fix the aircraft would be coming from, or ``None``.
@@ -801,21 +1003,613 @@ def waypoint_placement(
         free coordinate, a waypoint is always airborne — it is a navdata fix
         with a stated altitude — so a speed is defaulted rather than withheld.
     """
-    if heading_deg is not None:
-        heading = _normalise_bearing(heading_deg)
-    elif next_fix is not None:
-        _, heading = distance_and_bearing(waypoint, next_fix)
-    elif previous_fix is not None:
-        heading = _arrival_bearing(previous_fix, waypoint)
-    else:
-        heading = 0.0
+    point = _position_of(waypoint)
+    if ident is None:
+        ident = waypoint.ident if isinstance(waypoint, Waypoint) else "waypoint"
     return Placement(
         position=GeoPosition(
-            latitude=waypoint.latitude,
-            longitude=waypoint.longitude,
+            latitude=point.latitude,
+            longitude=point.longitude,
             altitude_ft=altitude_ft,
         ),
-        heading_deg=heading,
+        heading_deg=_contextual_heading_deg(point, heading_deg, next_fix, previous_fix),
         ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
         label=f"over {ident}",
     )
+
+
+# ---------------------------------------------------------------------------
+# Published holding patterns
+# ---------------------------------------------------------------------------
+
+
+def turn_radius_nm(
+    tas_kt: float,
+    rate_of_turn_deg_per_s: float = HOLD_RATE_OF_TURN_DEG_PER_S,
+    max_bank_deg: float = HOLD_MAX_BANK_DEG,
+) -> float:
+    """Radius of a level turn flown to the ICAO holding criterion.
+
+    Two constraints, and the aircraft flies whichever asks for **less bank**:
+    a rate of ``rate_of_turn_deg_per_s`` (rate one, 3°/s, is a two-minute
+    360°), or a bank of ``max_bank_deg``. Less bank is more radius, so the
+    binding constraint is simply the larger of the two radii::
+
+        rate:  r = V / (20 * pi * omega)      omega in degrees per second
+        bank:  r = V^2 / (g * tan(phi))       V in metres per second
+
+    They cross at about 170 kt true. A 120 kt trainer turns at rate one inside
+    0.64 NM; a 210 kt jet cannot hold rate one within 25° of bank and needs
+    1.38 NM.
+
+    Args:
+        tas_kt: **True** airspeed in knots — a turn is flown through the air
+            mass, so an indicated speed understates the radius at altitude by
+            the same factor the airspeed indicator does. Convert first with
+            :func:`core.atmosphere.tas_from_ias`.
+        rate_of_turn_deg_per_s: Standard rate of turn, degrees per second.
+        max_bank_deg: Bank limit, degrees. Must be in ``(0, 90)``.
+
+    Returns:
+        The turn radius in nautical miles. Zero for a stationary aircraft,
+        which is not a flying speed but is a defensible geometric answer.
+
+    Raises:
+        ValueError: if the speed is negative, the rate is not positive, or the
+            bank is outside ``(0, 90)`` — none of which describe a turn.
+    """
+    if tas_kt < 0.0:
+        raise ValueError(f"tas_kt={tas_kt} is negative; an aircraft does not fly backwards.")
+    if rate_of_turn_deg_per_s <= 0.0:
+        raise ValueError(
+            f"rate_of_turn_deg_per_s={rate_of_turn_deg_per_s} is not positive; a turn that "
+            "never comes round has no radius."
+        )
+    if not 0.0 < max_bank_deg < 90.0:
+        raise ValueError(
+            f"max_bank_deg={max_bank_deg} is outside (0, 90); a level turn needs some bank and "
+            "cannot reach 90°, where the lift has no vertical component left."
+        )
+    rate_radius_nm = tas_kt / (20.0 * math.pi * rate_of_turn_deg_per_s)
+    speed_m_per_s = tas_kt * _METRES_PER_SECOND_PER_KNOT
+    bank_radius_nm = (
+        speed_m_per_s**2 / (_STANDARD_GRAVITY_M_PER_S2 * math.tan(math.radians(max_bank_deg)))
+    ) / METRES_PER_NAUTICAL_MILE
+    return max(rate_radius_nm, bank_radius_nm)
+
+
+def holding_entry(
+    inbound_course_deg: float,
+    arrival_course_deg: float,
+    turn_direction: TurnDirection = "R",
+) -> HoldEntry:
+    """Which of the three ICAO entries an aircraft arriving on that course flies.
+
+    The sectors are fixed relative to the inbound course, and for a standard
+    (right-turn) hold they are, in terms of the arriving aircraft's track::
+
+        inbound + 0°   .. +180°   direct     (180° — cross the fix and turn)
+        inbound + 180° .. +290°   parallel   (110°)
+        inbound + 290° .. +360°   teardrop   (70°)
+
+    Read on a hold whose inbound course is 360°: arrive heading anywhere from
+    north through east to south and the entry is direct; from south round to
+    290° it is parallel; the last 70° back to north is the teardrop. A left-hand
+    hold is the mirror image, so the offset is measured the other way round.
+
+    Args:
+        inbound_course_deg: Course flown *towards* the fix on the inbound leg.
+        arrival_course_deg: Course the aircraft is flying when it reaches the
+            fix. **In the same frame as** ``inbound_course_deg`` — both true or
+            both magnetic. Mixing the two frames rotates every sector boundary
+            by the local variation, which is what :func:`true_from_magnetic`
+            exists to prevent.
+        turn_direction: ``"R"`` for a standard right-hand hold, ``"L"`` for a
+            non-standard left-hand one.
+
+    Returns:
+        ``"direct"``, ``"parallel"`` or ``"teardrop"``.
+
+    A boundary belongs to the sector it opens: exactly on the reciprocal of the
+    inbound course the answer is ``"parallel"``. Real procedure design allows a
+    ±5° zone in which either adjacent entry may be flown; that discretion
+    belongs to the pilot, not to a placement, so the answer here is always the
+    single deterministic one.
+    """
+    offset_deg = _normalise_bearing(arrival_course_deg - inbound_course_deg)
+    if turn_direction == "L":
+        offset_deg = _normalise_bearing(-offset_deg)
+    if offset_deg < 180.0:
+        return "direct"
+    if offset_deg < 180.0 + PARALLEL_ENTRY_SECTOR_DEG:
+        return "parallel"
+    return "teardrop"
+
+
+def hold_entry(
+    hold: Hold,
+    arrival_course_true_deg: float,
+    *,
+    magnetic_variation_deg: float,
+) -> HoldEntry:
+    """The entry for a *published* hold, whose inbound course is magnetic.
+
+    Args:
+        hold: The published hold.
+        arrival_course_true_deg: Course the aircraft is flying when it reaches
+            the fix, **true** degrees.
+        magnetic_variation_deg: Local variation, degrees positive east.
+            Required, with no default: see the module docstring.
+
+    Returns:
+        The entry the aircraft would fly, from :func:`holding_entry` with both
+        courses brought into the true frame.
+    """
+    return holding_entry(
+        true_from_magnetic(hold.inbound_course_mag_deg, magnetic_variation_deg),
+        arrival_course_true_deg,
+        hold.turn_direction,
+    )
+
+
+def hold_leg_length_nm(hold: Hold, tas_kt: float, altitude_ft: float) -> float:
+    """Length of one straight leg of a published hold, nautical miles.
+
+    Published holds state their leg either as a **distance** (DME holds) or as a
+    **time** (everything else), and a time is only a distance once a speed is
+    known — which is why this takes a true airspeed rather than reading one off
+    the hold.
+
+    Args:
+        hold: The published hold.
+        tas_kt: True airspeed the leg is flown at, knots. Wind is not modelled:
+            in still air the ground speed is the true airspeed, and a real crew
+            adjusts the outbound timing for the wind anyway.
+        altitude_ft: Altitude the hold is flown at, feet MSL. Used only to pick
+            the standard leg time when the source publishes neither a time nor a
+            distance: one minute at or below :data:`HOLD_LEG_TIME_ALTITUDE_FT`,
+            one and a half above it.
+
+    Returns:
+        The leg length in nautical miles. A published distance is returned
+        verbatim; a published time becomes ``tas_kt * minutes / 60``.
+    """
+    if hold.leg_length_nm is not None:
+        return hold.leg_length_nm
+    minutes = hold.leg_time_min
+    if minutes is None:
+        minutes = (
+            HOLD_LEG_TIME_HIGH_MIN
+            if altitude_ft > HOLD_LEG_TIME_ALTITUDE_FT
+            else HOLD_LEG_TIME_LOW_MIN
+        )
+    return tas_kt * minutes / 60.0
+
+
+def holding_pattern_point(
+    fix: GeoPosition,
+    inbound_course_true_deg: float,
+    placement: HoldPlacement,
+    altitude_ft: float,
+    leg_length_nm: float,
+    width_nm: float,
+    turn_direction: TurnDirection = "R",
+) -> tuple[GeoPosition, float]:
+    """Position and heading for a point on a holding racetrack.
+
+    Geometry is built on the inbound course, with the **fix as origin**. The
+    inbound leg runs *back* from the fix along the reciprocal of the inbound
+    course; the outbound leg is parallel to it, ``width_nm`` to the holding
+    side — the right of the inbound track in a right-hand hold, which is the
+    side the aircraft turns towards after crossing the fix.
+
+    The four points, in the order they are flown from the fix:
+
+    * ``"hold_fix"`` — over the fix itself, heading inbound: the moment the
+      outbound turn begins.
+    * ``"hold_outbound"`` — abeam the fix on the outbound leg, where outbound
+      timing starts, heading the reciprocal.
+    * ``"hold_outbound_end"`` — the far end of the outbound leg, about to turn
+      inbound.
+    * ``"hold_inbound"`` — established inbound, one leg length from the fix.
+
+    Args:
+        fix: The holding fix.
+        inbound_course_true_deg: Course flown *towards* the fix, **true**
+            degrees. Convert a published magnetic course with
+            :func:`true_from_magnetic` first.
+        placement: Which of the four points.
+        altitude_ft: Holding altitude, feet MSL. A hold is flown level, so all
+            four points share it.
+        leg_length_nm: Length of the straight legs, nautical miles — see
+            :func:`hold_leg_length_nm`.
+        width_nm: Distance between the inbound and outbound legs, nautical
+            miles. Twice the turn radius: the 180° turn at each end is a
+            half-circle whose diameter is exactly this.
+        turn_direction: ``"R"`` for a standard hold, ``"L"`` for a
+            non-standard one.
+
+    Returns:
+        ``(position, heading_deg)`` — the position at holding altitude and the
+        true heading being flown at that point.
+
+    The turns themselves are not positionable: a point mid-turn depends on the
+    bank the aircraft happens to be holding, and placing an aeroplane there
+    would put it in an attitude the reposition does not command.
+    """
+    axis = _normalise_bearing(inbound_course_true_deg)
+    # "Across" is positive to the right of the inbound track, which is the
+    # holding side of a standard right-hand hold.
+    side = 1.0 if turn_direction == "R" else -1.0
+    reciprocal = _normalise_bearing(axis + 180.0)
+
+    if placement == "hold_fix":
+        along_nm, across_nm, heading = 0.0, 0.0, axis
+    elif placement == "hold_outbound":
+        along_nm, across_nm, heading = 0.0, side * width_nm, reciprocal
+    elif placement == "hold_outbound_end":
+        along_nm, across_nm, heading = -leg_length_nm, side * width_nm, reciprocal
+    elif placement == "hold_inbound":
+        along_nm, across_nm, heading = -leg_length_nm, 0.0, axis
+    else:  # pragma: no cover - exhaustive over HoldPlacement
+        assert_never(placement)
+
+    return _offset(fix, along_nm, across_nm, axis, altitude_ft), _normalise_bearing(heading)
+
+
+def _hold_altitude_ft(hold: Hold, altitude_ft: float | None) -> float:
+    """The altitude to hold at: the caller's, else the published one.
+
+    A published hold states the altitudes it is *protected* between. The lower
+    bound is the one to place at, for the same reason
+    :attr:`~core.navdata.models.AltitudeConstraint.suggested_ft` picks it: an
+    aircraft joining a hold arrives from above and levels at the bottom of the
+    window.
+    """
+    if altitude_ft is not None:
+        return altitude_ft
+    if hold.min_altitude_ft is not None:
+        return hold.min_altitude_ft
+    if hold.max_altitude_ft is not None:
+        return hold.max_altitude_ft
+    raise ValueError(
+        f"the hold at {hold.fix.ident} publishes no altitude, so there is none to place at: "
+        "pass altitude_ft. Guessing one would put the aircraft at sea level, or in terrain."
+    )
+
+
+def _hold_geometry(
+    hold: Hold,
+    altitude_ft: float | None,
+    ias_kt: float | None,
+    category: ApproachCategory,
+    leg_length_nm: float | None,
+) -> tuple[float, float, float, float]:
+    """Resolve a published hold into ``(altitude, ias, leg length, width)``.
+
+    Shared by every hold placement so that the four points of one racetrack are
+    guaranteed to be built from the same numbers.
+    """
+    altitude = _hold_altitude_ft(hold, altitude_ft)
+    speed = _constrained_ias_kt(ias_kt, category, max_kt=hold.speed_kt)
+    # The airspeed indicator reads low as the air thins, and a turn is flown
+    # through the air mass: at 10 000 ft an indicated 210 kt is a true 244 kt,
+    # and using the indicated value would shrink the racetrack by 14 %.
+    tas_kt = tas_from_ias(speed, altitude)
+    leg_nm = hold_leg_length_nm(hold, tas_kt, altitude) if leg_length_nm is None else leg_length_nm
+    return altitude, speed, leg_nm, 2.0 * turn_radius_nm(tas_kt)
+
+
+def hold_placement(
+    hold: Hold,
+    placement: HoldPlacement = "hold_fix",
+    *,
+    magnetic_variation_deg: float,
+    altitude_ft: float | None = None,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+    leg_length_nm: float | None = None,
+) -> Placement:
+    """Place the aircraft in a published holding pattern.
+
+    Everything that can be read is read: the fix, the inbound course, the turn
+    direction, the leg length or time, the altitude window and the speed
+    restriction all come off the published hold. What is computed is only what
+    the source does not say — where the racetrack sits on the ground, which
+    needs a turn radius, which needs a true airspeed, which needs the altitude.
+
+    Args:
+        hold: The published hold, from
+            :meth:`core.navdata.provider.NavdataProvider.get_holds`.
+        placement: Which of :data:`HOLD_PLACEMENTS` to sit at. The default is
+            the fix, the one point of a hold every instructor names.
+        magnetic_variation_deg: Local variation, degrees positive east.
+            Required: the published inbound course is magnetic and this module
+            is true.
+        altitude_ft: Holding altitude, feet MSL. ``None`` takes the hold's
+            published lower altitude.
+        ias_kt: Indicated airspeed to command, knots. ``None`` takes the
+            ``category``'s circling speed, clamped by any published speed
+            restriction — see :func:`_constrained_ias_kt` for why a placard is
+            treated as a ceiling and not as a target.
+        category: The aircraft's ICAO approach category, used only when
+            ``ias_kt`` is ``None``.
+        leg_length_nm: Overrides the leg length, nautical miles. ``None``
+            computes it from the published distance or time.
+
+    Returns:
+        The :class:`Placement`, level at holding altitude and at a manoeuvring
+        speed.
+
+    Raises:
+        ValueError: if neither the caller nor the source states an altitude.
+    """
+    altitude, speed, leg_nm, width_nm = _hold_geometry(
+        hold, altitude_ft, ias_kt, category, leg_length_nm
+    )
+    position, heading_deg = holding_pattern_point(
+        hold.fix.position,
+        true_from_magnetic(hold.inbound_course_mag_deg, magnetic_variation_deg),
+        placement,
+        altitude,
+        leg_nm,
+        width_nm,
+        hold.turn_direction,
+    )
+    return Placement(
+        position=position,
+        heading_deg=heading_deg,
+        ias_kt=speed,
+        label=f"{hold.fix.ident} hold — {_HOLD_PLACEMENT_LABELS[placement]}",
+    )
+
+
+def hold_entry_placement(
+    hold: Hold,
+    arrival_course_true_deg: float,
+    *,
+    magnetic_variation_deg: float,
+    distance_nm: float = DEFAULT_HOLD_ENTRY_DISTANCE_NM,
+    altitude_ft: float | None = None,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+) -> Placement:
+    """Place the aircraft *approaching* a hold, so the student flies the entry.
+
+    The aircraft is put ``distance_nm`` before the fix on the course it would
+    arrive by, level at holding altitude — which is the exercise: recognising
+    the sector and flying the direct, parallel or teardrop entry. The entry the
+    geometry implies is named in the label, so the instructor briefing and the
+    aircraft's position cannot disagree.
+
+    Args:
+        hold: The published hold.
+        arrival_course_true_deg: Course the aircraft is to be flying when it
+            reaches the fix, **true** degrees. This is what selects the entry.
+        magnetic_variation_deg: Local variation, degrees positive east.
+        distance_nm: How far before the fix to start, nautical miles.
+        altitude_ft: Holding altitude, feet MSL. ``None`` takes the hold's
+            published lower altitude.
+        ias_kt: Indicated airspeed to command, knots. ``None`` behaves as in
+            :func:`hold_placement`.
+        category: The aircraft's ICAO approach category.
+
+    Returns:
+        The :class:`Placement`, tracking the fix. Its heading is the exact
+        geodesic course from the placed point *to* the fix, which is not in
+        general ``arrival_course_true_deg``: the requested course is the one
+        flown **over the fix**, and along the way the true heading swings by the
+        convergence of the meridians — 0.04° over 3 NM of easterly track at
+        40° latitude, and proportionally more the further from the equator and
+        the longer the leg. It is the arrival that is exact, because it is the
+        arrival that selects the entry sector. Not a correction anyone flies,
+        but no reason to hand back a heading the aircraft is not on.
+
+    Raises:
+        ValueError: if neither the caller nor the source states an altitude.
+    """
+    altitude, speed, _, _ = _hold_geometry(hold, altitude_ft, ias_kt, category, None)
+    fix = hold.fix.position
+    start = point_at_distance_and_bearing(
+        fix, distance_nm, _normalise_bearing(arrival_course_true_deg + 180.0)
+    )
+    _, course_to_fix = distance_and_bearing(start, fix)
+    entry = hold_entry(hold, course_to_fix, magnetic_variation_deg=magnetic_variation_deg)
+    return Placement(
+        position=GeoPosition(
+            latitude=start.latitude, longitude=start.longitude, altitude_ft=altitude
+        ),
+        heading_deg=course_to_fix,
+        ias_kt=speed,
+        label=f"{hold.fix.ident} hold — {entry} entry",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Published procedures: SIDs, STARs and approaches
+# ---------------------------------------------------------------------------
+
+
+def positionable_legs(procedure: Procedure) -> tuple[ProcedureLeg, ...]:
+    """The legs of a procedure that can actually be flown to a coordinate.
+
+    A procedure is displayed whole — an instructor reading a SID needs to see
+    the climb leg — but only legs whose path terminator carries a fix, and whose
+    fix resolved against the index, have a defensible position. The provider has
+    already decided that per leg; this is the filter the UI builds its menu
+    from, stated once so that no caller re-derives it from the terminator.
+    """
+    return tuple(leg for leg in procedure.legs if leg.is_positionable)
+
+
+def _leg_fix(leg: ProcedureLeg) -> Waypoint:
+    """The resolved fix of a positionable leg, or a refusal that says why.
+
+    Placing an aircraft on a leg that carries no coordinate is not a thing this
+    module can do approximately: a ``CA`` leg is "climb on this course until an
+    altitude", and where that ends depends on the aeroplane, not on the chart.
+    Callers gate on :attr:`~core.navdata.models.ProcedureLeg.is_positionable`,
+    which the UI already uses to grey the leg out; reaching here without it is a
+    programming error and is reported as one.
+    """
+    if not leg.is_positionable or leg.fix is None:
+        reason = leg.unpositionable_reason or (
+            f"a {leg.path_terminator} leg carries no fix to position at"
+        )
+        raise ValueError(
+            f"leg {leg.sequence} ({leg.path_terminator}) is not positionable: {reason}"
+        )
+    return leg.fix
+
+
+def procedure_leg_placement(
+    leg: ProcedureLeg,
+    *,
+    altitude_ft: float | None = None,
+    heading_deg: float | None = None,
+    next_fix: GeoPosition | Waypoint | None = None,
+    previous_fix: GeoPosition | Waypoint | None = None,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+    procedure_ident: str | None = None,
+) -> Placement:
+    """Place the aircraft on a leg of a published procedure.
+
+    The leg supplies the position and, where the chart states them, the altitude
+    and the speed. It cannot supply a heading: an ARINC leg publishes its
+    outbound course in **magnetic** degrees, and converting that needs a
+    magnetic model this project does not carry — so the heading comes from the
+    surrounding geometry (the bearing to the next fix, or the course the
+    previous leg arrives on), or from the caller.
+
+    Args:
+        leg: The leg to place at. Must be positionable.
+        altitude_ft: Target altitude, feet MSL. ``None`` takes the leg's
+            published altitude constraint, resolved by
+            :attr:`~core.navdata.models.AltitudeConstraint.suggested_ft`.
+        heading_deg: Explicit true heading, degrees.
+        next_fix: The fix the aircraft would fly to next.
+        previous_fix: The fix the aircraft would be coming from.
+        ias_kt: Indicated airspeed to command, knots. ``None`` takes the
+            ``category``'s circling speed folded into the leg's published speed
+            band.
+        category: The aircraft's ICAO approach category.
+        procedure_ident: The procedure's name, used only for the label.
+
+    Returns:
+        The :class:`Placement` over the leg's fix.
+
+    Raises:
+        ValueError: if the leg is not positionable, or if neither the caller nor
+            the chart states an altitude — a leg with no published constraint is
+            common (that is what "unrestricted" means) and there is nothing to
+            infer from it.
+    """
+    fix = _leg_fix(leg)
+    altitude = altitude_ft if altitude_ft is not None else _published_altitude_ft(leg)
+    if altitude is None:
+        raise ValueError(
+            f"leg {leg.sequence} at {fix.ident} publishes no altitude constraint, so there is "
+            "none to place at: pass altitude_ft."
+        )
+    speed = _constrained_ias_kt(
+        ias_kt,
+        category,
+        min_kt=leg.speed.min_kt if leg.speed is not None else None,
+        max_kt=leg.speed.max_kt if leg.speed is not None else None,
+    )
+    return Placement(
+        position=GeoPosition(
+            latitude=fix.position.latitude,
+            longitude=fix.position.longitude,
+            altitude_ft=altitude,
+        ),
+        heading_deg=_contextual_heading_deg(fix.position, heading_deg, next_fix, previous_fix),
+        ias_kt=speed,
+        label=_leg_label(leg, fix, procedure_ident),
+    )
+
+
+def _published_altitude_ft(leg: ProcedureLeg) -> float | None:
+    """The leg's own altitude, when the chart states one."""
+    return None if leg.altitude is None else leg.altitude.suggested_ft
+
+
+def _leg_label(leg: ProcedureLeg, fix: Waypoint, procedure_ident: str | None) -> str:
+    """``"I32L at ELVAR (FAF)"`` — the procedure, the fix, and the fix's role."""
+    role = ""
+    if leg.is_final_approach_fix:
+        role = " (FAF)"
+    elif leg.is_initial_approach_fix:
+        role = " (IAF)"
+    elif leg.is_missed_approach_point:
+        role = " (MAP)"
+    if procedure_ident is None:
+        return f"over {fix.ident}{role}"
+    return f"{procedure_ident} at {fix.ident}{role}"
+
+
+def procedure_placement(
+    procedure: Procedure,
+    sequence: int,
+    *,
+    altitude_ft: float | None = None,
+    heading_deg: float | None = None,
+    ias_kt: float | None = None,
+    category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+) -> Placement:
+    """Place the aircraft at one leg of a SID, STAR or approach, by sequence.
+
+    The single entry point the API layer needs: it holds a procedure and a leg
+    number, and everything else — which fixes surround that leg, and therefore
+    which way the aircraft should be pointing — is read off the procedure rather
+    than assembled by the caller. Unpositionable legs are skipped when looking
+    for the neighbours, so a fix on the far side of a climb leg still orients
+    the aircraft.
+
+    Args:
+        procedure: The procedure, with its legs resolved.
+        sequence: The leg's published sequence number (10, 20, 30 …), not its
+            index in the list.
+        altitude_ft: Target altitude, feet MSL, or ``None`` for the leg's own
+            constraint.
+        heading_deg: Explicit true heading, degrees, overriding the geometry.
+        ias_kt: Indicated airspeed to command, knots.
+        category: The aircraft's ICAO approach category.
+
+    Returns:
+        The :class:`Placement` over that leg's fix, labelled with the procedure.
+
+    Raises:
+        ValueError: if no leg carries that sequence number, if the leg is not
+            positionable, or if no altitude can be determined.
+    """
+    legs = procedure.legs
+    index = next((i for i, leg in enumerate(legs) if leg.sequence == sequence), None)
+    if index is None:
+        published = ", ".join(str(leg.sequence) for leg in legs) or "none"
+        raise ValueError(
+            f"{procedure.ident} has no leg with sequence {sequence}; it publishes {published}."
+        )
+    return procedure_leg_placement(
+        legs[index],
+        altitude_ft=altitude_ft,
+        heading_deg=heading_deg,
+        next_fix=_nearest_fix(legs[index + 1 :]),
+        previous_fix=_nearest_fix(reversed(legs[:index])),
+        ias_kt=ias_kt,
+        category=category,
+        procedure_ident=_procedure_ident(procedure),
+    )
+
+
+def _nearest_fix(legs: Iterable[ProcedureLeg]) -> Waypoint | None:
+    """The first resolved fix in a run of legs, walking away from the placement."""
+    return next((leg.fix for leg in legs if leg.fix is not None), None)
+
+
+def _procedure_ident(procedure: Procedure) -> str:
+    """``"BARD3B"``, or ``"BARD3B.ADUXO"`` when a transition names one route of it."""
+    if procedure.transition is None:
+        return procedure.ident
+    return f"{procedure.ident}.{procedure.transition}"
