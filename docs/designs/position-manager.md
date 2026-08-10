@@ -256,7 +256,7 @@ works against an adapter that cannot reposition at all.
 ```python
 class ApplyPlacementRequest(BaseModel):
     placement: PlacementRequest
-    setup: AircraftSetup | None = None   # the instructor's sparse overlay
+    setup: AircraftSetup | None = None  # the instructor's sparse overlay
 ```
 
 Order of operations, non-negotiable (gotchas #37 and #39):
@@ -433,7 +433,7 @@ class RunwayPlacementRequest(BaseModel):
     type: Literal["runway"]
     airport_icao: str = Field(min_length=2, max_length=7)
     runway_ident: str = Field(min_length=1)
-    placement: RunwayPlacement          # the Literal from core.geodesy
+    placement: RunwayPlacement  # the Literal from core.geodesy
     glideslope_deg: float | None = Field(default=None, gt=0.0, le=10.0)
     pattern_altitude_ft: float | None = None
     pattern_width_nm: float | None = Field(default=None, gt=0.0)
@@ -445,7 +445,7 @@ class RunwayPlacementRequest(BaseModel):
 class ParkingPlacementRequest(BaseModel):
     type: Literal["parking"]
     airport_icao: str = Field(min_length=2, max_length=7)
-    stand_name: str = Field(min_length=1)   # matched case-insensitively
+    stand_name: str = Field(min_length=1)  # matched case-insensitively
 
 
 class CoordinatePlacementRequest(BaseModel):
@@ -472,8 +472,8 @@ class ProcedureLegPlacementRequest(BaseModel):
     kind: ProcedureKind
     ident: str = Field(min_length=1)
     transition: str | None = None
-    sequence: int                       # the leg's own sequence number: 10, 20, 30 …
-    altitude_ft: float | None = None    # None -> AltitudeConstraint.suggested_ft
+    sequence: int  # the leg's own sequence number: 10, 20, 30 …
+    altitude_ft: float | None = None  # None -> AltitudeConstraint.suggested_ft
     ias_kt: float | None = Field(default=None, ge=0.0)
     category: ApproachCategory | None = None
 
@@ -483,14 +483,18 @@ class HoldPlacementRequest(BaseModel):
     fix_ident: str = Field(min_length=1)
     region_code: str | None = None
     airport_icao: str | None = None
-    altitude_ft: float | None = None    # None -> the hold's published lower altitude
+    altitude_ft: float | None = None  # None -> the hold's published lower altitude
     ias_kt: float | None = Field(default=None, ge=0.0)
     category: ApproachCategory | None = None
 
 
 PlacementRequest = Annotated[
-    RunwayPlacementRequest | ParkingPlacementRequest | CoordinatePlacementRequest
-    | WaypointPlacementRequest | ProcedureLegPlacementRequest | HoldPlacementRequest,
+    RunwayPlacementRequest
+    | ParkingPlacementRequest
+    | CoordinatePlacementRequest
+    | WaypointPlacementRequest
+    | ProcedureLegPlacementRequest
+    | HoldPlacementRequest,
     Field(discriminator="type"),
 ]
 ```
@@ -536,8 +540,8 @@ method rather than replacing it, so nothing in `server/position_routes.py` chang
 class SchematicPoint(BaseModel):
     label: str
     position: GeoPosition
-    x_nm: float   # along the centreline; positive AWAY from the threshold
-    y_nm: float   # across it; positive right, seen from the approach
+    x_nm: float  # along the centreline; positive AWAY from the threshold
+    y_nm: float  # across it; positive right, seen from the approach
     role: Literal["threshold", "runway_end", "placement", "glidepath", "leg", "fix"]
 
 
@@ -545,7 +549,7 @@ class PlacementSchematic(BaseModel):
     runway_ident: str | None = None
     runway_true_bearing_deg: float | None = None
     runway_length_m: float | None = None
-    glidepath_deg: float | None = None   # finals only; None on a circuit leg
+    glidepath_deg: float | None = None  # finals only; None on a circuit leg
     points: tuple[SchematicPoint, ...] = ()
 ```
 
@@ -572,15 +576,15 @@ is the `position` beside it.
 class PlacementPreview(BaseModel):
     request: PlacementRequest
     placement: Placement
-    setup: AircraftSetup           # Placement.to_setup(), the pre-teleport state
+    setup: AircraftSetup  # Placement.to_setup(), the pre-teleport state
     schematic: PlacementSchematic
     notes: tuple[str, ...] = ()
 
 
 class PlacementResult(BaseModel):
-    placement: Placement           # after _placed_as_edited
+    placement: Placement  # after _placed_as_edited
     applied: AircraftSetup
-    state: AircraftState           # the read-back
+    state: AircraftState  # the read-back
 ```
 
 **`notes` is what makes the staging bar honest.** Every pre-filled number says where it came from,
@@ -740,8 +744,9 @@ a request is ever sent — reaching a 501 means a caller ignored it, exactly as
 _require_capability(adapter, "can_set_position", "reposition the aircraft")
 ...
 if setup.model_dump(exclude_none=True):
-    _require_capability(adapter, "can_set_aircraft_state",
-                        "set the speed and altitude a placement needs")
+    _require_capability(
+        adapter, "can_set_aircraft_state", "set the speed and altitude a placement needs"
+    )
 ```
 
 A missing flag is **501** with a sentence naming the adapter and the flag: *"Unavailable on this
@@ -993,15 +998,15 @@ class Settings(BaseSettings):
     xplane_host: str = "localhost"
     xplane_port: int = 8086
     navdata: NavdataProviderName = "xplane_native"
-    navdata_root: str | None = None      # explicit X-Plane install; autodetected when None
+    navdata_root: str | None = None  # explicit X-Plane install; autodetected when None
     host: str = "0.0.0.0"
     port: int = 8000
 
 
 @lru_cache(maxsize=1)
 def get_navdata() -> NavdataProvider: ...
-def reset_navdata() -> None: ...         # drops only the provider
-def reset_adapter() -> None: ...         # drops settings, adapter AND provider
+def reset_navdata() -> None: ...  # drops only the provider
+def reset_adapter() -> None: ...  # drops settings, adapter AND provider
 ```
 
 `reset_adapter()` clears all three together: they are read from one `Settings` object, so
