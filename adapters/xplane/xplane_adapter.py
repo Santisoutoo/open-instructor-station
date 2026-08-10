@@ -539,8 +539,10 @@ class XPlaneSimAdapter:
                 await self._write("override_planepath", 0, index=0)
                 await asyncio.sleep(_RELEASE_SETTLE_S)
 
-    async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
-        """Teleport the aircraft, preserving its current speed on the new heading.
+    async def set_position(
+        self, position: GeoPosition, heading_deg: float, *, ias_kt: float | None = None
+    ) -> None:
+        """Teleport the aircraft, carrying ``ias_kt`` — or its current speed — onto the new heading.
 
         Runs the five-step procedure documented at the top of this module. The
         arrival is verified *while the flight model is still frozen*, so the
@@ -566,6 +568,9 @@ class XPlaneSimAdapter:
         Args:
             position: Target position, ``altitude_ft`` interpreted as MSL.
             heading_deg: Target true heading in degrees.
+            ias_kt: Indicated airspeed to arrive at. ``None`` reads the
+                aircraft's current speed instead — see the note below on why a
+                placement must not rely on that.
 
         Raises:
             XPlaneRepositionFailed: if the aircraft did not arrive within
@@ -575,7 +580,12 @@ class XPlaneSimAdapter:
                 reports an unobserved success.
         """
         origin = await self.measure_local_frame_origin()
-        speed_kt = (await self.get_aircraft_state()).ias_kt
+        # Reading the speed back is only right when the caller has no opinion. A
+        # placement does: it has just applied a setup, the flight model was
+        # released at the end of it, and the aircraft has been decelerating ever
+        # since — so the value read here is the decayed one, and preserving it
+        # faithfully is how a 120 kt final arrived at 83 kt (issue #39).
+        speed_kt = ias_kt if ias_kt is not None else (await self.get_aircraft_state()).ias_kt
         # Resolved before the aircraft moves and against the *target* altitude:
         # the atmosphere the speed has to be true in is the destination's, and the
         # one the sim can be asked about is the departure's.
