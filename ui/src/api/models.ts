@@ -49,6 +49,88 @@ export type AircraftControlManifest = components['schemas']['AircraftControlMani
  */
 export type ControlId = AircraftControlSupport['control'];
 
+// ---------------------------------------------------------------------------
+// Position Manager
+// ---------------------------------------------------------------------------
+
+/** `GET /api/navdata/status` — the gate the whole Position panel reads first. */
+export type NavdataStatus = components['schemas']['NavdataStatus'];
+
+/** One frame of index-build progress. Present only while `state === 'building'`. */
+export type IndexProgress = components['schemas']['IndexProgress'];
+
+/** One row of the airport search. */
+export type AirportSummary = components['schemas']['AirportSummary'];
+
+/** One airport in full. */
+export type Airport = components['schemas']['Airport'];
+
+/** One runway **end** — 18L and 36R are two of these. */
+export type Runway = components['schemas']['Runway'];
+
+/** The ILS serving one runway end. */
+export type Ils = components['schemas']['Ils'];
+
+/** A gate, stand, tie-down or hangar. */
+export type ParkingStand = components['schemas']['ParkingStand'];
+
+export type ParkingKind = ParkingStand['kind'];
+
+/** Enough of a procedure to list it without parsing its legs. */
+export type ProcedureSummary = components['schemas']['ProcedureSummary'];
+
+/** A procedure with every leg resolved. */
+export type Procedure = components['schemas']['Procedure'];
+
+/** One leg. `is_positionable` is computed server-side; the UI never reads ARINC. */
+export type ProcedureLeg = components['schemas']['ProcedureLeg'];
+
+export type ProcedureKind = ProcedureSummary['kind'];
+
+/** A published holding pattern. */
+export type Hold = components['schemas']['Hold'];
+
+/** A point on the WGS84 ellipsoid. */
+export type GeoPosition = components['schemas']['GeoPosition'];
+
+/** A resolved placement: where, facing where, at what speed. */
+export type Placement = components['schemas']['Placement'];
+
+/**
+ * What the instructor is about to do, computed without touching the simulator.
+ * The staging bar renders `notes` verbatim — they say where each number came from.
+ */
+export type PlacementPreview = components['schemas']['PlacementPreview'];
+
+/** Everything the staging bar's SVG needs. */
+export type PlacementSchematic = components['schemas']['PlacementSchematic'];
+
+/** One point of that diagram, already projected into the runway's frame. */
+export type SchematicPoint = components['schemas']['SchematicPoint'];
+
+/** What actually happened after a commit. */
+export type PlacementResult = components['schemas']['PlacementResult'];
+
+/** The body of `POST /api/position/apply`. */
+export type ApplyPlacementRequest = components['schemas']['ApplyPlacementRequest'];
+
+/**
+ * The discriminated union of everything that can be placed.
+ *
+ * Taken from the request body of `/api/position/apply` rather than spelled out member by
+ * member, so a placement type added on the server arrives here without an edit — and a
+ * `switch` on `type` stops compiling until the panel handles it.
+ */
+export type PlacementRequest = ApplyPlacementRequest['placement'];
+
+/** The named runway-relative placements: the six finals, short final, and eight circuit legs. */
+export type RunwayPlacementName =
+  components['schemas']['RunwayPlacementRequest']['placement'];
+
+/** ICAO approach category, used to default a speed when the caller states none. */
+export type ApproachCategory =
+  components['schemas']['RunwayPlacementRequest']['category'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',
