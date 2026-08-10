@@ -11,10 +11,13 @@ stall the ~4 Hz telemetry push for every request.
 
 **Absent is 404, broken is 503.** The provider never raises for a missing
 airport — it returns ``None`` — so a 404 here means "no such thing", full stop.
-:class:`~core.navdata.provider.NavdataUnavailable` becomes 503 with its own
-reason, and reaching it means a caller skipped ``GET /api/navdata/status``. It is
-the navdata twin of the 501 the adapter routes return, and the UI is expected to
-have disabled the panel long before either can happen.
+:class:`~core.navdata.provider.NavdataUnavailable` becomes a 503 carrying its
+reason, a ``Retry-After`` and the whole of ``status()``, and reaching it means a
+caller skipped ``GET /api/navdata/status``. It is the navdata twin of the 501 the
+adapter routes return, and the UI is expected to have disabled the panel long
+before either can happen — but a tablet that joined mid-build did nothing wrong,
+so it gets the state and a wait rather than an opaque error. See
+:func:`navdata_unavailable_handler`.
 
 **The index build is a job, not a request.** It takes minutes over a real
 install, so ``POST /api/navdata/index`` starts a worker thread and returns the
@@ -28,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import threading
+from typing import Annotated
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
@@ -38,6 +42,8 @@ from core.navdata.models import (
     AirportSummary,
     Fix,
     Hold,
+    Navaid,
+    NavaidKind,
     NavdataStatus,
     ParkingKind,
     ParkingStand,
@@ -49,7 +55,9 @@ from core.navdata.provider import NavdataProvider, NavdataUnavailable
 from server.deps import get_navdata
 
 __all__ = [
+    "BUILDING_RETRY_AFTER_S",
     "NAVDATA_UNAVAILABLE_STATUS",
+    "UNAVAILABLE_RETRY_AFTER_S",
     "cancel_index_build",
     "navdata_unavailable_handler",
     "router",
@@ -61,6 +69,15 @@ logger = logging.getLogger(__name__)
 #: request is well-formed and the *server* has nothing to answer it with, and
 #: unlike a 501 it is expected to become answerable once the index is built.
 NAVDATA_UNAVAILABLE_STATUS = 503
+
+#: ``Retry-After`` while the index is *building*, seconds. Short, because the
+#: thing the client is waiting for is finishing on its own.
+BUILDING_RETRY_AFTER_S = 5
+
+#: ``Retry-After`` while the provider is *unavailable* or in *error*, seconds.
+#: Long, because a human has to act — point the station at an install, or fix a
+#: broken one — and hammering the endpoint will not make that happen sooner.
+UNAVAILABLE_RETRY_AFTER_S = 60
 
 router = APIRouter(prefix="/api/navdata", tags=["navdata"])
 
@@ -133,11 +150,16 @@ def cancel_index_build() -> None:
 
 @router.get("/airports", response_model=list[AirportSummary])
 def search_airports(
-    query: str = Query(min_length=1, description="ICAO, IATA or part of the name."),
+    q: str = Query(min_length=1, description="ICAO, IATA or part of the name."),
     limit: int = Query(default=20, ge=1, le=100),
 ) -> list[AirportSummary]:
-    """Type-ahead over every airport in the index. Ranked, always bounded."""
-    return _provider().search_airports(query, limit=limit)
+    """Type-ahead over every airport in the index. Ranked, always bounded.
+
+    The parameter is ``q``, as the design specifies: the UI client is generated
+    from this schema, so the name is published surface and renaming it later
+    would break every caller silently.
+    """
+    return _provider().search_airports(q, limit=limit)
 
 
 @router.get("/airports/near", response_model=list[AirportSummary])
@@ -208,6 +230,42 @@ def get_procedure(
     )
 
 
+@router.get("/navaids", response_model=list[Navaid])
+def get_navaids(
+    ident: str | None = Query(default=None, min_length=1, description="VOR/NDB/DME identifier."),
+    region: str | None = Query(default=None, description="ICAO region code, e.g. 'LE'."),
+    lat: float | None = Query(default=None, ge=-90.0, le=90.0),
+    lon: float | None = Query(default=None, ge=-180.0, le=180.0),
+    radius_nm: float = Query(default=50.0, gt=0.0, le=1000.0),
+    kinds: Annotated[list[NavaidKind] | None, Query()] = None,
+    limit: int = Query(default=50, ge=1, le=200),
+) -> list[Navaid]:
+    """Navaids by identifier, or every navaid near a point.
+
+    **Two query forms, one path**, because they answer the same question from
+    the two directions an instructor asks it: "where is BRA?" and "what can I
+    tune from here?". Exactly one of ``ident`` and ``lat``/``lon`` must be given
+    — sending both would leave the server to invent a precedence, and sending
+    neither would ask for every navaid on Earth.
+
+    A list either way: navaid identifiers are **not** globally unique, so the
+    single-ident form returns every match sorted by ident then region, and the
+    caller disambiguates with ``region``.
+    """
+    if ident is not None and lat is None and lon is None:
+        return _provider().get_navaids(ident, region=region, kinds=kinds)
+    if ident is None and lat is not None and lon is not None:
+        centre = GeoPosition(latitude=lat, longitude=lon)
+        return _provider().navaids_near(centre, radius_nm, kinds=kinds, limit=limit)
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Give either 'ident' (with an optional 'region') or 'lat' and 'lon' "
+            "(with an optional 'radius_nm'), but not both and not neither."
+        ),
+    )
+
+
 @router.get("/fixes", response_model=list[Fix])
 def get_fixes(
     ident: str = Query(min_length=1),
@@ -232,12 +290,37 @@ def get_holds(
     return _provider().get_holds(fix_ident=fix_ident, region=region, airport_icao=airport_icao)
 
 
-async def navdata_unavailable_handler(_request: Request, exc: Exception) -> JSONResponse:
+def navdata_unavailable_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Turn "this provider has no usable data" into a 503 carrying its reason.
 
     Registered once on the app rather than repeated as a ``try`` in twelve
     routes: every one of them can raise it and every one of them would answer
     identically.
+
+    **The body carries the full ``status()``, not only a message.** A client
+    that raced the index build asks a question and gets an answer to a slightly
+    different one — *this is the state, come back when it says ready* — instead
+    of an opaque error it has to interpret. It is the same object
+    ``GET /api/navdata/status`` serves, so a UI can feed it straight into the
+    gate it already has rather than having a second unavailability path.
+
+    **And a ``Retry-After``, whose value is the difference between waiting and
+    giving up.** A build finishes on its own, so five seconds is the honest
+    interval; an absent or broken install needs a human, so sixty is, and
+    retrying faster only burns the tablet's battery.
+
+    ``def``, not ``async def``, for the same reason the routes are: reading the
+    status is a synchronous provider call — SQLite, over a real install — and
+    Starlette dispatches a sync exception handler through its threadpool, so
+    declaring this ``async def`` would block the event loop on file I/O.
     """
     reason = exc.reason if isinstance(exc, NavdataUnavailable) else str(exc)
-    return JSONResponse(status_code=NAVDATA_UNAVAILABLE_STATUS, content={"detail": reason})
+    status = _provider().status()
+    retry_after = (
+        BUILDING_RETRY_AFTER_S if status.state == "building" else UNAVAILABLE_RETRY_AFTER_S
+    )
+    return JSONResponse(
+        status_code=NAVDATA_UNAVAILABLE_STATUS,
+        content={"detail": reason, "status": status.model_dump(mode="json")},
+        headers={"Retry-After": str(retry_after)},
+    )
