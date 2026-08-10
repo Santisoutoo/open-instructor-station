@@ -22,7 +22,7 @@ from core.geodesy import (
     distance_and_bearing,
     point_at_distance_and_bearing,
 )
-from core.local_frame import LocalCoordinates, world_to_local
+from core.local_frame import LocalCoordinates, origin_separation_m, world_to_local
 from core.models import AircraftSetup, GeoPosition
 
 pytestmark = pytest.mark.sim
@@ -31,6 +31,23 @@ TELEPORT_DISTANCE_NM = 5.0
 #: Placement tolerance. Generous because the aircraft is flying by the time the
 #: state is read back: at 100 kt a single second is already 51 m.
 PLACEMENT_TOLERANCE_M = 400.0
+
+#: A hop far enough that X-Plane has to load new scenery and re-anchor its local
+#: frame — the condition issue #36 is about. 400 NM is Madrid to well past the
+#: Pyrenees, several frame-origin grid cells away; the reported case was Madrid
+#: to Heathrow at ~675 NM.
+LONG_HAUL_DISTANCE_NM = 400.0
+
+#: Placement tolerance across a reload. Wider than :data:`PLACEMENT_TOLERANCE_M`
+#: for one reason only: the read-back happens after the freeze is released, and
+#: a reload pause is seconds rather than frames, so the aircraft has flown
+#: further before anyone looks. Still four orders of magnitude tighter than the
+#: failure being guarded against, which was the aircraft not arriving at all.
+LONG_HAUL_TOLERANCE_M = 2000.0
+
+#: How far the frame origin has to have moved for a long-haul run to count as
+#: having exercised a relocation at all.
+MINIMUM_FRAME_SHIFT_M = 100_000.0
 
 #: X-Plane reports ``elevation`` in metres; the rest of the project is in feet.
 METRES_PER_FOOT = 0.3048
@@ -144,6 +161,56 @@ async def test_teleports_five_nm_north_and_restores() -> None:
         assert error_nm * METRES_PER_NAUTICAL_MILE <= PLACEMENT_TOLERANCE_M
     finally:
         # Always put the aircraft back where the user left it.
+        await adapter.set_position(home, heading_deg=before.heading_deg)
+        await adapter.disconnect()
+
+
+async def test_teleports_across_a_scenery_reload_and_restores() -> None:
+    """Issue #36 for real: a hop long enough to make X-Plane load new scenery.
+
+    ``tests/adapters/test_xplane_scenery_reload.py`` proves the adapter re-aims
+    when the frame origin moves, against a stand-in that relocates it on demand.
+    What that stand-in cannot supply is X-Plane's own scheduler: when the reload
+    fires relative to the write, how long the sim stops answering for, and where
+    it re-anchors. This is the check that measures those.
+
+    It is slow and it is disruptive by design — the simulator will pause while
+    it loads, twice, because the aircraft is put back afterwards. That is the
+    cost of the thing being tested, not a defect in the test.
+    """
+    adapter = XPlaneSimAdapter()
+    await adapter.connect()
+    before = await adapter.get_aircraft_state()
+    home = GeoPosition(
+        latitude=before.latitude,
+        longitude=before.longitude,
+        altitude_ft=before.altitude_ft,
+    )
+    try:
+        target = point_at_distance_and_bearing(home, LONG_HAUL_DISTANCE_NM, 0.0)
+
+        origin_before = await adapter.measure_local_frame_origin()
+        # Raises XPlaneRepositionFailed if it never converges, which is the
+        # entire regression. Do not soften it.
+        await adapter.set_position(target, heading_deg=before.heading_deg)
+        after = await adapter.get_aircraft_state()
+        origin_after = await adapter.measure_local_frame_origin()
+
+        moved = GeoPosition(latitude=after.latitude, longitude=after.longitude)
+        error_nm, _ = distance_and_bearing(moved, target)
+        assert error_nm * METRES_PER_NAUTICAL_MILE <= LONG_HAUL_TOLERANCE_M
+
+        # And the run has to have exercised the thing it exists for. If the
+        # frame did not move, the placement above proved nothing about issue #36
+        # and the hop needs to be longer — that is a finding about the test, not
+        # a reason to let it pass quietly.
+        shift_m = origin_separation_m(origin_before, origin_after)
+        assert shift_m > MINIMUM_FRAME_SHIFT_M, (
+            f"the local frame origin moved only {shift_m:.0f} m over "
+            f"{LONG_HAUL_DISTANCE_NM:.0f} NM, so no scenery reload relocated it and this "
+            "test did not exercise the convergence it is here for"
+        )
+    finally:
         await adapter.set_position(home, heading_deg=before.heading_deg)
         await adapter.disconnect()
 

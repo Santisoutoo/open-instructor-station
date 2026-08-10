@@ -25,6 +25,13 @@ arriving inside a hill. :mod:`geographiclib` exposes no geocentric transform —
 only geodesics on the surface — so the ellipsoid maths is spelled out here; the
 geodesic solver is still used for the search in :func:`origin_from_observation`.
 
+**A local frame is not permanent.** Simulators relocate the anchor to keep the
+coordinates small — X-Plane does it during a scenery reload — and the same
+``(x, y, z)`` triple then denotes a different place on earth. Nothing here
+caches an origin, and :func:`origin_separation_m` exists so that a caller
+holding two measurements can tell "the same frame, measured twice" from "the
+frame moved".
+
 Units follow the rest of ``core``: everything crossing the public API as a
 :class:`~core.models.GeoPosition` carries **feet MSL**, while the local frame is
 metres, because metres are the frame's own unit and converting it would only
@@ -45,6 +52,7 @@ __all__ = [
     "LocalFrameOrigin",
     "local_to_world",
     "origin_from_observation",
+    "origin_separation_m",
     "world_to_local",
 ]
 
@@ -264,3 +272,35 @@ def origin_from_observation(
         longitude=longitude,
         vertical_offset_m=local.y_m - world_to_local(settled, position).y_m,
     )
+
+
+def origin_separation_m(first: LocalFrameOrigin, second: LocalFrameOrigin) -> float:
+    """How far apart two local frames are anchored, in metres.
+
+    The question this answers is "is this the same frame I measured a moment
+    ago, or has it moved?". Two measurements of an unmoved frame taken off a
+    stationary aircraft agree to millimetres; a simulator relocating its frame
+    moves the anchor by kilometres. Six orders of magnitude separate the two
+    cases, so no caller has to tune the threshold it compares against.
+
+    The vertical datum is part of the answer: an origin that kept its anchor but
+    changed its vertical offset describes a different frame, and treating the
+    two as equal would put an aircraft at the wrong altitude.
+
+    The horizontal term is the straight-line chord through the ellipsoid rather
+    than the distance over its surface. The two differ by ~0.1 % at 100 km,
+    which is far below any threshold worth setting on this and avoids dragging a
+    geodesic solve into what is a comparison.
+
+    Args:
+        first: One frame origin.
+        second: The other.
+
+    Returns:
+        The distance between the two anchors in metres, vertical datum included.
+    """
+    first_ecef = _to_ecef(first.latitude, first.longitude, 0.0)
+    second_ecef = _to_ecef(second.latitude, second.longitude, 0.0)
+    horizontal_m = math.dist(first_ecef, second_ecef)
+    vertical_m = second.vertical_offset_m - first.vertical_offset_m
+    return math.hypot(horizontal_m, vertical_m)

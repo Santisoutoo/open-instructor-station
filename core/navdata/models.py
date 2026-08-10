@@ -24,7 +24,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from core.models import GeoPosition
 
@@ -383,9 +383,16 @@ class AltitudeConstraint(BaseModel):
             return self.min_ft
         return self.max_ft
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def display(self) -> str:
-        """The constraint as an instructor would read it off a chart."""
+        """The constraint as an instructor would read it off a chart.
+
+        A **computed field**, not a plain property, so it crosses the API: the leg table
+        renders this string verbatim rather than reimplementing "at or above FL140" in
+        TypeScript. Formatting a published constraint is navdata's job, and doing it twice
+        is how the two copies come to disagree.
+        """
         low = _format_altitude(self.min_ft, self.min_is_flight_level)
         high = _format_altitude(self.max_ft, self.max_is_flight_level)
         if low is not None and high is not None:
@@ -413,9 +420,14 @@ class SpeedConstraint(BaseModel):
             return self.max_kt
         return self.min_kt
 
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def display(self) -> str:
-        """The constraint as an instructor would read it off a chart."""
+        """The constraint as an instructor would read it off a chart.
+
+        A computed field for the same reason as :attr:`AltitudeConstraint.display`: the UI
+        shows this string and never formats a constraint itself.
+        """
         if self.min_kt is not None and self.max_kt is not None:
             if self.min_kt == self.max_kt:
                 return f"at {self.max_kt:g} kt"

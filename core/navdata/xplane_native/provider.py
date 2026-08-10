@@ -45,7 +45,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, cast
 
-from core.geodesy import distance_and_bearing
+from core.geodesy import METRES_PER_NAUTICAL_MILE, distance_and_bearing
 from core.models import GeoPosition, Ils, Runway, RunwaySurface
 from core.navdata.cifp_source import CifpRunway, CifpSource, NullCifpSource
 from core.navdata.models import (
@@ -870,21 +870,44 @@ def _runway(row: sqlite3.Row, cifp: CifpRunway | None) -> Runway:
     procedures themselves are built on. Taking ``apt.dat``'s threshold and the
     CIFP's approach legs would put a small, permanent, invisible offset between
     a placement and the procedure it claims to be on.
+
+    **The displacement follows the threshold that won.** Both sources honour the
+    convention on their own — ``apt.dat`` walks its pavement end forward, the
+    CIFP ``RWY:`` record publishes the displaced point directly — but they are
+    two different surveys, and ``displaced_threshold_m`` is *defined* as the
+    distance from :attr:`~core.models.Runway.pavement_end` to
+    :attr:`~core.models.Runway.threshold`. Once the CIFP has supplied the
+    threshold, only a measurement against that point satisfies the definition:
+    carrying ``apt.dat``'s published number across claims a displacement the
+    model's own two coordinates contradict. Where ``apt.dat`` publishes no
+    displacement at all and the CIFP publishes one — LEMD 18L's 1640 ft — that
+    is not a rounding difference, it is the whole 494 m: the runway would report
+    the full pavement as landing distance available with 494 m of it lying
+    before the threshold.
     """
     elevation_ft = _float(row, "elevation_ft")
     if cifp is not None and cifp.elevation_ft is not None:
         elevation_ft = cifp.elevation_ft
 
+    pavement_end = GeoPosition(
+        latitude=_float(row, "end_lat"),
+        longitude=_float(row, "end_lon"),
+        altitude_ft=elevation_ft,
+    )
     threshold = GeoPosition(
         latitude=_float(row, "threshold_lat"),
         longitude=_float(row, "threshold_lon"),
         altitude_ft=elevation_ft,
     )
-    if cifp is not None and cifp.threshold is not None:
-        threshold = cifp.threshold.model_copy(update={"altitude_ft": elevation_ft})
 
     length_m = _float(row, "length_m")
+    true_bearing_deg = _float(row, "true_bearing_deg")
     displaced_m = _optional_float(row, "displaced_threshold_m") or 0.0
+
+    if cifp is not None and cifp.threshold is not None:
+        threshold = cifp.threshold.model_copy(update={"altitude_ft": elevation_ft})
+        displaced_m = _displacement_along_axis(pavement_end, threshold, true_bearing_deg, length_m)
+
     landing_distance_m = length_m - displaced_m
     surface = _optional_text(row, "surface")
 
@@ -892,14 +915,10 @@ def _runway(row: sqlite3.Row, cifp: CifpRunway | None) -> Runway:
         airport_icao=_text(row, "airport_icao"),
         ident=_text(row, "ident"),
         threshold=threshold,
-        true_bearing_deg=_float(row, "true_bearing_deg"),
+        true_bearing_deg=true_bearing_deg,
         length_m=length_m,
         elevation_ft=elevation_ft,
-        pavement_end=GeoPosition(
-            latitude=_float(row, "end_lat"),
-            longitude=_float(row, "end_lon"),
-            altitude_ft=elevation_ft,
-        ),
+        pavement_end=pavement_end,
         displaced_threshold_m=displaced_m,
         landing_distance_m=landing_distance_m if landing_distance_m > 0.0 else None,
         opposite_ident=_optional_text(row, "opposite_ident"),
@@ -910,6 +929,36 @@ def _runway(row: sqlite3.Row, cifp: CifpRunway | None) -> Runway:
         ),
         ils=_ils(row, cifp),
     )
+
+
+def _displacement_along_axis(
+    pavement_end: GeoPosition,
+    threshold: GeoPosition,
+    true_bearing_deg: float,
+    length_m: float,
+) -> float:
+    """How far down the runway the threshold sits, measured along the centreline.
+
+    The **along-axis component**, not the straight-line distance: two surveys of
+    the same runway end disagree laterally by a metre or two, and a raw geodesic
+    distance folds that sideways error into the displacement instead of dropping
+    it. Projecting also gets the sign right — a threshold that measures out
+    *behind* the pavement end is survey noise on an undisplaced runway, and the
+    honest reading of it is zero rather than a displacement pointing backwards.
+
+    The result is clamped to ``[0, length_m]`` because the model's own invariants
+    say a displacement cannot be negative and cannot swallow more than the
+    pavement. A threshold that lands beyond the far end is a source this project
+    cannot reconcile; reporting no landing distance available is the safe
+    reading, and it is visible, which a silently negative one would not be.
+    """
+    distance_nm, bearing_deg = distance_and_bearing(pavement_end, threshold)
+    along_m = (
+        distance_nm
+        * METRES_PER_NAUTICAL_MILE
+        * math.cos(math.radians(bearing_deg - true_bearing_deg))
+    )
+    return min(max(along_m, 0.0), length_m)
 
 
 def _ils(row: sqlite3.Row, cifp: CifpRunway | None) -> Ils | None:

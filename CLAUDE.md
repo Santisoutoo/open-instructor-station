@@ -169,6 +169,19 @@ per-task decision.
   i.e. the difference between arriving at the requested altitude and arriving inside a hill).
   Long teleports still trigger a scenery reload — expect a pause.
 
+- **The frame origin moves during that reload, and a coordinate written before it lands
+  somewhere else — RESOLVED in the adapter.** The `local_x/y/z` written before a scenery reload
+  denote a *different* world position afterwards, so Madrid → Heathrow used to poll a target the
+  aircraft could never reach for the full 30 s and then raise, with every write accepted
+  (issue #36). `set_position` now **re-measures the origin and re-aims**, up to
+  `_MAX_REPOSITION_WRITES` times inside one budget and one freeze. The interesting half is not
+  detecting the shift but deciding when the new origin can be trusted: a re-measure is only taken
+  after a whole `_ARRIVAL_ATTEMPT_S` slice of *answered* polls has failed — which rules out "the
+  derived coordinates have not caught up yet", because a stalled simulator does not answer at all
+  — and two consecutive measurements must agree before one is aimed with. The convergence
+  criterion is unchanged and is the only thing that cannot lie: the world position X-Plane derives
+  from whichever frame is current. **Never cache a frame origin across a teleport.**
+
 - **The freeze is not just for position — attitude needs it too.** Writing
   `psi`/`theta`/`phi` into a *running* flight model does not stick: measured against X-Plane
   12.4.3 at LEMD, a commanded heading came out 7° off in the mild case and 164° off in the bad
