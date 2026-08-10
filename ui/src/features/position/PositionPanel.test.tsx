@@ -265,7 +265,10 @@ describe('an airborne placement with no speed (issue #39)', () => {
     await user.type(coordinate.getByLabelText(/altitude/i), '4000');
     await user.click(submit);
 
-    expect(await screen.findByText(/below stall speed/i)).toBeInTheDocument();
+    // Scoped to the staging area: the coordinate form warns about the same thing on its own,
+    // and an unscoped query matches whichever of the two happens to render first.
+    const staged = within(await screen.findByRole('region', { name: /staged placement/i }));
+    expect(await staged.findByText(/below stall speed/i)).toBeInTheDocument();
     // Still nothing has moved: the warning arrives from `preview`, not from `apply`.
     expect(callsTo(calls, 'position/apply')).toEqual([]);
     expect(callsTo(calls, 'position/preview')).toHaveLength(1);
