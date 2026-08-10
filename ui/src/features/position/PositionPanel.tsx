@@ -8,6 +8,7 @@
  */
 
 import {
+  instructorApi,
   useBuildNavdataIndexMutation,
   useGetNavdataStatusQuery,
 } from '../../api/instructorApi';
@@ -25,6 +26,9 @@ import './position.css';
 
 /** How often to re-read the status while an index build is running. */
 const BUILD_POLL_MS = 1000;
+
+/** Read the cached navdata status without subscribing to it or issuing a request. */
+const useGetNavdataStatusState = instructorApi.endpoints.getNavdataStatus.useQueryState;
 
 const TABS: readonly { id: PositionTab; label: string }[] = [
   { id: 'pattern', label: 'Pattern & final' },
@@ -79,8 +83,18 @@ export function PositionPanel() {
   const selectedRunway = useAppSelector((state) => state.position.selectedRunwayIdent);
   const activeTab = useAppSelector((state) => state.position.activeTab);
 
+  // Polled **only while a build is running**, which is what `BUILD_POLL_MS` says it is
+  // for. A ready index does not change under the panel, and a station left open on one for
+  // a lesson would otherwise ask the same question once a second, over the LAN, of the
+  // process that is also flying the aeroplane.
+  //
+  // The interval has to be decided before the query that answers it, hence reading the
+  // cache first: `useQueryState` is the same cache entry, without a second subscription or
+  // a second request. Starting a build invalidates `NavdataStatus`, so the refetch that
+  // reports `building` is what turns the polling on.
+  const cached = useGetNavdataStatusState();
   const { data: status, isError } = useGetNavdataStatusQuery(undefined, {
-    pollingInterval: BUILD_POLL_MS,
+    pollingInterval: cached.data?.state === 'building' ? BUILD_POLL_MS : 0,
     skipPollingIfUnfocused: true,
   });
   const gate = navdataGate(status, isError);
