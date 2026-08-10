@@ -299,6 +299,17 @@ class XPNativeNavdataProvider:
         is a merge of two sources, and returning a different ``threshold`` or
         ``elevation_ft`` depending on whether that airport's CIFP file happened
         to be warm would be the worst possible bug in this whole module.
+
+        That invariant has one sanctioned, self-contained exception: a
+        **re-entrant** call. Resolving a runway-as-fix reference (the ARINC
+        ``PG`` subsection) *while this very airport's CIFP is being parsed*
+        arrives back here through :meth:`resolve_fix`, and the source answers
+        the nested load with ``None`` instead of recursing until the stack
+        blows (see ``XPNativeCifpSource.load``). Only that nested caller sees
+        the un-merged ``apt.dat`` threshold — and only for a runway the CIFP
+        publishes no threshold for anyway, since the parser answers the rest
+        from its own ``RWY:`` records. Nothing from the nested pass is cached,
+        so every non-nested answer is the full merge, warm or cold.
         """
         wanted = normalize_icao(icao)
         rows = self._query(_RUNWAY_QUERY, (wanted,))

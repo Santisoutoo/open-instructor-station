@@ -26,6 +26,7 @@ from core.geodesy import METRES_PER_NAUTICAL_MILE, distance_and_bearing
 from core.models import GeoPosition
 from core.navdata.models import FixRef, NavaidKind
 from core.navdata.sources import cifp_file, discover_xplane_root
+from core.navdata.xplane_native.cifp import XPNativeCifpSource
 from core.navdata.xplane_native.provider import XPNativeNavdataProvider
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[2] / "fixtures" / "navdata" / "xp_root"
@@ -447,6 +448,144 @@ def test_the_default_cifp_source_reports_no_procedures_rather_than_failing(
     """
     assert provider.get_procedures("ZZZZ") == []
     assert provider.get_procedure("ZZZZ", "sid", "ANYTHING") is None
+
+
+# --------------------------------------------------------------------------
+# Procedures — the CIFP source wired back onto the provider, as the server
+# wires it. This loop is what every real deployment runs, and it is where the
+# ARINC ``PG`` (runway-as-fix) recursion lived: resolving a leg's runway
+# reference re-entered the runway merge, which re-parsed the very CIFP file
+# being parsed, until the stack blew — HTTP 500 from every Position endpoint
+# at every real airport tried (LEMD, LEBL, KJFK, EGLL, LEZL).
+# --------------------------------------------------------------------------
+
+
+def _wired_provider(cache_dir: Path) -> XPNativeNavdataProvider:
+    """Provider and CIFP source joined the way ``server/deps.py`` joins them.
+
+    The source resolves fixes through the provider, and the provider merges
+    runways through the source. Every fixture airport carries a ``PG`` leg, so
+    merely loading procedures or runways walks the loop.
+    """
+    wired: XPNativeNavdataProvider = XPNativeNavdataProvider(
+        FIXTURE_ROOT,
+        cache_dir=cache_dir,
+        cifp_source=XPNativeCifpSource(
+            FIXTURE_ROOT, resolve_fix=lambda ref: wired.resolve_fix(ref)
+        ),
+    )
+    wired.ensure_index()
+    return wired
+
+
+@pytest.fixture
+def wired_provider(tmp_path: Path) -> Iterator[XPNativeNavdataProvider]:
+    built = _wired_provider(tmp_path / "cache")
+    yield built
+    built.close()
+
+
+def test_a_pg_runway_leg_does_not_recurse_the_merge_into_the_parse(
+    wired_provider: XPNativeNavdataProvider,
+) -> None:
+    """The regression test for the stack blow-up itself.
+
+    ``ZZZZ.dat`` carries ``APPCH:030 … RW32L,ZZ,P,G`` — the reference every
+    real approach publishes for its runway. Before the fix, any of these calls
+    raised ``RecursionError``; asserting on their answers is what proves the
+    cycle is actually broken rather than merely survived.
+    """
+    assert [r.ident for r in wired_provider.get_runways("ZZZZ")] == ["09", "27"]
+    assert wired_provider.get_runway("ZZZZ", "09") is not None
+    assert {p.ident for p in wired_provider.get_procedures("ZZZZ")} == {"ZZZ1A", "ZZS2B", "I32L"}
+    assert wired_provider.get_ils("ZZZZ", "09") is not None
+
+
+def test_the_merged_runway_is_identical_whether_the_cifp_was_warm_or_cold(
+    tmp_path: Path,
+) -> None:
+    """The invariant of ``get_runways``: the merge must not depend on cache state.
+
+    ZZZZ 27 is where the two sources visibly disagree — ``apt.dat`` puts the
+    threshold at longitude -2.9648 and elevation 2000, the CIFP at -2.9 and
+    2010 — so the CIFP-won values are asserted on both paths: one provider
+    asked for runways stone cold, one asked only after a procedure load had
+    already parsed (and cached) the CIFP.
+    """
+    cold = _wired_provider(tmp_path / "cold")
+    warm = _wired_provider(tmp_path / "warm")
+    try:
+        warm.get_procedures("ZZZZ")
+
+        cold_runway = cold.get_runway("ZZZZ", "27")
+        warm_runway = warm.get_runway("ZZZZ", "27")
+        assert cold_runway is not None
+        assert warm_runway is not None
+        assert cold_runway.threshold == warm_runway.threshold
+        assert cold_runway.threshold.longitude == pytest.approx(-2.9)
+        assert cold_runway.elevation_ft == warm_runway.elevation_ft == 2010.0
+    finally:
+        cold.close()
+        warm.close()
+
+
+def test_a_runway_fix_leg_lands_on_the_cifp_threshold(
+    wired_provider: XPNativeNavdataProvider,
+) -> None:
+    """The ``PG`` leg resolves to the CIFP's own threshold — the procedure's datum.
+
+    32L exists only in the CIFP (no ``apt.dat`` row), so this also proves a
+    runway the provider alone could never answer still positions its leg: the
+    parser answers same-airport runway references from the file's own ``RWY:``
+    records instead of re-entering the merge.
+    """
+    approach = wired_provider.get_procedure("ZZZZ", "approach", "I32L")
+    assert approach is not None
+    leg = next(leg for leg in approach.legs if leg.sequence == 30)
+    assert leg.is_positionable is True
+    assert leg.fix is not None
+    assert leg.fix.kind == "runway"
+    assert leg.fix.position.latitude == pytest.approx(40 + 30.0 / 3600, abs=1e-9)
+    assert leg.fix.position.longitude == pytest.approx(-(3 + 1 / 60 + 30.0 / 3600), abs=1e-9)
+    assert leg.fix.position.altitude_ft == pytest.approx(2040.0)
+
+
+def test_a_runway_fix_without_a_rwy_record_falls_back_to_the_apt_dat_threshold(
+    wired_provider: XPNativeNavdataProvider,
+) -> None:
+    """The guarded fallback: a ``PG`` reference the CIFP file cannot answer itself.
+
+    ZZZY's missed approach names RW36, which has an ``apt.dat`` row but no
+    ``RWY:`` record, so resolution re-enters the provider mid-parse. The load
+    guard answers that nested load with "no CIFP" instead of recursing, and the
+    leg lands on the **un-merged** ``apt.dat`` threshold — which for a runway
+    the CIFP publishes no threshold for is also the only datum there is.
+    """
+    approach = wired_provider.get_procedure("ZZZY", "approach", "R18-Z")
+    assert approach is not None
+    leg = next(leg for leg in approach.legs if leg.sequence == 30)
+    assert leg.is_positionable is True
+    assert leg.fix is not None
+    assert leg.fix.kind == "runway"
+    assert leg.fix.position.latitude == pytest.approx(41.0)
+    assert leg.fix.position.longitude == pytest.approx(-3.0)
+
+
+def test_the_nested_unmerged_answer_never_leaks_into_a_later_merge(
+    wired_provider: XPNativeNavdataProvider,
+) -> None:
+    """The parse-time fallback path must leave no trace in the runway answers.
+
+    Loading ZZZY's procedures exercises the guarded nested ``get_runways``
+    (un-merged, ``RW36``). Every ``get_runways`` answer afterwards must still be
+    the full merge — nothing from the nested pass may have been cached.
+    """
+    wired_provider.get_procedures("ZZZY")
+
+    runway = wired_provider.get_runway("ZZZZ", "27")
+    assert runway is not None
+    assert runway.threshold.longitude == pytest.approx(-2.9)
+    assert runway.elevation_ft == 2010.0
 
 
 # --------------------------------------------------------------------------

@@ -4,3 +4,9 @@
 RWY:RW18,     ,      ,00500, ,    , ,050;N41000000,W004000000,0000;
 APPCH:010,R,R18-Z,,ZZYIF,ZY,P,C,E A ,,,IF,,,,,,,,,,,+,03000,,,,,,,,,,,,,,;
 APPCH:020,R,R18-Z,,RW18,ZY,P,G,G M ,,,TF,,,,,,,,,1800,0050,+,00550,,,,,,,,,,,,,,;
+# The missed approach names the reciprocal runway as a fix - the ARINC PG
+# subsection - and 36 deliberately has NO RWY: record in this file, only an
+# apt.dat row. Resolving it therefore has to go through the provider, whose
+# runway merge loads this very file: the re-entrant load that recursed until
+# the stack blew on every real airport (HTTP 500 from every Position endpoint).
+APPCH:030,R,R18-Z,,RW36,ZY,P,G,   M,,,CF,,,,,,,,,3600,0020,+,01500,,,,,,,,,,,,,,;
