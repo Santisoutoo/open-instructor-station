@@ -150,7 +150,14 @@ class FakeSimAdapter:
 
     @staticmethod
     def _merge_setup(current: AircraftSetup, incoming: AircraftSetup) -> AircraftSetup:
-        """Overlay the set fields of ``incoming`` onto ``current``."""
+        """Overlay the set fields of ``incoming`` onto ``current``.
+
+        Driven entirely by ``model_dump(exclude_none=True)``, so a scalar field
+        added to :class:`~core.models.AircraftSetup` — the whole autopilot block
+        of issue #41, for instance — is carried here with no change to this
+        adapter. ``lights`` is the one exception, and only because a nested model
+        has to be merged rather than replaced.
+        """
         updates = incoming.model_dump(exclude_none=True)
         if "lights" in updates and current.lights is not None:
             lights = incoming.lights

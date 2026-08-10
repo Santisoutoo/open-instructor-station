@@ -35,7 +35,7 @@ from core.geodesy import (
     point_at_distance_and_bearing,
 )
 from core.models import AircraftSetup, AircraftState, GeoPosition, LightsSetup
-from core.sim_adapter import Capabilities, SimAdapter
+from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 
 # --------------------------------------------------------------------------
 # Adapter parametrisation
@@ -101,10 +101,22 @@ CAPABILITY_COVERAGE: dict[str, str] = {
     "can_set_weather": PENDING,
     "can_inject_failures": PENDING,
     "can_spawn_traffic": PENDING,
-    "can_control_autopilot": PENDING,
+    "can_control_autopilot": "test_apply_setup_writes_the_autopilot",
     "can_set_fuel_payload": PENDING,
     "can_control_camera": PENDING,
     "can_pushback": PENDING,
+}
+
+#: Capability -> a setup carrying a field that capability gates. Used twice: to
+#: prove an adapter that declares the flag accepts the fields, and to prove one
+#: that does not refuses them outright instead of half-applying the setup.
+#:
+#: This is the machine-readable form of the rule in
+#: :meth:`core.sim_adapter.SimAdapter.apply_setup`, so a field group added to
+#: ``AircraftSetup`` under a new flag gets both halves of the contract for free.
+CAPABILITY_GATED_SETUPS: dict[str, AircraftSetup] = {
+    "can_control_autopilot": AircraftSetup(autopilot_master=True),
+    "can_set_fuel_payload": AircraftSetup(gross_weight_kg=60_000.0),
 }
 
 
@@ -450,6 +462,105 @@ async def test_apply_setup_normalises_the_heading(adapter: SimAdapter) -> None:
     assert 0.0 <= state.heading_deg <= 360.0
 
 
+async def test_apply_setup_refuses_capability_gated_fields_it_cannot_honour(
+    adapter: SimAdapter,
+) -> None:
+    """Hard rule 3 at the adapter seam: refuse the whole call, never half-apply it.
+
+    A field group an adapter cannot honour must come back as
+    :class:`CapabilityNotSupported` — the caller ignored the flags, and that is a
+    bug in the caller rather than something to silently drop. The X-Plane adapter
+    is the live example: it drives an autopilot but cannot set mass or fuel.
+    """
+    undeclared = {
+        capability: setup
+        for capability, setup in CAPABILITY_GATED_SETUPS.items()
+        if not getattr(adapter.capabilities, capability)
+    }
+    if not undeclared:
+        pytest.skip(f"{adapter.name} declares every capability-gated field group")
+
+    for capability, setup in undeclared.items():
+        with pytest.raises(CapabilityNotSupported, match=capability):
+            await adapter.apply_setup(setup)
+
+
+# --------------------------------------------------------------------------
+# can_control_autopilot
+# --------------------------------------------------------------------------
+
+
+async def test_apply_setup_writes_the_autopilot(adapter: SimAdapter) -> None:
+    """The autopilot rides on ``apply_setup``; this is the contract that says so.
+
+    There is deliberately no ``set_autopilot`` on :class:`SimAdapter` (issue
+    #41): arming a mode and dialling the selector it flies to is one instructor
+    intent, so it is one call, gated by ``can_control_autopilot``.
+
+    **The servos are deliberately not engaged here.** Against a live simulator
+    this test would otherwise hand an aeroplane to an autopilot mid-suite and
+    fly it away from every subsequent test's assumptions. What it writes instead
+    is inert: selector values, and a lateral mode that does nothing while the
+    servos are off. The master/flight-director ladder is a pure fold over
+    X-Plane's three-valued mode and is pinned in
+    ``tests/adapters/test_xplane_autopilot.py`` instead.
+
+    The selectors are relative to where the aircraft is, for the same reason
+    every position test is — see :data:`HOP_DISTANCE_NM`.
+    """
+    if not adapter.capabilities.can_control_autopilot:
+        pytest.skip(f"{adapter.name} does not declare can_control_autopilot")
+
+    state = await adapter.get_aircraft_state()
+    target_altitude_ft = state.altitude_ft + HOP_CLIMB_FT
+    setup = AircraftSetup(
+        autopilot_hdg=True,
+        target_altitude_ft=target_altitude_ft,
+        target_ias_kt=STABILISED_IAS_KT,
+        target_heading_deg=(state.heading_deg + 10.0) % 360.0,
+        target_vertical_speed_fpm=500.0,
+    )
+    try:
+        # Accepting the write is itself the assertion for an adapter that talks
+        # to a simulator: a selector X-Plane will not take comes back as an HTTP
+        # error, not as a shrug.
+        await adapter.apply_setup(setup)
+
+        applied = getattr(adapter, "applied_setup", None)
+        if applied is not None:
+            assert applied.autopilot_hdg is True
+            assert applied.target_altitude_ft == pytest.approx(target_altitude_ft)
+            assert applied.target_ias_kt == pytest.approx(STABILISED_IAS_KT)
+            assert applied.target_vertical_speed_fpm == pytest.approx(500.0)
+    finally:
+        # Wing-leveller is the neutral lateral mode; there is no per-mode
+        # "off" to restore to, because the modes are mutually exclusive.
+        await adapter.apply_setup(AircraftSetup(autopilot_hdg=False))
+
+
+async def test_apply_setup_leaves_the_autopilot_alone_when_asked_for_nothing(
+    adapter: SimAdapter,
+) -> None:
+    """``None`` on an autopilot field means *do not touch that switch*.
+
+    Worth its own test because the failure mode is invisible: a writer that read
+    ``None`` as "off" would silently disarm a mode the instructor never mentioned
+    every time an unrelated control was written.
+    """
+    if not adapter.capabilities.can_control_autopilot:
+        pytest.skip(f"{adapter.name} does not declare can_control_autopilot")
+
+    await adapter.apply_setup(AircraftSetup(target_heading_deg=90.0))
+
+    applied = getattr(adapter, "applied_setup", None)
+    if applied is None:
+        pytest.skip(f"{adapter.name} exposes no applied-setup read-back")
+    assert applied.target_heading_deg == pytest.approx(90.0)
+    assert applied.autopilot_master is None
+    assert applied.autopilot_nav is None
+    assert applied.flight_director is None
+
+
 # --------------------------------------------------------------------------
 # Streaming
 # --------------------------------------------------------------------------
@@ -519,5 +630,33 @@ async def test_fake_apply_setup_records_non_state_fields() -> None:
         assert applied.lights.strobe is True
         assert applied.lights.taxi is True
         assert applied.speedbrake_ratio is None  # never provided, still unset
+    finally:
+        await sim.disconnect()
+
+
+async def test_fake_merges_the_autopilot_across_calls() -> None:
+    """The autopilot block merges like every other field — no special casing.
+
+    ``FakeSimAdapter._merge_setup`` is driven by ``model_dump(exclude_none=True)``,
+    so the ten fields issue #41 added were carried with no change to the adapter.
+    This is the test that keeps that true: a future field that needs bespoke merge
+    logic (as ``lights`` does) has to be noticed here rather than in a simulator.
+    """
+    sim = FakeSimAdapter()
+    await sim.connect()
+    try:
+        await sim.apply_setup(
+            AircraftSetup(
+                autopilot_master=True, target_altitude_ft=8000.0, elevator_trim_ratio=-0.2
+            )
+        )
+        await sim.apply_setup(AircraftSetup(target_altitude_ft=12_000.0, autopilot_app=True))
+
+        applied = sim.applied_setup
+        assert applied.autopilot_master is True  # untouched by the second call
+        assert applied.elevator_trim_ratio == pytest.approx(-0.2)
+        assert applied.target_altitude_ft == pytest.approx(12_000.0)  # overwritten
+        assert applied.autopilot_app is True
+        assert applied.autopilot_nav is None  # never provided, still unset
     finally:
         await sim.disconnect()

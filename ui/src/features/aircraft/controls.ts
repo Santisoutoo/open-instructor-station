@@ -141,7 +141,7 @@ export const CONTROL_DISPLAY: Record<ControlId, ControlDisplay> = {
     max: 1,
     step: 0.05,
     format: (value) => value.toFixed(2),
-    toSetup: null,
+    toSetup: (value) => ({ elevator_trim_ratio: value }),
     readLive: null,
   },
   lights: { kind: 'lights', label: 'Exterior lights' },
@@ -193,40 +193,44 @@ export const CONTROL_DISPLAY: Record<ControlId, ControlDisplay> = {
   },
 
   // ------------------------------------------------------------------- autopilot
+  // The mode toggles are *selections*, not a readout: only `autopilot_master`
+  // actually hands the aircraft over. `readLive` stays null across the block —
+  // `AircraftState` carries what the aeroplane is doing, never what the autopilot
+  // was asked to do, so these show the last confirmed command instead.
   autopilot_master: {
     kind: 'toggle',
     label: 'Autopilot',
     onLabel: 'Engaged',
     offLabel: 'Off',
-    toSetup: null,
+    toSetup: (value) => ({ autopilot_master: value }),
   },
   autopilot_nav: {
     kind: 'toggle',
     label: 'NAV',
     onLabel: 'Armed',
     offLabel: 'Off',
-    toSetup: null,
+    toSetup: (value) => ({ autopilot_nav: value }),
   },
   autopilot_app: {
     kind: 'toggle',
     label: 'APP',
     onLabel: 'Armed',
     offLabel: 'Off',
-    toSetup: null,
+    toSetup: (value) => ({ autopilot_app: value }),
   },
   autopilot_hdg: {
     kind: 'toggle',
     label: 'HDG',
     onLabel: 'Armed',
     offLabel: 'Off',
-    toSetup: null,
+    toSetup: (value) => ({ autopilot_hdg: value }),
   },
   flight_director: {
     kind: 'toggle',
     label: 'Flight director',
     onLabel: 'On',
     offLabel: 'Off',
-    toSetup: null,
+    toSetup: (value) => ({ flight_director: value }),
   },
   target_altitude: {
     kind: 'stepper',
@@ -235,7 +239,7 @@ export const CONTROL_DISPLAY: Record<ControlId, ControlDisplay> = {
     min: 0,
     max: 60_000,
     step: 500,
-    toSetup: null,
+    toSetup: (value) => ({ target_altitude_ft: value }),
     readLive: null,
   },
   target_speed: {
@@ -245,17 +249,19 @@ export const CONTROL_DISPLAY: Record<ControlId, ControlDisplay> = {
     min: 0,
     max: 500,
     step: 5,
-    toSetup: null,
+    toSetup: (value) => ({ target_ias_kt: value }),
     readLive: null,
   },
   target_heading: {
     kind: 'stepper',
     label: 'AP heading',
+    // Magnetic, unlike the flight-state heading above it — a heading bug always is.
+    hint: 'Magnetic',
     unit: '°',
     min: 0,
     max: 360,
     step: 1,
-    toSetup: null,
+    toSetup: (value) => ({ target_heading_deg: value }),
     readLive: null,
   },
   target_vertical_speed: {
@@ -265,7 +271,7 @@ export const CONTROL_DISPLAY: Record<ControlId, ControlDisplay> = {
     min: -6000,
     max: 6000,
     step: 100,
-    toSetup: null,
+    toSetup: (value) => ({ target_vertical_speed_fpm: value }),
     readLive: null,
   },
 };

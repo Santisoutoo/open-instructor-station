@@ -52,7 +52,9 @@ h2 {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  max-width: 1200px;
+  /* Wider than the old single-column shell: the Position panel is a dense surface and
+     the runway grid needs the room. */
+  max-width: 1600px;
   margin: 0 auto;
   padding: 1rem;
   gap: 1rem;
@@ -81,11 +83,31 @@ h2 {
   color: var(--text-dim);
 }
 
+/*
+ * The workspace/context split: placing the aircraft is the job, telemetry and capabilities
+ * are there to confirm it worked. Two thirds / one third on a desk, one column on a tablet
+ * held in portrait — the breakpoint is where the runway grid stops fitting beside the
+ * readouts rather than a round number.
+ */
 .app__main {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
   gap: 1rem;
   align-items: start;
+}
+
+.app__workspace,
+.app__context {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .app__main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .app__footer {
