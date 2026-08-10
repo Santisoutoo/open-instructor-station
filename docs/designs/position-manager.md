@@ -109,7 +109,7 @@ legs' ARINC keys through the provider's index), so the resolver closure binds la
 |---|---|
 | `GET /api/navdata/status` | `NavdataStatus` |
 | `POST /api/navdata/index?force=` | `NavdataStatus` — starts a build in a worker thread, returns immediately |
-| `GET /api/navdata/airports?query=&limit=` | `list[AirportSummary]` |
+| `GET /api/navdata/airports?q=&limit=` | `list[AirportSummary]` |
 | `GET /api/navdata/airports/near?lat=&lon=&radius_nm=&limit=` | `list[AirportSummary]` |
 | `GET /api/navdata/airports/{icao}` | `Airport` (404 when absent) |
 | `GET /api/navdata/airports/{icao}/runways` | `list[Runway]` — every runway **end** |
@@ -362,7 +362,7 @@ the first thing on the page, because it is the reason the page exists.
 
 ### 4.2 Structure, top to bottom
 
-**1 — Airport bar.** A combobox, 250 ms debounce, over `GET /navdata/airports?query=`. Result
+**1 — Airport bar.** A combobox, 250 ms debounce, over `GET /navdata/airports?q=`. Result
 rows: ICAO in mono, name, longest runway, a 6 px dot when `has_procedures`. Before any typing it
 lists the last five airports used (client state). The selection shows elevation and the AIRAC
 cycle from `status`. `⌘K` / `Ctrl-K` focuses it, and the hint is visible, not folklore.
