@@ -1,0 +1,9 @@
+I
+1200 Version - HAND-WRITTEN FIXTURE. Every value below is invented.
+# Decoys, for the same reason as Resources/default data/earth_fix.dat: Custom
+# Data wins per file, so neither of these navaids may reach the index. This
+# file's presence is also what makes the tree a valid X-Plane root.
+
+3 12.00000000 12.00000000 100 11000 100 0.000 ZDEF ENRT ZZ Default Only VOR/DME
+2 13.00000000 13.00000000 100   400  50 0.000 ZDEN ENRT ZZ Default Only NDB
+99

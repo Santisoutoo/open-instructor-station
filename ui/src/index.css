@@ -52,7 +52,9 @@ h2 {
   display: flex;
   flex-direction: column;
   min-height: 100vh;
-  max-width: 1200px;
+  /* Wider than the old single-column shell: the Position panel is a dense surface and
+     the runway grid needs the room. */
+  max-width: 1600px;
   margin: 0 auto;
   padding: 1rem;
   gap: 1rem;
@@ -81,11 +83,31 @@ h2 {
   color: var(--text-dim);
 }
 
+/*
+ * The workspace/context split: placing the aircraft is the job, telemetry and capabilities
+ * are there to confirm it worked. Two thirds / one third on a desk, one column on a tablet
+ * held in portrait — the breakpoint is where the runway grid stops fitting beside the
+ * readouts rather than a round number.
+ */
 .app__main {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
   gap: 1rem;
   align-items: start;
+}
+
+.app__workspace,
+.app__context {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+  min-width: 0;
+}
+
+@media (max-width: 1000px) {
+  .app__main {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .app__footer {
@@ -201,6 +223,170 @@ h2 {
 
 .capability--on .capability__state {
   color: var(--ok);
+}
+
+/* ------------------------------------------------------ aircraft control */
+
+/* The control panel is the widest thing on the page; let it span the grid. */
+.panel--wide {
+  grid-column: 1 / -1;
+}
+
+.control-group + .control-group {
+  margin-top: 1.25rem;
+}
+
+.control-group__title {
+  margin: 0 0 0.6rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--accent);
+}
+
+.control-group__body {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 0.75rem;
+}
+
+.control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid transparent;
+  border-radius: 8px;
+}
+
+/* Disabled is a *stated* condition, never a silently dead widget. */
+.control--disabled {
+  border-color: var(--border);
+  opacity: 0.62;
+}
+
+.control--lights {
+  grid-column: 1 / -1;
+}
+
+.control__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.control__value {
+  font-size: 1.25rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  font-family: 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+}
+
+.control__hint {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.control--disabled .control__hint {
+  color: var(--warn);
+}
+
+.control__row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.control__switches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+/* --- inputs: every target is at least 44 px, this panel lives on an iPad --- */
+
+.control__slider {
+  width: 100%;
+  height: 44px;
+  accent-color: var(--accent);
+}
+
+.control__number {
+  flex: 1;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 0.6rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.control__button,
+.control__toggle {
+  min-height: 44px;
+  min-width: 76px;
+  padding: 0 0.9rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.control__toggle--on {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.control__toggle--unknown {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.control__button:disabled,
+.control__toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.control__button:not(:disabled):hover,
+.control__toggle:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.control__number:focus-visible,
+.control__button:focus-visible,
+.control__toggle:focus-visible,
+.control__slider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.control__dismiss {
+  min-height: 32px;
+  padding: 0 0.7rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+/* Fieldsets need this to participate in the flex layout at all. */
+fieldset.control {
+  min-width: 0;
 }
 
 /* ----------------------------------------------------------------- badge */

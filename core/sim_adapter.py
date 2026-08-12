@@ -19,7 +19,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-from core.models import AircraftSetup, AircraftState, GeoPosition
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition
 
 __all__ = [
     "Capabilities",
@@ -46,6 +46,14 @@ class Capabilities(BaseModel):
     can_set_weather: bool = False
     can_inject_failures: bool = False
     can_spawn_traffic: bool = False
+    #: The adapter honours the autopilot block of
+    #: :class:`~core.models.AircraftSetup` — the mode flags
+    #: (``autopilot_master``, ``flight_director``, ``autopilot_nav``,
+    #: ``autopilot_app``, ``autopilot_hdg``) and the four selectors
+    #: (``target_altitude_ft``, ``target_ias_kt``, ``target_heading_deg``,
+    #: ``target_vertical_speed_fpm``). There is no separate autopilot method:
+    #: the autopilot is written through :meth:`SimAdapter.apply_setup` like
+    #: every other switch, and this flag is what gates those fields.
     can_control_autopilot: bool = False
     can_set_fuel_payload: bool = False
     can_control_camera: bool = False
@@ -106,8 +114,49 @@ class SimAdapter(Protocol):
         """Read one snapshot of the user aircraft."""
         ...
 
-    async def set_position(self, position: GeoPosition, heading_deg: float) -> None:
+    async def get_airframe(self) -> AirframeInfo:
+        """What is known about the loaded airframe.
+
+        A capability-free read, like :meth:`get_aircraft_state`: there is no
+        flag to check first, because a read degrades instead of failing. An
+        adapter that cannot see the airframe returns the all-``None``
+        :class:`~core.models.AirframeInfo` — "unknown" is an answer, never an
+        exception.
+        """
+        ...
+
+    async def set_position(
+        self,
+        position: GeoPosition,
+        heading_deg: float,
+        *,
+        ias_kt: float | None = None,
+        vertical_speed_fpm: float | None = None,
+    ) -> None:
         """Teleport the aircraft to ``position`` facing ``heading_deg`` (true degrees).
+
+        ``ias_kt`` decides what the aircraft is flying when it gets there, and the
+        two cases are genuinely different intents:
+
+        * ``None`` — carry the speed the aircraft has now onto the new heading.
+          Right for *moving* an aeroplane that is already flying.
+        * a value — arrive at that indicated airspeed. Right for a *placement*,
+          where the speed is part of what was asked for.
+
+        The default is ``None`` because preserving is the safe answer for a
+        caller that has no opinion. A placement always has one: a caller that
+        applies a setup and then teleports must pass the speed here as well,
+        because the aircraft decelerates between the two calls and an adapter
+        that re-reads the state would faithfully preserve the decayed value
+        (issue #39 — measured at 83 kt against 120 commanded).
+
+        ``vertical_speed_fpm`` is the same lesson on the vertical axis (issue
+        #81): the velocity vector a teleport writes used to be unconditionally
+        level, so a descent rate commanded by ``apply_setup`` was destroyed one
+        call later. ``None`` arrives level — right for every placement that is
+        not descending — and a value becomes the vertical component of the
+        arrival velocity, so an aircraft placed on a final is already going
+        down the slope when the flight model takes over.
 
         Requires :attr:`Capabilities.can_set_position`.
         """
@@ -116,7 +165,19 @@ class SimAdapter(Protocol):
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is not ``None``, leaving the rest untouched.
 
-        Requires :attr:`Capabilities.can_set_aircraft_state`.
+        **This is the only write path into the aircraft's configuration**, and
+        that is a decision rather than an accident (issue #41). The autopilot in
+        particular does *not* get its own method: arming a mode and dialling the
+        selector it flies to is one instructor intent, and two calls would leave
+        an aircraft reachable in the half-applied state between them.
+
+        Most fields require :attr:`Capabilities.can_set_aircraft_state`. Two
+        groups are gated separately and an adapter that is handed one of them
+        without declaring the flag must raise :class:`CapabilityNotSupported`
+        rather than silently ignore it or half-apply the setup:
+
+        * the autopilot block — :attr:`Capabilities.can_control_autopilot`;
+        * ``gross_weight_kg`` / ``fuel_kg`` — :attr:`Capabilities.can_set_fuel_payload`.
         """
         ...
 

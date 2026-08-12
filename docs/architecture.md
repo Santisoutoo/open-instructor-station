@@ -270,8 +270,11 @@ Consequences that shape earlier decisions:
   changes packaging, not layers.
 
 Release automation lives in `.github/workflows/release.yml`, triggered on `v*` tags, producing a
-**draft** GitHub Release. The PyInstaller spec is expected to be finalised when Phase 5 packaging
-lands.
+**draft** GitHub Release. The PyInstaller spec is finished and in use: packaging was pulled
+forward into Phase 1 (issue #28) so that every later phase can be tested by double-clicking rather
+than by running `uvicorn` and `npm run dev` by hand. `packaging/instructor-station.spec` bundles
+`ui/dist` as data and `server/__main__.py` resolves it through `sys._MEIPASS`, which is the detail
+a naive bundle gets wrong — it serves a working API in front of a blank page.
 
 ---
 
@@ -280,19 +283,31 @@ lands.
 These are the same gotchas recorded in [`../CLAUDE.md`](../CLAUDE.md), restated here with their
 architectural consequences.
 
-### 1. Repositioning the aircraft externally — the project's key technical risk
+### 1. Repositioning the aircraft externally — RESOLVED, no plugin needed
+
+This was the project's key technical risk. It was **validated against X-Plane 12 at LEMD on
+2026-08-06** and the answer is that the Web API is sufficient: the legacy UDP `VEHX`/`VEH1`
+fallback was never needed and is not implemented.
 
 X-Plane's real position lives in **`local_x/y/z`** (the OpenGL frame);
-**`latitude`/`longitude`/`elevation` are derived**, and the world→local conversion
-(`XPLMWorldToLocal`) is a **plugin-only API**. If writing lat/lon over the Web API does not
-stick, the fallback is the **legacy UDP `VEHX`/`VEH1` packet**, which positions the aircraft
-without a plugin.
+**`latitude`/`longitude`/`elevation` are derived and read-only**, which makes reading them back
+the honest verdict on whether a write took. The world→local conversion that would normally need
+the plugin-only `XPLMWorldToLocal` lives in `core/local_frame.py` as a rigid ECEF rotation from an
+origin **measured** from the aircraft — which is known in both coordinate systems at once.
+`lat_ref`/`lon_ref` are never trusted: on the validation run they advertised an origin 200 km from
+the real one.
 
-**Long teleports trigger a scenery reload — pause around them.**
+The five-step procedure is in `adapters/xplane/xplane_adapter.py`: freeze the flight model, write
+the local coordinates, write the velocity vector and heading, release the freeze in a `finally`,
+then clear the crash state — X-Plane reads a teleport as an impact.
 
-Architectural consequence: this is validated by a **Phase 0 spike**, and the fallback decision is
-made **before Phase 1 starts**. Whichever transport wins is confined to the X-Plane adapter;
-`core/` sees only `SimAdapter.set_position()`.
+**Long teleports trigger a scenery reload, and the adapter follows it rather than pausing around
+it.** X-Plane relocates the local frame origin during the reload, so coordinates written before it
+denote a different world position afterwards. The adapter re-measures the origin once a settle
+criterion is met and re-aims, bounded by a write budget (issue #36).
+
+Architectural consequence: all of it is confined to the X-Plane adapter and to `core/local_frame.py`.
+`core/` sees only `SimAdapter.set_position()`, and no in-sim component is required.
 
 ### 2. X-Plane 12 real weather overwrites manual weather
 

@@ -1,0 +1,47 @@
+# Hand-written fixture. Every identifier and coordinate below is invented.
+# Airport ZZZZ is the ICAO no-location code. No byte comes from any real navdata.
+#
+# RWY: is ten comma-separated fields, and field 7 packs the threshold crossing
+# height and the LATITUDE around an embedded ';' - the record terminator reused
+# mid-record. A parser that misses it reads no runways at all from a real file.
+#   0 ident  1 gradient  2 ellipsoidal height  3 threshold elevation  4 blank
+#   5 localizer  6 ILS category  7 TCH ';' latitude  8 longitude  9 displaced ft
+# Coordinates are packed DDMMSSss with HUNDREDTHS of a second last.
+#   RW09  N40 00 00.00 / W003 00 00.00 -> ( 40.0      , -3.0       )
+#   RW27  N40 00 00.00 / W002 54 00.00 -> ( 40.0      , -2.9       ) displaced 1640 ft
+#   RW32L N40 00 30.00 / W003 01 30.00 -> ( 40.0083333, -3.025     )
+#   RW32R N40 00 40.50 / W003 02 00.75 -> ( 40.01125  , -3.0335417 )
+# RW27 has no localizer and no category, the shape a runway without an ILS takes.
+RWY:RW09,     ,      ,02000, ,IZZA,1,050;N40000000,W003000000,0000;
+RWY:RW27,     ,      ,02010, ,    , ,   ;N40000000,W002540000,1640;
+RWY:RW32L,     ,      ,02040, ,IZZC,2,048;N40003000,W003013000,0000;
+RWY:RW32R,     ,      ,02050, ,    ,Q,   ;N40004050,W003020075,0330;
+# Malformed - no coordinate pair. Skipped and counted, never fatal.
+RWY:RW99X,GARBAGE;
+#
+# SID ZZZ1A, runway transition RW32B - the parallel group, expanded to 32L and 32R.
+SID:010,5,ZZZ1A,RW32B,,,,,    ,,,CA,,,,,,,    ,    ,3247,,+,03000,     ,18000,,,,,,,,,,,,;
+SID:020,5,ZZZ1A,RW32B,ZZALF,ZZ,P,C,EY  ,,,DF,,,,,,,,,3247,0035,+,05000,,,-,210,,,,,,,,,,;
+SID:030,5,ZZZ1A,RW32B,ZZARC,ZZ,P,C,E   ,R,,RF,,IZZC,ZZ,P,I,003500,1802,0055,0900,0035,,,,,,,,,,,,,,,,;
+SID:040,5,ZZZ1A,RW32B,ZZBRA,ZZ,E,A,E  E,,,TF,,,,,,,,,0450,0138,B,FL140,10000,,,,,,,,,,,,,;
+# Malformed - truncated record. Skipped and counted.
+SID:050,5,ZZZ1A,RW32B,ZZBAD;
+#
+# STAR ZZS2B, named enroute transition ZZBRA - serves no specific runway.
+STAR:010,4,ZZS2B,ZZBRA,ZZBRA,ZZ,E,A,E   ,,,TF,,,,,,,,,2250,0250,+,08000,,,,,,,,,,,,,,;
+STAR:020,4,ZZS2B,ZZBRA,ZZCHA,ZZ,E,A,E   ,,,TF,,,,,,,,,2250,0100,-,05000,,,-,250,,,,,,,,,,;
+STAR:030,4,ZZS2B,ZZBRA,ZZCHA,ZZ,E,A,E  E,R,,HM,,,,,,,,,0450,T010,+,05000,,,,,,,,,,,,,,;
+#
+# APPCH I32L - ILS 32L. The runway comes from the approach ident, not the transition.
+APPCH:010,I,I32L,,ZZMIS,ZZ,P,C,E A ,,,IF,,,,,,,,,,,+,07000,,,,,,,,,,,,,,;
+APPCH:020,I,I32L,,ZZFAF,ZZ,P,C,E F ,,,CF,,IZZC,ZZ,P,I,,3247,0138,3247,0138,J,05500,05500,,,,-343,,,,,,,,,;
+APPCH:030,I,I32L,,RW32L,ZZ,P,G,G M ,,,TF,,,,,,,,,3247,0055,+,02090,,,,,,,,,,,,,,;
+APPCH:040,I,I32L,,,,,,   M,,,CA,,,,,,,,,3247,,+,04000,,,,,,,,,,,,,,;
+APPCH:050,I,I32L,,ZZHLD,ZZ,E,A,E  E,R,,HM,,,,,,,,,1447,T010,+,04000,,,,,,,,,,,,,,;
+#
+# The same approach reached from a named transition.
+APPCH:010,I,I32L,ZZBRA,ZZBRA,ZZ,E,A,E A ,,,IF,,,,,,,,,,,+,07000,,,,,,,,,,,,,,;
+APPCH:020,I,I32L,ZZBRA,ZZFAF,ZZ,P,C,E   ,,,TF,,,,,,,,,3247,0120,+,05500,,,,,,,,,,,,,,;
+#
+# A record type this project does not read. Ignored, and NOT counted as malformed.
+PRDAT:ZZZ1A,RW32B,IGNORED,0,0;

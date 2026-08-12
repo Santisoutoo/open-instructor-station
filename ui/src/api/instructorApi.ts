@@ -1,5 +1,26 @@
 import { createApi, fetchBaseQuery } from '@reduxjs/toolkit/query/react';
-import type { AircraftState, Capabilities, HealthResponse } from './types';
+import type {
+  AircraftControlManifest,
+  AircraftSetup,
+  AircraftSetupResult,
+  AircraftState,
+  ApplyPlacementRequest,
+  Capabilities,
+  HealthResponse,
+  Hold,
+  Ils,
+  NavdataStatus,
+  ParkingKind,
+  ParkingStand,
+  PlacementPreview,
+  PlacementRequest,
+  PlacementResult,
+  Procedure,
+  ProcedureKind,
+  ProcedureSummary,
+  Runway,
+  AirportSummary,
+} from './models';
 
 /**
  * Server state lives in RTK Query, never in a hand-rolled slice (CLAUDE.md: RTK Query for
@@ -9,7 +30,14 @@ import type { AircraftState, Capabilities, HealthResponse } from './types';
 export const instructorApi = createApi({
   reducerPath: 'instructorApi',
   baseQuery: fetchBaseQuery({ baseUrl: '/api' }),
-  tagTypes: ['Health', 'Capabilities', 'AircraftState'],
+  tagTypes: [
+    'Health',
+    'Capabilities',
+    'AircraftState',
+    'AircraftControls',
+    'NavdataStatus',
+    'Airport',
+  ],
   endpoints: (builder) => ({
     getHealth: builder.query<HealthResponse, void>({
       query: () => 'health',
@@ -28,8 +56,140 @@ export const instructorApi = createApi({
       query: () => 'state',
       providesTags: ['AircraftState'],
     }),
+    /**
+     * Which Aircraft Control panel controls may be written, and why the rest may not.
+     *
+     * Strictly more informative than `getCapabilities`: a capability flag says the adapter
+     * can drive an autopilot, this says whether the server has a field to carry the
+     * request. The panel disables on this, so a failed fetch must fail *closed* — see
+     * `features/aircraft/controls.ts`.
+     */
+    getAircraftControls: builder.query<AircraftControlManifest, void>({
+      query: () => 'aircraft/controls',
+      providesTags: ['AircraftControls'],
+    }),
+    /**
+     * Write the aircraft configuration. Idempotent: the body carries target values, not
+     * deltas. Invalidates the snapshot so a panel not watching the socket still refreshes.
+     */
+    applyAircraftSetup: builder.mutation<AircraftSetupResult, AircraftSetup>({
+      query: (setup) => ({ url: 'aircraft/setup', method: 'POST', body: setup }),
+      invalidatesTags: ['AircraftState'],
+    }),
+
+    // ----------------------------------------------------------- navdata
+    /**
+     * What the navdata provider can answer, and why not when it cannot.
+     *
+     * The Position panel gates on this exactly as it gates on `Capabilities`. While the
+     * index is building the panel polls it; `pollingInterval` is set by the component,
+     * not here, because only the component knows whether it is on screen.
+     */
+    getNavdataStatus: builder.query<NavdataStatus, void>({
+      query: () => 'navdata/status',
+      providesTags: ['NavdataStatus'],
+    }),
+    /** Start building the index. Idempotent: a second call while one runs is a no-op. */
+    buildNavdataIndex: builder.mutation<NavdataStatus, void>({
+      query: () => ({ url: 'navdata/index', method: 'POST' }),
+      invalidatesTags: ['NavdataStatus'],
+    }),
+    /**
+     * Type-ahead over every airport in the index.
+     *
+     * The wire parameter is `q`, as the navdata design specifies. The argument keeps the
+     * longer name because `query` is also RTK Query's own key for the request descriptor,
+     * and two different `query`s in one object literal reads as a mistake.
+     */
+    searchAirports: builder.query<AirportSummary[], { query: string; limit?: number }>({
+      query: ({ query, limit = 12 }) => ({
+        url: 'navdata/airports',
+        params: { q: query, limit },
+      }),
+    }),
+    /** Every runway **end** of an airport: 18L and 36R are two entries. */
+    getRunways: builder.query<Runway[], string>({
+      query: (icao) => `navdata/airports/${icao}/runways`,
+      providesTags: (_result, _error, icao) => [{ type: 'Airport', id: icao }],
+    }),
+    /**
+     * The ILS of one runway end. A runway without one answers 404, which is an ordinary
+     * outcome here — the badge simply does not render.
+     */
+    getIls: builder.query<Ils, { icao: string; runwayIdent: string }>({
+      query: ({ icao, runwayIdent }) =>
+        `navdata/airports/${icao}/runways/${runwayIdent}/ils`,
+    }),
+    getParking: builder.query<ParkingStand[], { icao: string; kind?: ParkingKind }>({
+      query: ({ icao, kind }) => ({
+        url: `navdata/airports/${icao}/parking`,
+        params: kind === undefined ? {} : { kind },
+      }),
+      providesTags: (_result, _error, { icao }) => [{ type: 'Airport', id: icao }],
+    }),
+    getProcedures: builder.query<
+      ProcedureSummary[],
+      { icao: string; kind?: ProcedureKind }
+    >({
+      query: ({ icao, kind }) => ({
+        url: `navdata/airports/${icao}/procedures`,
+        params: kind === undefined ? {} : { kind },
+      }),
+      providesTags: (_result, _error, { icao }) => [{ type: 'Airport', id: icao }],
+    }),
+    getProcedure: builder.query<
+      Procedure,
+      { icao: string; kind: ProcedureKind; ident: string; transition?: string | null }
+    >({
+      query: ({ icao, kind, ident, transition }) => ({
+        url: `navdata/airports/${icao}/procedures/${kind}/${ident}`,
+        params: transition == null ? {} : { transition },
+      }),
+    }),
+    getHolds: builder.query<Hold[], { airportIcao?: string; fixIdent?: string }>({
+      query: ({ airportIcao, fixIdent }) => ({
+        url: 'navdata/holds',
+        params: {
+          ...(airportIcao === undefined ? {} : { airport_icao: airportIcao }),
+          ...(fixIdent === undefined ? {} : { fix_ident: fixIdent }),
+        },
+      }),
+    }),
+
+    // ---------------------------------------------------------- position
+    /**
+     * Resolve a placement **without moving anything**.
+     *
+     * A query rather than a mutation despite being a POST: it is side-effect-free by
+     * design, and modelling it as a query is what lets the staging bar re-run it on every
+     * edit and get caching and de-duplication for free.
+     */
+    previewPlacement: builder.query<PlacementPreview, PlacementRequest>({
+      query: (request) => ({ url: 'position/preview', method: 'POST', body: request }),
+    }),
+    /** Commit a staged placement. This is the one call that moves the aircraft. */
+    applyPlacement: builder.mutation<PlacementResult, ApplyPlacementRequest>({
+      query: (body) => ({ url: 'position/apply', method: 'POST', body }),
+      invalidatesTags: ['AircraftState'],
+    }),
   }),
 });
 
-export const { useGetHealthQuery, useGetCapabilitiesQuery, useGetStateQuery } =
-  instructorApi;
+export const {
+  useGetHealthQuery,
+  useGetCapabilitiesQuery,
+  useGetStateQuery,
+  useGetAircraftControlsQuery,
+  useApplyAircraftSetupMutation,
+  useGetNavdataStatusQuery,
+  useBuildNavdataIndexMutation,
+  useSearchAirportsQuery,
+  useGetRunwaysQuery,
+  useGetIlsQuery,
+  useGetParkingQuery,
+  useGetProceduresQuery,
+  useGetProcedureQuery,
+  useGetHoldsQuery,
+  usePreviewPlacementQuery,
+  useApplyPlacementMutation,
+} = instructorApi;

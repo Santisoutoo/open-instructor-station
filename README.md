@@ -6,69 +6,31 @@ A desktop/LAN application that lets an instructor reposition the aircraft, set t
 inject failures, run training scenarios and watch a live map — **without ever alt-tabbing into
 the simulator**.
 
-X-Plane 12 is the reference target. MSFS comes later through the same abstraction.
-
----
-
-> ## ⚠️ Proprietary — All rights reserved
->
-> **This is a private, proprietary project. No license is granted.**
->
-> There is no `LICENSE` file and its absence is deliberate: under copyright law, code published
-> without a license grants **no rights whatsoever** to copy, use, modify or distribute it. This
-> repository is private and is not open source.
->
-> - No permission is given to use, copy, modify, merge, publish, distribute or sublicense this
->   software or any part of it.
-> - Do not add a license file or license headers.
-> - Third-party code is never copied into this project. Little Navmap is GPL-3 — its design may
->   be studied, its code never reused.
+Everything runs *outside* the sim and talks to it over the network. X-Plane 12 is the reference
+target; MSFS comes later through the same adapter abstraction. Because the server is reachable
+over the LAN, driving the station from a **tablet** is a first-class scenario.
 
 ---
 
 ## Status
 
-**Phase 0 — Foundation. In active development.**
+**Phase 1 — Position Manager, Aircraft Control and the navdata foundation. In active
+development.** See [`docs/roadmap.md`](docs/roadmap.md) for the phase plan.
 
-Phase 0 delivers the skeleton, not features: the monorepo layout, the `SimAdapter` +
-`Capabilities` contract, `FakeSimAdapter`, a minimal FastAPI server with a WebSocket state
-stream, a minimal Redux Toolkit UI shell, CI with four required checks, and the X-Plane
-connection spike that retires the project's key technical risk.
+Phase 0 (the skeleton) is complete, and with it the project's biggest technical unknown:
+**repositioning an aircraft from outside X-Plane works, with no plugin** — validated in a live
+sim at LEMD.
 
-The full target feature set (15 managers) is in [`docs/feature-spec.md`](docs/feature-spec.md);
-the phased plan is in [`docs/roadmap.md`](docs/roadmap.md).
+**Working today**
 
----
+- The `SimAdapter` + `Capabilities` contract, and `FakeSimAdapter`, a full in-memory simulator.
+- An X-Plane 12 adapter over the Web API (REST + WebSocket).
+- A FastAPI server with live state over WebSocket, and aircraft setup/control endpoints.
+- A React + Redux Toolkit UI with a live telemetry panel and an aircraft control panel.
+- A double-clickable Windows executable.
 
-## Architecture
-
-Five layers with one hard dependency rule: **`core/` depends only on the `SimAdapter` interface
-and never on an adapter.** Everything valuable — geodesy, navdata, scenarios, landing analysis —
-is simulator-agnostic, which is what makes a second simulator a new adapter rather than a
-rewrite.
-
-```
-ui  →  server  →  core  →  SimAdapter (interface)  ←  adapters/{fake,xplane,msfs}
-                                                              ↑
-                                                     bridge/ (optional, in-sim,
-                                                     AI traffic only)
-```
-
-| Directory | Contents |
-|---|---|
-| `core/` | Sim-agnostic logic: geodesy, navdata, scenarios, weather presets, failure catalog, landing analysis. Depends only on `SimAdapter`. |
-| `adapters/fake/` | `FakeSimAdapter` — the full interface in memory. **All CI tests run against it.** |
-| `adapters/xplane/` | X-Plane 12.1+ Web API (REST + WebSocket, default port 8086). |
-| `adapters/msfs/` | Later (SimConnect, Windows only). Phase 5. |
-| `server/` | FastAPI app wiring `core` + the active adapter. Serves the UI over the LAN and pushes live state over WebSocket. |
-| `ui/` | React + TypeScript (strict) + Redux Toolkit + MapLibre GL. |
-| `bridge/` | **Optional** XPPython3 plugin, only for what the Web API cannot do (AI traffic). |
-| `spikes/` | Throwaway validation scripts. Not imported by the app, not covered by tests. |
-| `docs/` | Feature spec, roadmap, architecture, and one design doc per manager. |
-| `tests/` | `core/` + `adapters/` run in CI. `sim/` is marked `@pytest.mark.sim` and never runs in CI. |
-
-Full explanation, including the navdata pipeline and the known technical risks:
-[`docs/architecture.md`](docs/architecture.md).
+**Planned** — weather, failures, scenarios, the instructor map, AI traffic, landing analysis and
+the rest of the 15 managers described in [`docs/feature-spec.md`](docs/feature-spec.md).
 
 ---
 
@@ -78,19 +40,17 @@ Full explanation, including the navdata pipeline and the known technical risks:
 |---|---|
 | **Python** | 3.12 or newer |
 | **Node** | 22 or newer |
-| **Simulator** *(optional for development)* | X-Plane 12.1+ with its **Web API enabled on port 8086** |
+| **Simulator** *(optional)* | X-Plane 12.1+ with its Web API enabled on port 8086 |
 
-**You do not need a simulator to develop or to run the tests.** Everything works against
-`FakeSimAdapter`, and CI never touches a simulator.
-
-To enable the X-Plane Web API: **Settings → Network → "Accept incoming connections"**, then
-confirm `http://localhost:8086/api/v2/datarefs` returns JSON in a browser.
+**You do not need a simulator to run the app or the tests.** The default adapter is
+`FakeSimAdapter`, which implements the whole interface in memory, and CI never touches a
+simulator.
 
 ---
 
 ## Quickstart
 
-### Backend
+### 1. Start the backend
 
 ```powershell
 python -m venv .venv
@@ -99,22 +59,13 @@ pip install -e .[dev]
 instructor-station
 ```
 
-On Linux/macOS, activate with `source .venv/bin/activate` instead.
+On Linux/macOS activate with `source .venv/bin/activate` instead.
 
-### Run with no simulator at all
+The server starts on `http://localhost:8000`. Check it with
+[`http://localhost:8000/api/health`](http://localhost:8000/api/health). It runs against the fake
+simulator by default, so this works with nothing else installed.
 
-The fake adapter implements the complete interface in memory, so the whole application runs
-without X-Plane installed:
-
-```powershell
-$env:SIM_ADAPTER = "fake"
-instructor-station
-```
-
-This is the normal development mode. The UI connects, the WebSocket streams state, positions
-apply and read back — all in memory.
-
-### Frontend dev server
+### 2. Start the frontend
 
 ```powershell
 cd ui
@@ -122,43 +73,92 @@ npm install
 npm run dev
 ```
 
-The dev server proxies to the backend. The server also serves the built UI over the **LAN** —
-using the station from a **tablet is a first-class scenario**, not an afterthought.
+Open `http://localhost:5173`. The dev server proxies `/api` and `/ws` to the backend, and listens
+on all interfaces so a tablet on the same network can use the same URL.
+
+That is the whole development setup: two terminals, no simulator.
+
+### 3. Connect it to X-Plane (optional)
+
+In X-Plane, enable the Web API under **Settings → Network → "Accept incoming connections"**, then
+confirm `http://localhost:8086/api/v2/datarefs` returns JSON in a browser. Then point the server
+at it:
+
+```powershell
+$env:OIS_ADAPTER = "xplane"
+instructor-station
+```
+
+Every setting is an `OIS_`-prefixed environment variable, and may also be put in a `.env` file:
+
+| Variable | Default | |
+|---|---|---|
+| `OIS_ADAPTER` | `fake` | `fake` or `xplane` |
+| `OIS_HOST` · `OIS_PORT` | `0.0.0.0` · `8000` | Bound to all interfaces on purpose — the tablet needs it |
+| `OIS_XPLANE_HOST` · `OIS_XPLANE_PORT` | `localhost` · `8086` | Where X-Plane's Web API lives |
+| `OIS_OPEN_BROWSER` | on when packaged | Set to `0` to keep the executable headless |
+
+### The packaged executable
+
+A single `.exe` that starts the server and opens a browser — no Python, no Node, no terminal. Build
+the UI first, then the bundle:
+
+```powershell
+cd ui; npm ci; npm run build; cd ..
+python -m PyInstaller packaging\instructor-station.spec --noconfirm --clean
+```
+
+The result is `dist/instructor-station.exe`. It is unsigned, so Windows SmartScreen warns on
+first run. Tagging `v*` builds the same executable in CI and attaches it to a draft release.
 
 ---
 
-## Tests
+## Project layout
+
+One hard rule shapes everything: **`core/` depends only on the `SimAdapter` interface and never
+on an adapter.** All the valuable logic is simulator-agnostic, which is what makes a second
+simulator a new adapter rather than a rewrite.
+
+| Directory | Contents |
+|---|---|
+| `core/` | Sim-agnostic logic: geodesy, navdata, scenarios, weather presets, failure catalog, landing analysis. |
+| `adapters/fake/` | `FakeSimAdapter` — the full interface in memory. **All CI tests run against it.** |
+| `adapters/xplane/` | X-Plane 12.1+ Web API (REST + WebSocket, default port 8086). |
+| `server/` | FastAPI app wiring `core` + the active adapter. Serves the UI over the LAN and pushes live state over WebSocket. |
+| `ui/` | React + TypeScript (strict) + Redux Toolkit. |
+| `bridge/` | **Optional** XPPython3 plugin, only for what the Web API cannot do (AI traffic). |
+| `spikes/` | Throwaway validation scripts. Not imported by the app, not covered by tests. |
+| `docs/` · `tests/` · `packaging/` | Documentation, test suites, PyInstaller bundle. |
+
+Full explanation in [`docs/architecture.md`](docs/architecture.md).
+
+---
+
+## Development
+
+Run the whole verification suite before opening a PR — it is what CI runs:
 
 ```bash
 pytest                       # unit + contract (sim tests excluded by default)
-pytest -m sim                # requires X-Plane running with its Web API on :8086
 ruff check . && ruff format --check .
 mypy .
 cd ui && npm run lint && npm run typecheck && npm test && npm run build
 ```
 
-- `core/` logic requires tests. No exceptions.
-- The `SimAdapter` contract suite (`tests/adapters/test_contract.py`) is parametrised over
-  adapters: the Fake in CI, the real X-Plane adapter under `-m sim`. **Every new capability must
-  extend it.**
-- Never skip or xfail a test to make a run green. Fix the code or report the failure.
+`pytest -m sim` runs the tests that need a live X-Plane on port 8086. They are excluded by
+default and never run in CI.
 
 ---
 
-## Branches and CI
+## Contributing
 
-| Branch | Purpose |
-|---|---|
-| `main` | Releases only. Tagged `v*`. Never commit directly. |
-| `dev` | Stable integration. All feature work merges here first. |
-| `feature/<name>` · `bug/<name>` · `docs/<name>` · `chore/<name>` | Everything else. |
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md): branch strategy, Conventional Commits, the PR
+checklist and the rules that are not negotiable (CI is never merged red, tests are never weakened
+to make a run pass, navdata is never committed).
 
-Flow: `feature/*` → PR → `dev` → (when a release is cut) PR `dev` → `main` → tag `v*`.
-
-Four required checks must be green before any merge: **`lint-py`**, **`test-py`**, **`lint-ui`**,
-**`test-ui`**. A red pipeline is never merged, never bypassed, never `--no-verify`'d.
-
-Commits follow **Conventional Commits** — see [`CONTRIBUTING.md`](CONTRIBUTING.md).
+In short: branch off `dev`, open a PR back into `dev`, and keep all four CI checks green —
+`lint-py`, `test-py`, `lint-ui`, `test-ui`. Bug reports and feature requests go through the
+[issue templates](.github/ISSUE_TEMPLATE).
 
 ---
 
@@ -166,7 +166,7 @@ Commits follow **Conventional Commits** — see [`CONTRIBUTING.md`](CONTRIBUTING
 
 | Document | |
 |---|---|
-| [`CLAUDE.md`](CLAUDE.md) | **The binding project rules.** Hard rules, layout, stack, testing, git workflow, parallelisation policy, known gotchas. |
+| [`CLAUDE.md`](CLAUDE.md) | **The binding project rules.** Hard rules, layout, stack, testing, git workflow, known gotchas. |
 | [`docs/feature-spec.md`](docs/feature-spec.md) | The 15 managers — the complete target feature set. |
 | [`docs/roadmap.md`](docs/roadmap.md) | Phases 0–5, with per-phase exit criteria. |
 | [`docs/architecture.md`](docs/architecture.md) | Layers, the `SimAdapter` contract, navdata pipeline, packaging, technical risks. |

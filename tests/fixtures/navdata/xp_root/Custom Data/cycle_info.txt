@@ -1,0 +1,5 @@
+HAND-WRITTEN FIXTURE. Every value below is invented; cycle 2501 is a placeholder
+and this file was not copied from any installation.
+
+AIRAC cycle    : 2501
+Valid (from/to): 08/JAN/2025 - 05/FEB/2025

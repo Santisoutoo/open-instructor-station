@@ -1,4 +1,4 @@
-"""Numeric tests for the geodesy primitives.
+"""Numeric tests for the geodesy primitives and the placements built on them.
 
 The numbers here are checked against published values, not against the
 implementation: 1 NM = 1852 m exactly, 1 NM = 1852 / 0.3048 ft, and a 3°
@@ -6,23 +6,49 @@ glidepath is 318.44 ft per nautical mile.
 """
 
 import math
+from typing import get_args
 
 import pytest
+from pydantic import ValidationError
 
+from adapters.fake import FakeSimAdapter
 from core.geodesy import (
+    APPROACH_CATEGORY_CIRCLING_IAS_KT,
+    APPROACH_CATEGORY_VAT_KT,
+    DEFAULT_APPROACH_CATEGORY,
+    DEFAULT_PATTERN_ALTITUDE_AGL_FT,
     FEET_PER_NAUTICAL_MILE,
+    FINAL_DISTANCES_NM,
+    GROUND_IAS_KT,
     METRES_PER_NAUTICAL_MILE,
+    PATTERN_PLACEMENTS,
+    RUNWAY_PLACEMENTS,
+    SHORT_FINAL_DISTANCE_NM,
+    ApproachCategory,
+    FinalPlacement,
     PatternLeg,
+    PatternPlacement,
+    Placement,
+    RunwayPlacement,
+    coordinate_placement,
     distance_and_bearing,
     final_approach_point,
+    final_placement,
     glideslope_altitude_ft,
+    pattern_placement,
     point_at_distance_and_bearing,
+    resolve_runway_placement,
     traffic_pattern_point,
+    waypoint_placement,
 )
-from core.models import GeoPosition
+from core.models import AircraftState, GeoPosition
 from tests.conftest import NORTH_RUNWAY, SAMPLE_RUNWAY
 
 MADRID = GeoPosition(latitude=40.4168, longitude=-3.7038, altitude_ft=2000.0)
+
+#: A 3° glidepath climbs tan(3°) * 6076.115486 = 318.4357 ft every nautical
+#: mile. Every altitude assertion below is that number times a distance.
+FT_PER_NM_ON_A_THREE_DEGREE_PATH = 318.4357
 
 
 # --------------------------------------------------------------------------
@@ -85,6 +111,16 @@ def test_direct_inverse_round_trip(bearing: float, distance_nm: float) -> None:
     measured_nm, measured_bearing = distance_and_bearing(MADRID, destination)
     assert measured_nm == pytest.approx(distance_nm, abs=1e-6)
     assert measured_bearing == pytest.approx(bearing, abs=1e-6)
+
+
+def test_a_negative_distance_travels_backwards_along_the_same_line() -> None:
+    forward = point_at_distance_and_bearing(MADRID, 12.0, 75.0)
+    backward = point_at_distance_and_bearing(MADRID, -12.0, 75.0)
+    distance_nm, bearing = distance_and_bearing(MADRID, backward)
+    assert distance_nm == pytest.approx(12.0, abs=1e-6)
+    assert bearing == pytest.approx(255.0, abs=0.1)
+    span_nm, _ = distance_and_bearing(backward, forward)
+    assert span_nm == pytest.approx(24.0, abs=1e-6)
 
 
 def test_inverse_bearing_is_normalised_to_0_360() -> None:
@@ -226,3 +262,658 @@ def test_pattern_geometry_rotates_with_the_runway() -> None:
     """A pattern on a 320° runway is the north pattern rotated by -40°."""
     _, heading = traffic_pattern_point(SAMPLE_RUNWAY, "downwind", 3000.0)
     assert heading == pytest.approx(math.fmod(320.0 + 180.0, 360.0), abs=1e-9)
+
+
+# --------------------------------------------------------------------------
+# The placement catalogue
+# --------------------------------------------------------------------------
+
+
+def _signed_delta(bearing_deg: float, reference_deg: float) -> float:
+    """Angle from the reference to the bearing, folded into ``(-180, 180]``."""
+    delta = (bearing_deg - reference_deg) % 360.0
+    return delta - 360.0 if delta > 180.0 else delta
+
+
+def _angular_gap(a_deg: float, b_deg: float) -> float:
+    """Smallest absolute difference between two angles, wrap-safe, in degrees."""
+    return abs(_signed_delta(a_deg, b_deg))
+
+
+def test_signed_delta_helper_folds_across_north() -> None:
+    """The test helper itself, so a wrap bug cannot silently pass a mirror test."""
+    assert _signed_delta(10.0, 350.0) == pytest.approx(20.0)
+    assert _signed_delta(350.0, 10.0) == pytest.approx(-20.0)
+    assert _signed_delta(180.0, 0.0) == pytest.approx(180.0)
+    assert _angular_gap(359.5, 0.5) == pytest.approx(1.0)
+
+
+def test_final_distances_cover_every_named_final() -> None:
+    assert set(FINAL_DISTANCES_NM) == set(get_args(FinalPlacement))
+    assert dict(FINAL_DISTANCES_NM) == {
+        "final_20nm": 20.0,
+        "final_15nm": 15.0,
+        "final_10nm": 10.0,
+        "final_8nm": 8.0,
+        "final_5nm": 5.0,
+        "final_3nm": 3.0,
+        "short_final": 1.0,
+    }
+    assert SHORT_FINAL_DISTANCE_NM == 1.0
+
+
+def test_pattern_placements_cover_every_leg_on_both_sides() -> None:
+    assert set(PATTERN_PLACEMENTS) == set(get_args(PatternPlacement))
+    assert set(PATTERN_PLACEMENTS.values()) == {
+        (leg, side)
+        for leg in ("upwind", "crosswind", "downwind", "base")
+        for side in ("left", "right")
+    }
+
+
+def test_runway_placements_is_the_whole_catalogue() -> None:
+    assert list(RUNWAY_PLACEMENTS) == [*get_args(FinalPlacement), *get_args(PatternPlacement)]
+    assert len(RUNWAY_PLACEMENTS) == 15
+    assert len(set(RUNWAY_PLACEMENTS)) == 15
+
+
+def test_every_placement_resolves_to_a_usable_answer() -> None:
+    for name in RUNWAY_PLACEMENTS:
+        placement = resolve_runway_placement(SAMPLE_RUNWAY, name)
+        assert 0.0 <= placement.heading_deg < 360.0, name
+        assert placement.label.startswith("LEMD 32L "), name
+        assert placement.altitude_ft == placement.position.altitude_ft, name
+        assert placement.altitude_ft > SAMPLE_RUNWAY.elevation_ft, name
+
+
+# --------------------------------------------------------------------------
+# Finals
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("name", "distance_nm"),
+    [
+        ("final_20nm", 20.0),
+        ("final_15nm", 15.0),
+        ("final_10nm", 10.0),
+        ("final_8nm", 8.0),
+        ("final_5nm", 5.0),
+        ("final_3nm", 3.0),
+        ("short_final", 1.0),
+    ],
+)
+def test_named_final_is_that_many_nm_out_on_the_glidepath(
+    name: FinalPlacement, distance_nm: float
+) -> None:
+    """On a 320° runway the extended centreline runs out on bearing 140°."""
+    placement = final_placement(SAMPLE_RUNWAY, name)
+    measured_nm, bearing = distance_and_bearing(SAMPLE_RUNWAY.threshold, placement.position)
+    assert measured_nm == pytest.approx(distance_nm, abs=1e-6)
+    assert bearing == pytest.approx(140.0, abs=1e-6)
+    assert placement.heading_deg == pytest.approx(320.0, abs=1e-9)
+    assert placement.altitude_ft == pytest.approx(
+        SAMPLE_RUNWAY.elevation_ft + distance_nm * FT_PER_NM_ON_A_THREE_DEGREE_PATH,
+        abs=0.01,
+    )
+
+
+def test_ten_nm_final_is_3184_ft_above_the_threshold() -> None:
+    """The reference number: tan(3°) * 10 NM * 6076.115486 ft/NM."""
+    placement = final_placement(SAMPLE_RUNWAY, "final_10nm")
+    assert placement.altitude_ft == pytest.approx(2000.0 + 3184.36, abs=0.01)
+
+
+def test_short_final_is_one_mile_out_and_318_ft_up() -> None:
+    placement = final_placement(SAMPLE_RUNWAY, "short_final")
+    measured_nm, _ = distance_and_bearing(SAMPLE_RUNWAY.threshold, placement.position)
+    assert measured_nm == pytest.approx(1.0, abs=1e-6)
+    assert placement.altitude_ft == pytest.approx(2000.0 + 318.44, abs=0.01)
+    assert placement.label == "LEMD 32L short final"
+
+
+def test_finals_step_down_towards_the_threshold() -> None:
+    altitudes = [
+        final_placement(SAMPLE_RUNWAY, name).altitude_ft for name in get_args(FinalPlacement)
+    ]
+    assert altitudes == sorted(altitudes, reverse=True)
+
+
+def test_final_placement_honours_a_custom_glideslope() -> None:
+    """A 5.5° path is tan(5.5°)/tan(3°) times as high at the same distance."""
+    standard = final_placement(SAMPLE_RUNWAY, "final_5nm")
+    steep = final_placement(SAMPLE_RUNWAY, "final_5nm", glideslope_deg=5.5)
+    above_threshold = steep.altitude_ft - SAMPLE_RUNWAY.elevation_ft
+    assert above_threshold == pytest.approx(
+        5.0 * math.tan(math.radians(5.5)) * FEET_PER_NAUTICAL_MILE, abs=0.01
+    )
+    assert steep.altitude_ft > standard.altitude_ft
+    assert steep.position.latitude == pytest.approx(standard.position.latitude)
+    assert steep.position.longitude == pytest.approx(standard.position.longitude)
+
+
+def test_final_labels_name_the_runway_and_the_distance() -> None:
+    assert final_placement(SAMPLE_RUNWAY, "final_20nm").label == "LEMD 32L 20 NM final"
+    assert final_placement(NORTH_RUNWAY, "final_3nm").label == "TEST 36 3 NM final"
+
+
+def test_final_placement_matches_the_underlying_primitive() -> None:
+    placement = final_placement(SAMPLE_RUNWAY, "final_8nm")
+    assert placement.position == final_approach_point(SAMPLE_RUNWAY, 8.0)
+
+
+# --------------------------------------------------------------------------
+# Circuit legs
+# --------------------------------------------------------------------------
+
+
+#: The four legs paired with their mirror image on the other side.
+MIRRORED_PLACEMENTS: tuple[tuple[PatternPlacement, PatternPlacement], ...] = (
+    ("left_upwind", "right_upwind"),
+    ("left_crosswind", "right_crosswind"),
+    ("left_downwind", "right_downwind"),
+    ("left_base", "right_base"),
+)
+
+#: The three legs that leave the centreline; upwind stays on it.
+OFFSET_PLACEMENTS: tuple[tuple[PatternPlacement, PatternPlacement], ...] = MIRRORED_PLACEMENTS[1:]
+
+
+def test_left_hand_circuit_headings_on_a_northbound_runway() -> None:
+    expected: dict[PatternPlacement, float] = {
+        "left_upwind": 0.0,
+        "left_crosswind": 270.0,
+        "left_downwind": 180.0,
+        "left_base": 90.0,
+    }
+    for name, heading in expected.items():
+        assert pattern_placement(NORTH_RUNWAY, name).heading_deg == pytest.approx(heading), name
+
+
+def test_right_hand_circuit_headings_on_a_northbound_runway() -> None:
+    expected: dict[PatternPlacement, float] = {
+        "right_upwind": 0.0,
+        "right_crosswind": 90.0,
+        "right_downwind": 180.0,
+        "right_base": 270.0,
+    }
+    for name, heading in expected.items():
+        assert pattern_placement(NORTH_RUNWAY, name).heading_deg == pytest.approx(heading), name
+
+
+def test_left_circuit_is_west_and_right_circuit_is_east_of_a_northbound_runway() -> None:
+    for left_name, right_name in OFFSET_PLACEMENTS:
+        left = pattern_placement(NORTH_RUNWAY, left_name)
+        right = pattern_placement(NORTH_RUNWAY, right_name)
+        assert left.position.longitude < NORTH_RUNWAY.threshold.longitude, left_name
+        assert right.position.longitude > NORTH_RUNWAY.threshold.longitude, right_name
+
+
+@pytest.mark.parametrize(("left_name", "right_name"), MIRRORED_PLACEMENTS)
+def test_right_hand_circuit_is_the_mirror_image_of_the_left_hand_one(
+    left_name: PatternPlacement, right_name: PatternPlacement
+) -> None:
+    """Mirrored about the centreline: same distance out, opposite side, opposite turns.
+
+    Stated as angles: two bearings mirrored about the runway axis sum to twice
+    that axis, and that identity is what a sign error in the pattern geometry
+    breaks.
+    """
+    axis = SAMPLE_RUNWAY.true_bearing_deg
+    left = pattern_placement(SAMPLE_RUNWAY, left_name)
+    right = pattern_placement(SAMPLE_RUNWAY, right_name)
+
+    left_nm, left_bearing = distance_and_bearing(SAMPLE_RUNWAY.threshold, left.position)
+    right_nm, right_bearing = distance_and_bearing(SAMPLE_RUNWAY.threshold, right.position)
+
+    assert left_nm == pytest.approx(right_nm, abs=1e-9)
+    assert _angular_gap(left_bearing + right_bearing, 2.0 * axis) < 1e-6
+    assert _angular_gap(left.heading_deg + right.heading_deg, 2.0 * axis) < 1e-9
+    assert left.altitude_ft == pytest.approx(right.altitude_ft)
+
+
+@pytest.mark.parametrize(("left_name", "right_name"), OFFSET_PLACEMENTS)
+def test_the_two_circuits_are_genuinely_on_opposite_sides(
+    left_name: PatternPlacement, right_name: PatternPlacement
+) -> None:
+    """Guards the mirror test: a pattern collapsed onto the centreline mirrors trivially."""
+    axis = SAMPLE_RUNWAY.true_bearing_deg
+    _, left_bearing = distance_and_bearing(
+        SAMPLE_RUNWAY.threshold, pattern_placement(SAMPLE_RUNWAY, left_name).position
+    )
+    _, right_bearing = distance_and_bearing(
+        SAMPLE_RUNWAY.threshold, pattern_placement(SAMPLE_RUNWAY, right_name).position
+    )
+    assert _signed_delta(left_bearing, axis) < -5.0
+    assert _signed_delta(right_bearing, axis) > 5.0
+
+
+def test_circuit_defaults_to_1000_ft_above_the_field() -> None:
+    assert DEFAULT_PATTERN_ALTITUDE_AGL_FT == 1000.0
+    for name in PATTERN_PLACEMENTS:
+        placement = pattern_placement(SAMPLE_RUNWAY, name)
+        assert placement.altitude_ft == pytest.approx(2000.0 + 1000.0), name
+
+
+def test_circuit_honours_an_explicit_pattern_altitude() -> None:
+    for name in PATTERN_PLACEMENTS:
+        placement = pattern_placement(SAMPLE_RUNWAY, name, pattern_altitude_ft=4500.0)
+        assert placement.altitude_ft == pytest.approx(4500.0), name
+
+
+def test_downwind_sits_a_pattern_width_off_the_centreline() -> None:
+    placement = pattern_placement(NORTH_RUNWAY, "left_downwind", pattern_width_nm=0.8)
+    midfield = point_at_distance_and_bearing(
+        NORTH_RUNWAY.threshold,
+        NORTH_RUNWAY.length_m / METRES_PER_NAUTICAL_MILE / 2.0,
+        NORTH_RUNWAY.true_bearing_deg,
+    )
+    offset_nm, offset_bearing = distance_and_bearing(midfield, placement.position)
+    assert offset_nm == pytest.approx(0.8, abs=1e-6)
+    assert offset_bearing == pytest.approx(270.0, abs=0.1)
+
+
+def test_the_downwind_leg_is_square_to_the_centreline_where_it_leaves_it() -> None:
+    """Perpendicular to the axis *at the turn*, not to the axis back at the threshold.
+
+    On a 320° runway the centreline azimuth has already swung by 0.008° over
+    the half-runway leg, which is 100 times this tolerance.
+    """
+    half_length_nm = SAMPLE_RUNWAY.length_m / METRES_PER_NAUTICAL_MILE / 2.0
+    midfield = point_at_distance_and_bearing(
+        SAMPLE_RUNWAY.threshold, half_length_nm, SAMPLE_RUNWAY.true_bearing_deg
+    )
+    # The centreline's azimuth at midfield, read off the geodesic back to the
+    # threshold rather than assumed to still be 320°.
+    _, towards_threshold = distance_and_bearing(midfield, SAMPLE_RUNWAY.threshold)
+    axis_at_midfield = towards_threshold + 180.0
+
+    _, to_left = distance_and_bearing(
+        midfield, pattern_placement(SAMPLE_RUNWAY, "left_downwind").position
+    )
+    _, to_right = distance_and_bearing(
+        midfield, pattern_placement(SAMPLE_RUNWAY, "right_downwind").position
+    )
+    assert _angular_gap(to_left, axis_at_midfield - 90.0) < 1e-6
+    assert _angular_gap(to_right, axis_at_midfield + 90.0) < 1e-6
+
+
+def test_base_leg_sits_before_the_threshold() -> None:
+    placement = pattern_placement(NORTH_RUNWAY, "left_base", leg_distance_nm=2.0)
+    distance_nm, bearing = distance_and_bearing(NORTH_RUNWAY.threshold, placement.position)
+    # 2 NM before the threshold, 1 NM to the west: hypotenuse of a 2-by-1 triangle.
+    assert distance_nm == pytest.approx(math.hypot(2.0, 1.0), abs=1e-3)
+    assert bearing == pytest.approx(180.0 + math.degrees(math.atan2(1.0, 2.0)), abs=0.1)
+
+
+def test_circuit_labels_name_the_runway_the_side_and_the_leg() -> None:
+    assert pattern_placement(SAMPLE_RUNWAY, "left_downwind").label == "LEMD 32L left-hand downwind"
+    assert pattern_placement(NORTH_RUNWAY, "right_base").label == "TEST 36 right-hand base"
+
+
+# --------------------------------------------------------------------------
+# Dispatch
+# --------------------------------------------------------------------------
+
+
+def test_resolve_agrees_with_the_specific_resolvers() -> None:
+    for name in get_args(FinalPlacement):
+        assert resolve_runway_placement(SAMPLE_RUNWAY, name) == final_placement(SAMPLE_RUNWAY, name)
+    for name in get_args(PatternPlacement):
+        assert resolve_runway_placement(SAMPLE_RUNWAY, name) == pattern_placement(
+            SAMPLE_RUNWAY, name
+        )
+
+
+def test_resolve_forwards_the_glideslope_to_finals() -> None:
+    placement = resolve_runway_placement(SAMPLE_RUNWAY, "final_10nm", glideslope_deg=2.5)
+    assert placement.altitude_ft == pytest.approx(
+        2000.0 + 10.0 * math.tan(math.radians(2.5)) * FEET_PER_NAUTICAL_MILE, abs=0.01
+    )
+
+
+def test_resolve_forwards_the_pattern_options_to_circuit_legs() -> None:
+    placement = resolve_runway_placement(
+        NORTH_RUNWAY,
+        "right_downwind",
+        pattern_altitude_ft=3300.0,
+        pattern_width_nm=2.0,
+    )
+    assert placement.altitude_ft == pytest.approx(3300.0)
+    midfield = point_at_distance_and_bearing(
+        NORTH_RUNWAY.threshold,
+        NORTH_RUNWAY.length_m / METRES_PER_NAUTICAL_MILE / 2.0,
+        NORTH_RUNWAY.true_bearing_deg,
+    )
+    offset_nm, offset_bearing = distance_and_bearing(midfield, placement.position)
+    assert offset_nm == pytest.approx(2.0, abs=1e-6)
+    assert offset_bearing == pytest.approx(90.0, abs=0.1)
+
+
+# --------------------------------------------------------------------------
+# Free coordinate
+# --------------------------------------------------------------------------
+
+
+def test_coordinate_placement_is_verbatim() -> None:
+    placement = coordinate_placement(MADRID, 137.0)
+    assert placement.position == MADRID
+    assert placement.altitude_ft == 2000.0
+    assert placement.heading_deg == pytest.approx(137.0)
+    assert placement.label == "40.4168, -3.7038"
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"), [(450.0, 90.0), (-10.0, 350.0), (360.0, 0.0), (0.0, 0.0)]
+)
+def test_coordinate_placement_folds_the_heading_into_0_360(given: float, expected: float) -> None:
+    assert coordinate_placement(MADRID, given).heading_deg == pytest.approx(expected)
+
+
+def test_coordinate_placement_defaults_to_north() -> None:
+    assert coordinate_placement(MADRID).heading_deg == 0.0
+
+
+# --------------------------------------------------------------------------
+# Waypoint
+# --------------------------------------------------------------------------
+
+
+WAYPOINT = GeoPosition(latitude=40.0, longitude=0.0)
+TEN_DEGREES_EAST = GeoPosition(latitude=40.0, longitude=10.0)
+TEN_DEGREES_WEST = GeoPosition(latitude=40.0, longitude=-10.0)
+
+
+def test_waypoint_placement_takes_the_altitude_it_is_given() -> None:
+    placement = waypoint_placement(
+        GeoPosition(latitude=40.0, longitude=0.0, altitude_ft=99.0), 7000.0
+    )
+    assert placement.position.latitude == 40.0
+    assert placement.position.longitude == 0.0
+    assert placement.altitude_ft == 7000.0
+    assert placement.label == "over waypoint"
+
+
+def test_waypoint_placement_uses_the_ident_in_the_label() -> None:
+    assert waypoint_placement(WAYPOINT, 5000.0, ident="TOLDO").label == "over TOLDO"
+
+
+def test_waypoint_without_context_points_north() -> None:
+    assert waypoint_placement(WAYPOINT, 5000.0).heading_deg == 0.0
+
+
+def test_waypoint_heads_towards_the_next_fix() -> None:
+    """Due east along the equator is exactly 090°; due north is exactly 000°."""
+    on_the_equator = GeoPosition(latitude=0.0, longitude=0.0)
+    east = waypoint_placement(
+        on_the_equator, 5000.0, next_fix=GeoPosition(latitude=0.0, longitude=5.0)
+    )
+    assert east.heading_deg == pytest.approx(90.0, abs=1e-9)
+    north = waypoint_placement(WAYPOINT, 5000.0, next_fix=GeoPosition(latitude=45.0, longitude=0.0))
+    assert north.heading_deg == pytest.approx(0.0, abs=1e-9)
+
+
+def test_next_fix_heading_is_the_departure_course_not_the_arrival_one() -> None:
+    """Leaving 40N/0E for 40N/10E starts south of east: 90° minus the convergence."""
+    placement = waypoint_placement(WAYPOINT, 5000.0, next_fix=TEN_DEGREES_EAST)
+    _, departure_bearing = distance_and_bearing(WAYPOINT, TEN_DEGREES_EAST)
+    assert placement.heading_deg == pytest.approx(departure_bearing, abs=1e-12)
+    assert placement.heading_deg < 90.0
+
+
+def test_waypoint_keeps_the_inbound_course_from_the_previous_fix() -> None:
+    """A geodesic between two points at the same latitude arrives as far north
+    of the parallel as it departed south of it: the two azimuths sum to 180°.
+    Taking the initial bearing instead of the arrival one is off by the whole
+    convergence — 6.4° here — so this pins down which one is used."""
+    placement = waypoint_placement(WAYPOINT, 5000.0, previous_fix=TEN_DEGREES_WEST)
+    _, departure_bearing = distance_and_bearing(TEN_DEGREES_WEST, WAYPOINT)
+    assert placement.heading_deg == pytest.approx(180.0 - departure_bearing, abs=1e-9)
+    assert placement.heading_deg > 90.0
+    # Convergence over 10° of longitude at 40° latitude: 10 * sin(40°) = 6.43°.
+    assert placement.heading_deg - departure_bearing == pytest.approx(
+        10.0 * math.sin(math.radians(40.0)), abs=0.05
+    )
+
+
+def test_inbound_course_along_a_meridian_is_exact() -> None:
+    south = GeoPosition(latitude=35.0, longitude=0.0)
+    assert waypoint_placement(WAYPOINT, 5000.0, previous_fix=south).heading_deg == pytest.approx(
+        0.0, abs=1e-9
+    )
+
+
+def test_explicit_heading_beats_both_fixes() -> None:
+    placement = waypoint_placement(
+        WAYPOINT,
+        5000.0,
+        heading_deg=-45.0,
+        next_fix=TEN_DEGREES_EAST,
+        previous_fix=TEN_DEGREES_WEST,
+    )
+    assert placement.heading_deg == pytest.approx(315.0)
+
+
+def test_next_fix_beats_previous_fix() -> None:
+    placement = waypoint_placement(
+        WAYPOINT, 5000.0, next_fix=TEN_DEGREES_EAST, previous_fix=TEN_DEGREES_WEST
+    )
+    assert placement.heading_deg == pytest.approx(
+        waypoint_placement(WAYPOINT, 5000.0, next_fix=TEN_DEGREES_EAST).heading_deg
+    )
+    assert placement.heading_deg < 90.0
+
+
+def test_waypoint_placement_flies() -> None:
+    """A waypoint is airborne by construction, so it gets a manoeuvring speed."""
+    assert waypoint_placement(WAYPOINT, 5000.0).ias_kt == 135.0
+    assert waypoint_placement(WAYPOINT, 5000.0, category="A").ias_kt == 100.0
+    assert waypoint_placement(WAYPOINT, 5000.0, ias_kt=210.0).ias_kt == 210.0
+
+
+# --------------------------------------------------------------------------
+# Speed
+#
+# The regression these cover: a placement that carries the aircraft's current
+# speed hands a parked aeroplane 0 kt, and a 10 NM final at 0 kt ends in
+# terrain with the geometry perfect. Measured, not theorised.
+# --------------------------------------------------------------------------
+
+
+#: The aeroplane the instructor starts from: sitting on a stand at LEMD, not
+#: moving at all. Every number below has to survive contact with this state.
+PARKED = AircraftState(
+    latitude=40.4936,
+    longitude=-3.5668,
+    altitude_ft=2000.0,
+    heading_deg=140.0,
+    ias_kt=0.0,
+    vertical_speed_fpm=0.0,
+    pitch_deg=0.0,
+    roll_deg=0.0,
+    on_ground=True,
+)
+
+
+def test_a_placement_cannot_be_built_without_a_speed() -> None:
+    """``ias_kt`` is required: forgetting it is a ValidationError, not a 0."""
+    with pytest.raises(ValidationError):
+        Placement.model_validate({"position": MADRID, "heading_deg": 0.0, "label": "nowhere"})
+
+
+def test_a_placement_rejects_a_negative_speed() -> None:
+    with pytest.raises(ValidationError):
+        Placement(position=MADRID, heading_deg=0.0, ias_kt=-1.0, label="nowhere")
+
+
+def test_the_category_tables_cover_every_category() -> None:
+    categories = get_args(ApproachCategory)
+    assert categories == ("A", "B", "C", "D", "E")
+    assert tuple(APPROACH_CATEGORY_VAT_KT) == categories
+    assert tuple(APPROACH_CATEGORY_CIRCLING_IAS_KT) == categories
+    assert DEFAULT_APPROACH_CATEGORY in categories
+
+
+def test_the_published_category_speeds() -> None:
+    """The tops of the ICAO PANS-OPS Vat bands, and the circling maxima.
+
+    Pinned as literals because they are the whole defence against the defect:
+    if someone edits them, they should have to say so.
+    """
+    assert dict(APPROACH_CATEGORY_VAT_KT) == {
+        "A": 90.0,
+        "B": 120.0,
+        "C": 140.0,
+        "D": 165.0,
+        "E": 210.0,
+    }
+    assert dict(APPROACH_CATEGORY_CIRCLING_IAS_KT) == {
+        "A": 100.0,
+        "B": 135.0,
+        "C": 180.0,
+        "D": 205.0,
+        "E": 240.0,
+    }
+
+
+def test_every_category_speed_is_a_flying_speed() -> None:
+    """Even the slowest category is 90 kt: no table entry can produce a stall."""
+    for category in get_args(ApproachCategory):
+        assert APPROACH_CATEGORY_VAT_KT[category] >= 90.0, category
+        assert APPROACH_CATEGORY_CIRCLING_IAS_KT[category] >= 100.0, category
+
+
+def test_heavier_categories_fly_faster() -> None:
+    speeds = [APPROACH_CATEGORY_VAT_KT[c] for c in get_args(ApproachCategory)]
+    assert speeds == sorted(speeds)
+    assert speeds[0] < speeds[-1]
+
+
+def test_a_circuit_is_flown_faster_than_it_is_landed() -> None:
+    for category in get_args(ApproachCategory):
+        assert APPROACH_CATEGORY_CIRCLING_IAS_KT[category] > APPROACH_CATEGORY_VAT_KT[category]
+
+
+@pytest.mark.parametrize("name", list(FINAL_DISTANCES_NM))
+def test_every_final_commands_an_approach_speed(name: FinalPlacement) -> None:
+    """120 kt, not 0 — the default category is B and B's Vat band tops at 120."""
+    assert DEFAULT_APPROACH_CATEGORY == "B"
+    assert final_placement(SAMPLE_RUNWAY, name).ias_kt == 120.0
+
+
+@pytest.mark.parametrize("name", list(PATTERN_PLACEMENTS))
+def test_every_circuit_leg_commands_a_circling_speed(name: PatternPlacement) -> None:
+    assert pattern_placement(SAMPLE_RUNWAY, name).ias_kt == 135.0
+
+
+@pytest.mark.parametrize("name", list(RUNWAY_PLACEMENTS))
+def test_no_runway_placement_is_ever_stationary(name: RunwayPlacement) -> None:
+    """The acceptance criterion, stated over the whole catalogue."""
+    assert resolve_runway_placement(SAMPLE_RUNWAY, name).ias_kt >= 90.0
+
+
+def test_a_trainer_and_an_airliner_do_not_fly_the_same_final() -> None:
+    """The reason the default is a category and not a number."""
+    trainer = final_placement(SAMPLE_RUNWAY, "final_10nm", category="A")
+    airliner = final_placement(SAMPLE_RUNWAY, "final_10nm", category="D")
+    assert trainer.ias_kt == 90.0
+    assert airliner.ias_kt == 165.0
+    # Same point in space, different speed: only the speed depends on the type.
+    assert trainer.position == airliner.position
+    assert trainer.heading_deg == airliner.heading_deg
+
+
+def test_an_explicit_speed_beats_the_category() -> None:
+    """The 90 kt that flew a real approach at LEMD, commanded over a category D."""
+    placement = final_placement(SAMPLE_RUNWAY, "final_10nm", ias_kt=90.0, category="D")
+    assert placement.ias_kt == 90.0
+    assert pattern_placement(SAMPLE_RUNWAY, "left_downwind", ias_kt=75.0).ias_kt == 75.0
+
+
+def test_resolve_forwards_the_speed_and_the_category() -> None:
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "final_5nm", ias_kt=131.0).ias_kt == 131.0
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "final_5nm", category="C").ias_kt == 140.0
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "left_base", category="C").ias_kt == 180.0
+
+
+def test_a_free_coordinate_is_stationary_until_told_otherwise() -> None:
+    """Nothing is inferred from a bare lat/lon, including whether it is flying."""
+    assert GROUND_IAS_KT == 0.0
+    assert coordinate_placement(MADRID, 137.0).ias_kt == 0.0
+    assert coordinate_placement(MADRID, 137.0, ias_kt=250.0).ias_kt == 250.0
+
+
+def test_to_setup_carries_the_three_fields_a_placement_determines() -> None:
+    placement = final_placement(SAMPLE_RUNWAY, "final_10nm")
+    setup = placement.to_setup()
+    assert setup.ias_kt == 120.0
+    assert setup.heading_deg == pytest.approx(320.0)
+    assert setup.altitude_ft == pytest.approx(
+        2000.0 + 10.0 * FT_PER_NM_ON_A_THREE_DEGREE_PATH, abs=0.1
+    )
+
+
+def test_to_setup_leaves_everything_else_untouched() -> None:
+    """A placement configures altitude, heading and speed. The other thirteen
+    fields belong to the full pre-teleport setup (#8) and must stay ``None``,
+    which an adapter reads as *do not touch*."""
+    setup = final_placement(SAMPLE_RUNWAY, "short_final").to_setup()
+    set_fields = {name for name, value in setup.model_dump().items() if value is not None}
+    assert set_fields == {"altitude_ft", "heading_deg", "ias_kt"}
+
+
+async def test_a_parked_aircraft_placed_on_a_ten_nm_final_ends_up_flying() -> None:
+    """The regression, end to end against the reference adapter.
+
+    A stationary aeroplane is placed on a 10 NM final and then left to fly: one
+    minute later it is 2 NM closer to the threshold. Before this change it was
+    still at 0 kt and 10 NM out, sinking.
+    """
+    adapter = FakeSimAdapter(initial_state=PARKED)
+    await adapter.connect()
+    assert (await adapter.get_aircraft_state()).ias_kt == 0.0
+
+    placement = resolve_runway_placement(SAMPLE_RUNWAY, "final_10nm")
+    # The Position Manager pipeline: configure, then move.
+    await adapter.apply_setup(placement.to_setup())
+    await adapter.set_position(placement.position, placement.heading_deg)
+
+    placed = await adapter.get_aircraft_state()
+    assert placed.ias_kt == 120.0
+    assert placed.altitude_ft == pytest.approx(
+        2000.0 + 10.0 * FT_PER_NM_ON_A_THREE_DEGREE_PATH, abs=0.1
+    )
+    at_placement_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=placed.latitude, longitude=placed.longitude),
+        SAMPLE_RUNWAY.threshold,
+    )
+    assert at_placement_nm == pytest.approx(10.0, abs=1e-6)
+
+    # One minute of flight at 120 kt is 2 NM, and it is 2 NM towards the runway.
+    flown = await anext(adapter.stream_state(60.0))
+    after_a_minute_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=flown.latitude, longitude=flown.longitude),
+        SAMPLE_RUNWAY.threshold,
+    )
+    assert after_a_minute_nm == pytest.approx(8.0, abs=0.01)
+
+
+async def test_the_defect_reproduced_when_the_speed_is_not_commanded() -> None:
+    """Teleporting without applying the setup is exactly the old behaviour.
+
+    Kept as the counter-example: it pins what ``to_setup`` is for, so nobody
+    "simplifies" the pipeline back into the crash.
+    """
+    adapter = FakeSimAdapter(initial_state=PARKED)
+    await adapter.connect()
+    placement = resolve_runway_placement(SAMPLE_RUNWAY, "final_10nm")
+    await adapter.set_position(placement.position, placement.heading_deg)
+
+    stalled = await adapter.get_aircraft_state()
+    assert stalled.ias_kt == 0.0
+    drifted = await anext(adapter.stream_state(60.0))
+    still_out_nm, _ = distance_and_bearing(
+        GeoPosition(latitude=drifted.latitude, longitude=drifted.longitude),
+        SAMPLE_RUNWAY.threshold,
+    )
+    assert still_out_nm == pytest.approx(10.0, abs=1e-6)

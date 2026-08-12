@@ -14,6 +14,8 @@ htmlcov/
 build/
 dist/
 *.spec
+# ...except the committed build recipe, which is source, not output.
+!packaging/*.spec
 
 # --- Node / UI ---
 node_modules/
@@ -31,6 +33,9 @@ navdata_cache/
 .env.local
 config.local.toml
 reports/
+
+# --- Agent worktrees: parallel feature branches, never part of a commit ---
+.claude/worktrees/
 
 # --- OS / editors ---
 .DS_Store
