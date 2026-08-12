@@ -58,6 +58,8 @@ const STALLED_PREVIEW: PlacementPreview = {
     heading_deg: 0,
     ias_kt: 0,
     label: '40.4936, -3.5668 at 4,000 ft',
+    // 0 kt is definitionally not flying, so the server resolves this as ground.
+    profile: 'ground',
   },
   setup: { altitude_ft: 4000, heading_deg: 0, ias_kt: 0 },
   schematic: { points: [] },
