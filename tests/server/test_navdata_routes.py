@@ -225,12 +225,75 @@ class TestNavaids:
         assert response.status_code == 422
 
 
-class TestFixesAndHolds:
-    def test_fixes_by_ident(self, client: TestClient) -> None:
+class TestFixes:
+    """``GET /api/navdata/fixes`` — two query forms on one path (design §12)."""
+
+    def test_by_ident_returns_every_match_because_idents_collide(self, client: TestClient) -> None:
         with client:
             response = client.get("/api/navdata/fixes", params={"ident": "GOXOL"})
-        assert [row["ident"] for row in response.json()] == ["GOXOL"]
+        assert response.status_code == 200
+        assert [row["region_code"] for row in response.json()] == ["YY", "ZZ"]
 
+    def test_a_region_disambiguates(self, client: TestClient) -> None:
+        with client:
+            response = client.get("/api/navdata/fixes", params={"ident": "GOXOL", "region": "ZZ"})
+        assert [row["position"]["latitude"] for row in response.json()] == [40.5]
+
+    def test_a_terminal_airport_disambiguates(self, client: TestClient) -> None:
+        """GOXOL is enroute, so scoping it to the airport must exclude it."""
+        with client:
+            on_field = client.get(
+                "/api/navdata/fixes", params={"ident": "ZZF01", "terminal_airport": "ZZZZ"}
+            )
+            enroute = client.get(
+                "/api/navdata/fixes", params={"ident": "GOXOL", "terminal_airport": "ZZZZ"}
+            )
+        assert [row["ident"] for row in on_field.json()] == ["ZZF01"]
+        assert enroute.json() == []
+
+    def test_an_unknown_ident_is_an_empty_list_not_a_404(self, client: TestClient) -> None:
+        """Absent is ``[]`` on a list route: the provider never raises for not-found."""
+        with client:
+            response = client.get("/api/navdata/fixes", params={"ident": "NOPE"})
+        assert response.status_code == 200
+        assert response.json() == []
+
+    def test_near_a_point_returns_the_local_ones_nearest_first(self, client: TestClient) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/fixes",
+                params={"lat": 40.0, "lon": -3.0, "radius_nm": 35.0},
+            )
+        assert response.status_code == 200
+        # The terminal fix is 1.2 NM north of the point, GOXOL 30 NM north of
+        # it, and the fix sharing GOXOL's ident is thousands of NM away and
+        # excluded.
+        assert [row["ident"] for row in response.json()] == ["ZZF01", "GOXOL"]
+
+    def test_near_respects_the_radius(self, client: TestClient) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/fixes",
+                params={"lat": 40.0, "lon": -3.0, "radius_nm": 5.0},
+            )
+        assert [row["ident"] for row in response.json()] == ["ZZF01"]
+
+    def test_neither_form_is_rejected_rather_than_returning_the_world(
+        self, client: TestClient
+    ) -> None:
+        with client:
+            response = client.get("/api/navdata/fixes")
+        assert response.status_code == 422
+
+    def test_both_forms_at_once_is_rejected_rather_than_guessing(self, client: TestClient) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/fixes", params={"ident": "GOXOL", "lat": 40.0, "lon": -3.0}
+            )
+        assert response.status_code == 422
+
+
+class TestHolds:
     def test_holds_by_fix(self, client: TestClient) -> None:
         with client:
             response = client.get("/api/navdata/holds", params={"fix_ident": "GOXOL"})
