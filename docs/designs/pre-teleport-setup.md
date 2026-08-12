@@ -38,9 +38,9 @@ the same posture as every other switch in the setup.
 ### `AirframeInfo` and `get_airframe()`
 
 ```python
-class AirframeInfo(BaseModel):        # frozen
-    icao_type: str | None             # e.g. "C172"
-    vso_kias: float | None            # stall speed, landing configuration, KIAS
+class AirframeInfo(BaseModel):  # frozen
+    icao_type: str | None  # e.g. "C172"
+    vso_kias: float | None  # stall speed, landing configuration, KIAS
 ```
 
 `SimAdapter.get_airframe() -> AirframeInfo` is a **capability-free read**, the same
