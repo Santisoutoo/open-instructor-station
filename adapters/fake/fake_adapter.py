@@ -15,7 +15,7 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any
 
 from core.geodesy import point_at_distance_and_bearing
-from core.models import AircraftSetup, AircraftState, GeoPosition, LightsSetup
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LightsSetup
 from core.sim_adapter import Capabilities, SimAdapter
 
 __all__ = ["FakeSimAdapter"]
@@ -57,12 +57,19 @@ class FakeSimAdapter:
     a client watching the WebSocket can tell a live stream from a frozen one.
     """
 
-    def __init__(self, initial_state: AircraftState | None = None) -> None:
+    def __init__(
+        self,
+        initial_state: AircraftState | None = None,
+        airframe: AirframeInfo | None = None,
+    ) -> None:
         self._state = (initial_state or DEFAULT_STATE).model_copy(deep=True)
         self._connected = False
         # Non-flight settings the fake accepts and remembers so that
         # ``apply_setup`` is observably faithful.
         self._setup = AircraftSetup()
+        # What get_airframe() reports. Constructor-settable so tests can hand
+        # the fake a specific aircraft; the default is the honest "unknown".
+        self._airframe = airframe or AirframeInfo()
 
     # -- Identity ---------------------------------------------------------
 
@@ -107,10 +114,19 @@ class FakeSimAdapter:
         """Return a copy of the current in-memory aircraft state."""
         return self._state.model_copy(deep=True)
 
+    async def get_airframe(self) -> AirframeInfo:
+        """The airframe handed to the constructor, or the all-``None`` default."""
+        return self._airframe
+
     # -- Writes -----------------------------------------------------------
 
     async def set_position(
-        self, position: GeoPosition, heading_deg: float, *, ias_kt: float | None = None
+        self,
+        position: GeoPosition,
+        heading_deg: float,
+        *,
+        ias_kt: float | None = None,
+        vertical_speed_fpm: float | None = None,
     ) -> None:
         """Teleport the in-memory aircraft.
 
@@ -119,12 +135,18 @@ class FakeSimAdapter:
             heading_deg: Target true heading in degrees.
             ias_kt: Indicated airspeed to arrive at. ``None`` keeps the current
                 one, which for the Fake means literally leaving the field alone.
+            vertical_speed_fpm: Vertical speed to arrive with, positive up.
+                ``None`` arrives **level**, not "keep the current one": the
+                velocity vector a teleport writes is the whole velocity, and an
+                aircraft placed without a stated descent is placed in level
+                flight (see :meth:`core.sim_adapter.SimAdapter.set_position`).
         """
         updates: dict[str, Any] = {
             "latitude": position.latitude,
             "longitude": position.longitude,
             "altitude_ft": position.altitude_ft,
             "heading_deg": heading_deg % 360.0,
+            "vertical_speed_fpm": vertical_speed_fpm if vertical_speed_fpm is not None else 0.0,
         }
         if ias_kt is not None:
             updates["ias_kt"] = ias_kt

@@ -34,7 +34,7 @@ from core.geodesy import (
     distance_and_bearing,
     point_at_distance_and_bearing,
 )
-from core.models import AircraftSetup, AircraftState, GeoPosition, LightsSetup
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LightsSetup
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 
 # --------------------------------------------------------------------------
@@ -94,6 +94,22 @@ COMMANDED_IAS_KT = 90.0
 #: Tolerance on that read-back. The Fake stores what it is handed; a live aircraft
 #: is flying, and the freeze is released before the state is read.
 COMMANDED_IAS_TOLERANCE_KT = {"fake": 0.1, "xplane": 15.0}
+
+#: Vertical speed a placement commands in
+#: :func:`test_set_position_delivers_the_vertical_speed`. A plausible 3°-final
+#: descent rate — and clearly distinct from the level flight the ``adapter``
+#: fixture stabilises into, so "delivered" and "whatever it was doing" cannot be
+#: confused (the same construction as :data:`COMMANDED_IAS_KT`).
+COMMANDED_VS_FPM = -600.0
+
+#: Tolerance on that read-back. The Fake stores what it is handed; a live
+#: aircraft starts flying — unpiloted — the instant the freeze is released, so
+#: the variometer is read against a settling aeroplane.
+COMMANDED_VS_TOLERANCE_FPM = {"fake": 0.1, "xplane": 300.0}
+
+#: Throttle :func:`test_apply_setup_delivers_the_throttle` commands. Approach
+#: power — far from both idle and the full thrust a mis-read default would be.
+COMMANDED_THROTTLE_RATIO = 0.3
 
 #: How far a grounded aircraft is lifted before the tests run. Vertical only —
 #: the horizontal position is untouched, so this never triggers a scenery
@@ -442,6 +458,47 @@ async def test_set_position_without_a_speed_preserves_the_current_one(
         await adapter.set_position(home, heading_deg=original.heading_deg)
 
 
+async def test_set_position_delivers_the_vertical_speed(adapter: SimAdapter) -> None:
+    """A commanded ``vertical_speed_fpm`` must arrive; ``None`` must arrive level.
+
+    The vertical twin of :func:`test_set_position_delivers_the_commanded_speed`
+    (issue #81): the velocity vector a teleport writes is the whole velocity,
+    and an adapter that hard-codes its vertical component to zero destroys the
+    descent a setup commanded one call later — every 3° final used to arrive in
+    level flight regardless of what was asked.
+
+    The read is taken immediately after ``set_position`` returns, not inside a
+    freeze: a frozen flight model does not integrate, so the variometer only
+    means something once the aircraft is flying again. The tolerance absorbs
+    the second of unpiloted settling that costs.
+    """
+    if not adapter.capabilities.can_set_position:
+        pytest.skip(f"{adapter.name} does not declare can_set_position")
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    horizontal = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, 225.0)
+    # Climb before descending: the commanded descent must have room below it.
+    target = GeoPosition(
+        latitude=horizontal.latitude,
+        longitude=horizontal.longitude,
+        altitude_ft=original.altitude_ft + HOP_CLIMB_FT,
+    )
+    try:
+        await adapter.set_position(
+            target,
+            heading_deg=225.0,
+            ias_kt=COMMANDED_IAS_KT,
+            vertical_speed_fpm=COMMANDED_VS_FPM,
+        )
+        state = await adapter.get_aircraft_state()
+        assert state.vertical_speed_fpm == pytest.approx(
+            COMMANDED_VS_FPM, abs=COMMANDED_VS_TOLERANCE_FPM[adapter.name]
+        )
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
+
+
 async def test_set_position_normalises_the_heading(adapter: SimAdapter) -> None:
     if not adapter.capabilities.can_set_position:
         pytest.skip(f"{adapter.name} does not declare can_set_position")
@@ -519,6 +576,35 @@ async def test_apply_setup_normalises_the_heading(adapter: SimAdapter) -> None:
     await adapter.apply_setup(AircraftSetup(heading_deg=360.0))
     state = await adapter.get_aircraft_state()
     assert 0.0 <= state.heading_deg <= 360.0
+
+
+async def test_apply_setup_delivers_the_throttle(adapter: SimAdapter) -> None:
+    """``throttle_ratio`` is aircraft state and rides ``apply_setup`` like flaps.
+
+    New in the pre-teleport-setup contract (issue #81: an aircraft placed on a
+    final with parked throttle diverges into a phugoid). The Fake proves the
+    value is recorded; a live adapter proves the write landed by reading the
+    dataref back — and puts the levers back where they were, because a throttle
+    moved mid-suite changes what every later test's aircraft is doing.
+    """
+    if not adapter.capabilities.can_set_aircraft_state:
+        pytest.skip(f"{adapter.name} does not declare can_set_aircraft_state")
+
+    read = getattr(adapter, "read_dataref", None)
+    original = None if read is None else float(await read("throttle_ratio"))
+    try:
+        await adapter.apply_setup(AircraftSetup(throttle_ratio=COMMANDED_THROTTLE_RATIO))
+
+        applied = getattr(adapter, "applied_setup", None)
+        if applied is not None:
+            assert applied.throttle_ratio == pytest.approx(COMMANDED_THROTTLE_RATIO)
+        if read is not None:
+            assert float(await read("throttle_ratio")) == pytest.approx(
+                COMMANDED_THROTTLE_RATIO, abs=0.05
+            )
+    finally:
+        if original is not None:
+            await adapter.apply_setup(AircraftSetup(throttle_ratio=original))
 
 
 async def test_apply_setup_refuses_capability_gated_fields_it_cannot_honour(
@@ -621,6 +707,30 @@ async def test_apply_setup_leaves_the_autopilot_alone_when_asked_for_nothing(
 
 
 # --------------------------------------------------------------------------
+# Capability-free reads
+# --------------------------------------------------------------------------
+
+
+async def test_get_airframe_returns_a_model(adapter: SimAdapter) -> None:
+    """``get_airframe`` answers on every adapter, and "unknown" is an answer.
+
+    A capability-free read: there is no flag to check first, because reads
+    degrade instead of failing (issue #82 — the consumer is a *default*, and a
+    connection refused over an unreadable stall speed would be absurd). Nothing
+    here asserts a specific airframe: what is loaded in a live simulator is the
+    user's business. What is pinned is the shape — a model, never an exception,
+    with fields that are either absent or plausible.
+    """
+    airframe = await adapter.get_airframe()
+    assert isinstance(airframe, AirframeInfo)
+    if airframe.vso_kias is not None:
+        assert airframe.vso_kias > 0.0
+    if airframe.icao_type is not None:
+        assert airframe.icao_type == airframe.icao_type.strip()
+        assert airframe.icao_type
+
+
+# --------------------------------------------------------------------------
 # Streaming
 # --------------------------------------------------------------------------
 
@@ -689,6 +799,26 @@ async def test_fake_apply_setup_records_non_state_fields() -> None:
         assert applied.lights.strobe is True
         assert applied.lights.taxi is True
         assert applied.speedbrake_ratio is None  # never provided, still unset
+    finally:
+        await sim.disconnect()
+
+
+async def test_fake_reports_the_configured_airframe() -> None:
+    """The Fake's constructor-settable airframe round-trips through the read.
+
+    This is the affordance A2 (issue #82) builds its server tests on: a Fake
+    carrying a known Vso lets the category-derivation chain be pinned in CI
+    without a simulator.
+    """
+    sim = FakeSimAdapter(airframe=AirframeInfo(icao_type="C172", vso_kias=48.0))
+    await sim.connect()
+    try:
+        airframe = await sim.get_airframe()
+        assert airframe.icao_type == "C172"
+        assert airframe.vso_kias == pytest.approx(48.0)
+
+        unknown = await FakeSimAdapter().get_airframe()
+        assert unknown == AirframeInfo()
     finally:
         await sim.disconnect()
 
