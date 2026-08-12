@@ -580,6 +580,11 @@ export interface components {
              */
             elevator_trim_ratio?: number | null;
             /**
+             * Throttle Ratio
+             * @description 0 = idle, 1 = full thrust, fanned out to every engine. Commanded at placement, not held: an aircraft whose own systems move the levers afterwards is expected behaviour.
+             */
+            throttle_ratio?: number | null;
+            /**
              * Gear Down
              * @description True = gear down and locked.
              */

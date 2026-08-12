@@ -438,10 +438,16 @@ class TestApplyOrdersTheWrites:
                 heading_deg: float,
                 *,
                 ias_kt: float | None = None,
+                vertical_speed_fpm: float | None = None,
             ) -> None:
                 calls.append("set_position")
                 speeds.append(ias_kt)
-                await super().set_position(position, heading_deg, ias_kt=ias_kt)
+                await super().set_position(
+                    position,
+                    heading_deg,
+                    ias_kt=ias_kt,
+                    vertical_speed_fpm=vertical_speed_fpm,
+                )
 
         provider = build_provider()
         monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: provider)

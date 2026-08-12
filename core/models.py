@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 __all__ = [
     "AircraftSetup",
     "AircraftState",
+    "AirframeInfo",
     "GeoPosition",
     "Ils",
     "LightsSetup",
@@ -47,6 +48,31 @@ class AircraftState(BaseModel):
         ge=-180.0, le=180.0, description="Bank in degrees, positive right wing down."
     )
     on_ground: bool = Field(default=False, description="True when any gear touches the ground.")
+
+
+class AirframeInfo(BaseModel):
+    """What is known about the loaded airframe. Every field degrades to ``None``.
+
+    A read, not a command: :meth:`core.sim_adapter.SimAdapter.get_airframe`
+    returns one of these, and an adapter that cannot see the airframe returns
+    the all-``None`` model rather than raising — "unknown" is an honest answer
+    and never an error (the same posture as every other capability-free read).
+
+    The consumer is the approach-category derivation (issue #82): a stall speed
+    turns into V_AT and V_AT into an ICAO approach category in ``core/``, which
+    never talks to a simulator itself — the airframe arrives as an input.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    icao_type: str | None = Field(
+        default=None, description='ICAO type designator of the loaded aircraft, e.g. "C172".'
+    )
+    vso_kias: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Stall speed in the landing configuration, knots indicated.",
+    )
 
 
 class LightsSetup(BaseModel):
@@ -109,6 +135,16 @@ class AircraftSetup(BaseModel):
         ge=-1.0,
         le=1.0,
         description="-1 = full nose down, 0 = neutral, +1 = full nose up.",
+    )
+    throttle_ratio: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "0 = idle, 1 = full thrust, fanned out to every engine. Commanded at "
+            "placement, not held: an aircraft whose own systems move the levers "
+            "afterwards is expected behaviour."
+        ),
     )
     gear_down: bool | None = Field(default=None, description="True = gear down and locked.")
     autobrake_level: int | None = Field(
