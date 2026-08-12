@@ -268,12 +268,40 @@ def get_navaids(
 
 @router.get("/fixes", response_model=list[Fix])
 def get_fixes(
-    ident: str = Query(min_length=1),
-    region: str | None = None,
-    terminal_airport: str | None = None,
+    ident: str | None = Query(default=None, min_length=1, description="Fix identifier."),
+    region: str | None = Query(default=None, description="ICAO region code, e.g. 'LE'."),
+    terminal_airport: str | None = Query(
+        default=None, description="Scope to one airport's terminal fixes."
+    ),
+    lat: float | None = Query(default=None, ge=-90.0, le=90.0),
+    lon: float | None = Query(default=None, ge=-180.0, le=180.0),
+    radius_nm: float = Query(default=50.0, gt=0.0, le=1000.0),
+    limit: int = Query(default=50, ge=1, le=200),
 ) -> list[Fix]:
-    """Fixes by identifier — a list, because fix idents are not globally unique."""
-    return _provider().get_fixes(ident, region=region, terminal_airport=terminal_airport)
+    """Fixes by identifier, or every fix near a point.
+
+    **Two query forms, one path**, because they answer the same question from
+    the two directions an instructor asks it: "where is GOXOL?" and "what fixes
+    are around here?". Exactly one of ``ident`` and ``lat``/``lon`` must be
+    given — sending both would leave the server to invent a precedence, and
+    sending neither would ask for every fix on Earth.
+
+    A list either way: fix identifiers are **not** globally unique, so the
+    single-ident form returns every match sorted by ident then region, and the
+    caller disambiguates with ``region`` or ``terminal_airport``.
+    """
+    if ident is not None and lat is None and lon is None:
+        return _provider().get_fixes(ident, region=region, terminal_airport=terminal_airport)
+    if ident is None and lat is not None and lon is not None:
+        centre = GeoPosition(latitude=lat, longitude=lon)
+        return _provider().fixes_near(centre, radius_nm, limit=limit)
+    raise HTTPException(
+        status_code=422,
+        detail=(
+            "Give either 'ident' (with an optional 'region') or 'lat' and 'lon' "
+            "(with an optional 'radius_nm'), but not both and not neither."
+        ),
+    )
 
 
 @router.get("/holds", response_model=list[Hold])
