@@ -1434,10 +1434,11 @@ export interface components {
          *     Everything an instructor station needs to reposition, and nothing about how
          *     the repositioning happens — writing it is the adapter's job.
          *
-         *     ``ias_kt`` has **no default on purpose**. It is the one field of this model
-         *     that cannot be inferred from geometry, and leaving it out is precisely the
-         *     defect that put an aircraft on a perfect 10 NM final at 0 kt, so a new
-         *     placement type cannot be written without answering the question.
+         *     ``ias_kt`` and ``profile`` have **no default on purpose**. They are the two
+         *     fields of this model that cannot be inferred from geometry, and leaving the
+         *     speed out is precisely the defect that put an aircraft on a perfect 10 NM
+         *     final at 0 kt — so a new placement type cannot be written without answering
+         *     both questions: how fast, and what kind of flying this is.
          */
         Placement: {
             /** @description Target position; its altitude_ft is the target altitude, feet MSL. */
@@ -1457,6 +1458,24 @@ export interface components {
              * @description Human-readable description, e.g. "LEMD 32L 10 NM final".
              */
             label: string;
+            /**
+             * Profile
+             * @description What kind of flying this placement is; decides the configuration to_setup() emits. Required, no default — the same philosophy as ias_kt: a new placement type cannot be written without answering the question.
+             * @enum {string}
+             */
+            profile: "final" | "circuit" | "airborne" | "ground";
+            /** @description The ILS an approach placement is flown to, when the runway publishes one. to_setup() tunes NAV1 and the OBS from it, so no caller can place an aircraft on an approach while forgetting the radios. Finals only. */
+            ils?: components["schemas"]["Ils"] | null;
+            /**
+             * Glideslope Deg
+             * @description Glidepath angle in degrees; the descent rate follows from it. Finals only.
+             */
+            glideslope_deg?: number | null;
+            /**
+             * Pattern Leg
+             * @description Which leg of the circuit; gear and flaps differ per leg. Circuit only.
+             */
+            pattern_leg?: ("downwind" | "base" | "crosswind" | "upwind") | null;
         };
         /**
          * PlacementPreview

@@ -15,10 +15,17 @@ from adapters.fake import FakeSimAdapter
 from core.geodesy import (
     APPROACH_CATEGORY_CIRCLING_IAS_KT,
     APPROACH_CATEGORY_VAT_KT,
+    BASE_FLAPS_RATIO,
+    CIRCUIT_THROTTLE,
+    CRUISE_THROTTLE,
     DEFAULT_APPROACH_CATEGORY,
     DEFAULT_PATTERN_ALTITUDE_AGL_FT,
+    FEET_PER_MINUTE_PER_KNOT,
     FEET_PER_NAUTICAL_MILE,
     FINAL_DISTANCES_NM,
+    FINAL_FLAPS_RATIO,
+    FINAL_THROTTLE,
+    FINAL_TRIM,
     GROUND_IAS_KT,
     METRES_PER_NAUTICAL_MILE,
     PATTERN_PLACEMENTS,
@@ -41,7 +48,7 @@ from core.geodesy import (
     traffic_pattern_point,
     waypoint_placement,
 )
-from core.models import AircraftState, GeoPosition
+from core.models import AircraftState, GeoPosition, Ils
 from tests.conftest import NORTH_RUNWAY, SAMPLE_RUNWAY
 
 MADRID = GeoPosition(latitude=40.4168, longitude=-3.7038, altitude_ft=2000.0)
@@ -738,12 +745,26 @@ PARKED = AircraftState(
 def test_a_placement_cannot_be_built_without_a_speed() -> None:
     """``ias_kt`` is required: forgetting it is a ValidationError, not a 0."""
     with pytest.raises(ValidationError):
-        Placement.model_validate({"position": MADRID, "heading_deg": 0.0, "label": "nowhere"})
+        Placement.model_validate(
+            {"position": MADRID, "heading_deg": 0.0, "label": "nowhere", "profile": "airborne"}
+        )
+
+
+def test_a_placement_cannot_be_built_without_a_profile() -> None:
+    """``profile`` is required for the same reason ``ias_kt`` is: it cannot be
+    inferred from the geometry, so a new placement type must answer the
+    question rather than inherit a guess."""
+    with pytest.raises(ValidationError):
+        Placement.model_validate(
+            {"position": MADRID, "heading_deg": 0.0, "ias_kt": 120.0, "label": "nowhere"}
+        )
 
 
 def test_a_placement_rejects_a_negative_speed() -> None:
     with pytest.raises(ValidationError):
-        Placement(position=MADRID, heading_deg=0.0, ias_kt=-1.0, label="nowhere")
+        Placement(
+            position=MADRID, heading_deg=0.0, ias_kt=-1.0, label="nowhere", profile="airborne"
+        )
 
 
 def test_the_category_tables_cover_every_category() -> None:
@@ -853,13 +874,191 @@ def test_to_setup_carries_the_three_fields_a_placement_determines() -> None:
     )
 
 
-def test_to_setup_leaves_everything_else_untouched() -> None:
-    """A placement configures altitude, heading and speed. The other thirteen
-    fields belong to the full pre-teleport setup (#8) and must stay ``None``,
-    which an adapter reads as *do not touch*."""
+def test_to_setup_leaves_what_the_profile_does_not_determine_untouched() -> None:
+    """The profile owns the configuration; it does not own the aircraft.
+
+    Mass, spoilers, autobrake, pitch, NAV2 and the whole autopilot block are
+    not part of any profile and must stay ``None``, which an adapter reads as
+    *do not touch*. Stated as the exact set of fields a final emits, so a field
+    quietly added to a profile has to be declared here too.
+    """
     setup = final_placement(SAMPLE_RUNWAY, "short_final").to_setup()
     set_fields = {name for name, value in setup.model_dump().items() if value is not None}
-    assert set_fields == {"altitude_ft", "heading_deg", "ias_kt"}
+    assert set_fields == {
+        "altitude_ft",
+        "heading_deg",
+        "ias_kt",
+        "vertical_speed_fpm",
+        "roll_deg",
+        "gear_down",
+        "flaps_ratio",
+        "elevator_trim_ratio",
+        "throttle_ratio",
+        "lights",
+    }
+
+
+# --------------------------------------------------------------------------
+# Profiles
+#
+# Speed is only half of issue #39's lesson. The Phase 1 live validation placed
+# a C172 on a perfect 10 NM final at the right speed and still handed over an
+# unflyable aeroplane: parked trim, drifting throttle, no descent rate, and a
+# divergent phugoid within 20 s (#81). The profile is the rest of the hand-off
+# (#8): the configuration that makes the placement *stabilised*.
+# --------------------------------------------------------------------------
+
+
+#: The ILS the sample runway would publish, hand-written like everything else
+#: here (hard rule 4). The magnetic course is deliberately not the true one, so
+#: a test that confuses the two frames fails rather than passes by luck.
+SAMPLE_ILS = Ils(
+    airport_icao="LEMD",
+    runway_ident="32L",
+    localizer_ident="IML",
+    frequency_khz=110300,
+    localizer_position=GeoPosition(latitude=40.49, longitude=-3.59, altitude_ft=2000.0),
+    localizer_true_deg=320.0,
+    localizer_mag_deg=323.0,
+    glideslope_deg=3.0,
+)
+
+
+def test_feet_per_minute_per_knot() -> None:
+    """One knot covers 6076.115486 / 60 = 101.2686 ft of ground per minute."""
+    assert pytest.approx(101.2686, abs=1e-4) == FEET_PER_MINUTE_PER_KNOT
+
+
+def test_every_constructor_answers_the_profile_question() -> None:
+    """``profile`` has no default, so each constructor states what it builds."""
+    assert final_placement(SAMPLE_RUNWAY, "final_10nm").profile == "final"
+    assert pattern_placement(SAMPLE_RUNWAY, "left_base").profile == "circuit"
+    assert waypoint_placement(WAYPOINT, 5000.0).profile == "airborne"
+    # 0 kt is definitionally not flying, so the coordinate's profile follows
+    # its speed: the stationary default is ground, anything else is airborne.
+    assert coordinate_placement(MADRID).profile == "ground"
+    assert coordinate_placement(MADRID, ias_kt=250.0).profile == "airborne"
+
+
+def test_a_pattern_placement_knows_its_leg() -> None:
+    for name, (leg, _side) in PATTERN_PLACEMENTS.items():
+        assert pattern_placement(SAMPLE_RUNWAY, name).pattern_leg == leg, name
+
+
+def test_a_final_carries_its_glideslope_and_its_ils() -> None:
+    bare = final_placement(SAMPLE_RUNWAY, "final_10nm", glideslope_deg=3.5)
+    assert bare.glideslope_deg == 3.5
+    assert bare.ils is None
+    tuned = final_placement(SAMPLE_RUNWAY, "final_10nm", ils=SAMPLE_ILS)
+    assert tuned.ils == SAMPLE_ILS
+    assert tuned.glideslope_deg == 3.0
+
+
+def test_resolve_passes_the_ils_to_finals_and_not_to_circuits() -> None:
+    """A circuit is flown visually; only the final gets the radios."""
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "final_5nm", ils=SAMPLE_ILS).ils == SAMPLE_ILS
+    assert resolve_runway_placement(SAMPLE_RUNWAY, "left_base", ils=SAMPLE_ILS).ils is None
+
+
+def test_a_final_is_configured_to_fly_the_approach() -> None:
+    """Gear down, approach flap, approach power, nose-up trim, wings level."""
+    setup = final_placement(SAMPLE_RUNWAY, "final_10nm").to_setup()
+    assert setup.gear_down is True
+    assert setup.flaps_ratio == FINAL_FLAPS_RATIO == 0.5
+    assert setup.throttle_ratio == FINAL_THROTTLE == 0.30
+    assert setup.elevator_trim_ratio == FINAL_TRIM == 0.10
+    assert setup.roll_deg == 0.0
+    assert setup.lights is not None
+    assert setup.lights.landing is True
+
+
+def test_a_final_descends_on_its_glidepath() -> None:
+    """120 kt on a 3° slope: 120 · 101.2686 ft/min/kt · tan 3° = 637 fpm down."""
+    setup = final_placement(SAMPLE_RUNWAY, "final_10nm").to_setup()
+    assert setup.vertical_speed_fpm is not None
+    assert setup.vertical_speed_fpm < 0.0
+    assert setup.vertical_speed_fpm == pytest.approx(
+        -120.0 * FEET_PER_MINUTE_PER_KNOT * math.tan(math.radians(3.0))
+    )
+
+
+def test_the_descent_arithmetic_matches_the_rule_of_thumb() -> None:
+    """3° at 90 kt is the pilot's ~480 fpm — the published cross-check."""
+    setup = final_placement(SAMPLE_RUNWAY, "final_10nm", ias_kt=90.0).to_setup()
+    assert setup.vertical_speed_fpm == pytest.approx(-478.0, abs=1.0)
+
+
+def test_a_steeper_slope_needs_a_faster_descent() -> None:
+    standard = final_placement(SAMPLE_RUNWAY, "final_5nm").to_setup()
+    steep = final_placement(SAMPLE_RUNWAY, "final_5nm", glideslope_deg=5.5).to_setup()
+    assert standard.vertical_speed_fpm is not None
+    assert steep.vertical_speed_fpm is not None
+    assert steep.vertical_speed_fpm < standard.vertical_speed_fpm < 0.0
+
+
+def test_a_final_on_an_ils_tunes_the_radios() -> None:
+    """NAV1 takes the frequency and the OBS the MAGNETIC front course —
+    an OBS is magnetic on the aeroplane, not true like the geometry here."""
+    setup = final_placement(SAMPLE_RUNWAY, "final_10nm", ils=SAMPLE_ILS).to_setup()
+    assert setup.nav1_freq_khz == 110300
+    assert setup.obs1_deg == 323.0
+
+
+def test_a_final_without_an_ils_leaves_the_radios_alone() -> None:
+    setup = final_placement(SAMPLE_RUNWAY, "final_10nm").to_setup()
+    assert setup.nav1_freq_khz is None
+    assert setup.obs1_deg is None
+
+
+def test_the_circuit_configures_as_it_comes_round() -> None:
+    """Gear on downwind and base, first notch of flap on base, clean before."""
+    dirty: tuple[PatternPlacement, ...] = (
+        "left_downwind",
+        "right_downwind",
+        "left_base",
+        "right_base",
+    )
+    clean: tuple[PatternPlacement, ...] = (
+        "left_upwind",
+        "right_upwind",
+        "left_crosswind",
+        "right_crosswind",
+    )
+    for name in dirty:
+        assert pattern_placement(SAMPLE_RUNWAY, name).to_setup().gear_down is True, name
+    for name in clean:
+        assert pattern_placement(SAMPLE_RUNWAY, name).to_setup().gear_down is False, name
+    assert pattern_placement(SAMPLE_RUNWAY, "left_base").to_setup().flaps_ratio == BASE_FLAPS_RATIO
+    assert pattern_placement(SAMPLE_RUNWAY, "left_downwind").to_setup().flaps_ratio == 0.0
+
+
+def test_a_circuit_leg_is_flown_level_at_circuit_power() -> None:
+    setup = pattern_placement(SAMPLE_RUNWAY, "left_downwind").to_setup()
+    assert setup.throttle_ratio == CIRCUIT_THROTTLE == 0.50
+    assert setup.vertical_speed_fpm == 0.0
+    assert setup.roll_deg == 0.0
+    assert setup.elevator_trim_ratio == 0.0
+
+
+def test_an_airborne_placement_is_clean_and_level_at_cruise_power() -> None:
+    setup = waypoint_placement(WAYPOINT, 5000.0).to_setup()
+    assert setup.gear_down is False
+    assert setup.flaps_ratio == 0.0
+    assert setup.throttle_ratio == CRUISE_THROTTLE == 0.60
+    assert setup.vertical_speed_fpm == 0.0
+    assert setup.roll_deg == 0.0
+
+
+def test_a_ground_placement_idles_and_leaves_the_attitude_to_the_terrain() -> None:
+    """Gear down and everything at idle — but roll and vertical speed stay
+    ``None``: the aircraft is sitting on its gear, and both belong to the
+    terrain rather than to the placement."""
+    setup = coordinate_placement(MADRID).to_setup()
+    assert setup.gear_down is True
+    assert setup.flaps_ratio == 0.0
+    assert setup.throttle_ratio == 0.0
+    assert setup.vertical_speed_fpm is None
+    assert setup.roll_deg is None
 
 
 async def test_a_parked_aircraft_placed_on_a_ten_nm_final_ends_up_flying() -> None:

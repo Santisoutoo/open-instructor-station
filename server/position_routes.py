@@ -429,6 +429,9 @@ def _resolve_placement(
             leg_distance_nm=request.leg_distance_nm or DEFAULT_PATTERN_LEG_DISTANCE_NM,
             ias_kt=request.ias_kt,
             category=category,
+            # The published ILS rides along so a final's setup tunes NAV1 and
+            # the OBS — the radios arrive with the geometry, never separately.
+            ils=runway.ils,
         )
         distance_nm = FINAL_DISTANCES_NM.get(request.placement)  # type: ignore[arg-type]
         if distance_nm is not None:
@@ -725,6 +728,49 @@ def _speed_note(
     )
 
 
+def _profile_notes(placement: Placement, setup: AircraftSetup) -> tuple[str, ...]:
+    """Disclose the configuration the placement's profile pre-filled.
+
+    Read off the **emitted setup**, never off the table that produced it, so
+    the note cannot disagree with what will be applied. The numbers are the
+    airframe-generic hand-off constants of ``core.geodesy`` (see
+    ``FINAL_THROTTLE``), stated verbatim precisely because they are generic:
+    the instructor is the one who knows the airframe, and every one of them is
+    overridable from the staging bar, whose edits win the merge.
+    """
+    gear = "gear down" if setup.gear_down else "gear up"
+    flaps = "flaps up" if not setup.flaps_ratio else f"flaps {setup.flaps_ratio:.0%}"
+    if placement.profile == "final":
+        descent = ""
+        if setup.vertical_speed_fpm is not None and placement.glideslope_deg is not None:
+            descent = (
+                f", descending {-setup.vertical_speed_fpm:,.0f} fpm on the "
+                f"{placement.glideslope_deg:.1f}° slope"
+            )
+        notes: tuple[str, ...] = (
+            f"Configured for a final: {gear}, {flaps}, throttle {setup.throttle_ratio:.0%}, "
+            f"trim {setup.elevator_trim_ratio:+.2f}{descent}.",
+        )
+        if placement.ils is not None and setup.nav1_freq_khz is not None:
+            notes += (
+                f"NAV1 {setup.nav1_freq_khz / 1000.0:.2f} / OBS {setup.obs1_deg:.0f}° — "
+                f"the published ILS for {placement.ils.runway_ident}.",
+            )
+        return notes
+    if placement.profile == "circuit":
+        return (
+            f"Configured for the {placement.pattern_leg} leg: {gear}, {flaps}, "
+            f"throttle {setup.throttle_ratio:.0%}.",
+        )
+    if placement.profile == "airborne":
+        return (
+            f"Configured for level flight: {gear}, {flaps}, throttle {setup.throttle_ratio:.0%}.",
+        )
+    # On the ground everything idles, and roll and vertical speed are left to
+    # the terrain — which is why neither is named here.
+    return (f"Configured for the ground: {gear}, {flaps}, throttle idle.",)
+
+
 def _glideslope_deg(runway: Runway, requested_deg: float | None) -> tuple[float, str]:
     """The glidepath angle to place on, and where it came from.
 
@@ -876,6 +922,12 @@ def _placed_as_edited(placement: Placement, setup: AircraftSetup) -> Placement:
         heading_deg=heading_deg,
         ias_kt=placement.ias_kt,
         label=placement.label,
+        # The profile and what feeds it survive the edit: moving a final up or
+        # down its glidepath does not stop it being a final on that ILS.
+        profile=placement.profile,
+        ils=placement.ils,
+        glideslope_deg=placement.glideslope_deg,
+        pattern_leg=placement.pattern_leg,
     )
 
 
@@ -896,12 +948,13 @@ def preview_placement(request: PlacementRequest) -> PlacementPreview:
     it never awaits the simulator, and that is the point.
     """
     placement, schematic, notes = _resolve(request, get_navdata())
+    setup = placement.to_setup()
     return PlacementPreview(
         request=request,
         placement=placement,
-        setup=placement.to_setup(),
+        setup=setup,
         schematic=schematic,
-        notes=tuple(notes),
+        notes=(*notes, *_profile_notes(placement, setup)),
     )
 
 
@@ -942,8 +995,15 @@ async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
         # releases the flight model when it finishes, the aircraft decelerates
         # while it settles, and an adapter left to read the speed for itself
         # would carry the decayed value onto the new heading. Measured at LEMD:
-        # 120 kt commanded, 83 kt on arrival.
-        await adapter.set_position(placement.position, placement.heading_deg, ias_kt=setup.ias_kt)
+        # 120 kt commanded, 83 kt on arrival. The descent rate is the same
+        # lesson on the vertical axis (#39): the teleport writes the whole
+        # velocity vector, so anything not re-delivered here arrives level.
+        await adapter.set_position(
+            placement.position,
+            placement.heading_deg,
+            ias_kt=setup.ias_kt,
+            vertical_speed_fpm=setup.vertical_speed_fpm,
+        )
     except CapabilityNotSupported as exc:  # defence in depth; gated above
         raise HTTPException(status_code=CAPABILITY_UNAVAILABLE_STATUS, detail=str(exc)) from exc
 
