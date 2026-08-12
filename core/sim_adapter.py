@@ -19,7 +19,7 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-from core.models import AircraftSetup, AircraftState, GeoPosition
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition
 
 __all__ = [
     "Capabilities",
@@ -114,8 +114,24 @@ class SimAdapter(Protocol):
         """Read one snapshot of the user aircraft."""
         ...
 
+    async def get_airframe(self) -> AirframeInfo:
+        """What is known about the loaded airframe.
+
+        A capability-free read, like :meth:`get_aircraft_state`: there is no
+        flag to check first, because a read degrades instead of failing. An
+        adapter that cannot see the airframe returns the all-``None``
+        :class:`~core.models.AirframeInfo` — "unknown" is an answer, never an
+        exception.
+        """
+        ...
+
     async def set_position(
-        self, position: GeoPosition, heading_deg: float, *, ias_kt: float | None = None
+        self,
+        position: GeoPosition,
+        heading_deg: float,
+        *,
+        ias_kt: float | None = None,
+        vertical_speed_fpm: float | None = None,
     ) -> None:
         """Teleport the aircraft to ``position`` facing ``heading_deg`` (true degrees).
 
@@ -133,6 +149,14 @@ class SimAdapter(Protocol):
         because the aircraft decelerates between the two calls and an adapter
         that re-reads the state would faithfully preserve the decayed value
         (issue #39 — measured at 83 kt against 120 commanded).
+
+        ``vertical_speed_fpm`` is the same lesson on the vertical axis (issue
+        #81): the velocity vector a teleport writes used to be unconditionally
+        level, so a descent rate commanded by ``apply_setup`` was destroyed one
+        call later. ``None`` arrives level — right for every placement that is
+        not descending — and a value becomes the vertical component of the
+        arrival velocity, so an aircraft placed on a final is already going
+        down the slope when the flight model takes over.
 
         Requires :attr:`Capabilities.can_set_position`.
         """

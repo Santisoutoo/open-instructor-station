@@ -76,6 +76,8 @@ until :meth:`XPlaneSimAdapter.connect` is awaited.
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import math
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -92,10 +94,10 @@ from core.local_frame import (
     origin_separation_m,
     world_to_local,
 )
-from core.models import AircraftSetup, AircraftState, GeoPosition
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 
-__all__ = ["COMMANDS", "DATAREFS", "DEFAULT_BASE_URL", "XPlaneSimAdapter"]
+__all__ = ["COMMANDS", "DATAREFS", "DEFAULT_BASE_URL", "OPTIONAL_DATAREFS", "XPlaneSimAdapter"]
 
 DEFAULT_BASE_URL = "http://localhost:8086"
 
@@ -139,6 +141,9 @@ DATAREFS: dict[str, str] = {
     "elevator_trim": "sim/cockpit2/controls/elevator_trim",  # -1 .. +1
     "gear_handle_down": "sim/cockpit2/controls/gear_handle_down",
     "autobrake_level": "sim/cockpit2/switches/auto_brake_level",
+    # One value fanned out to every engine — the write path for
+    # AircraftSetup.throttle_ratio.
+    "throttle_ratio": "sim/cockpit2/engine/actuators/throttle_ratio_all",
     # --- Autopilot ---------------------------------------------------------
     # The master switch and the flight director are ONE dataref in X-Plane:
     # 0 = off, 1 = flight director only, 2 = servos engaged. See
@@ -161,6 +166,19 @@ DATAREFS: dict[str, str] = {
     "nav2_freq": "sim/cockpit/radios/nav2_freq_hz",
     "obs1": "sim/cockpit/radios/nav1_obs_degm",
     "obs2": "sim/cockpit/radios/nav2_obs_degm",
+}
+
+#: Datarefs this adapter uses when the build exposes them and lives without
+#: when it does not, keyed like :data:`DATAREFS`. The difference is what
+#: happens on a build that lacks one: a missing required dataref fails
+#: ``connect()`` outright, a missing optional one degrades the read that
+#: wanted it to "unknown". These feed :meth:`XPlaneSimAdapter.get_airframe`,
+#: whose contract is exactly that degradation — their availability over the
+#: Web API is unverified across 12.x builds, and an instructor station must
+#: not refuse to connect because it cannot learn the aircraft's stall speed.
+OPTIONAL_DATAREFS: dict[str, str] = {
+    "acf_icao": "sim/aircraft/view/acf_ICAO",  # byte array, e.g. b"C172"
+    "acf_vso": "sim/aircraft/overflow/acf_Vso",  # KIAS, landing configuration
 }
 
 #: Commands this adapter activates, keyed by short internal name.
@@ -275,6 +293,57 @@ _LATERAL_MODE_COMMANDS: tuple[tuple[str, str], ...] = (
 )
 
 
+def _decode_dataref_text(raw: Any) -> str | None:
+    """Turn a byte-array dataref value into text, or ``None`` when it will not.
+
+    The Web API serialises byte-array datarefs as base64 strings; older spikes
+    have also seen them arrive as plain lists of integers. Both are accepted,
+    NUL padding is stripped, and anything that fails to decode degrades to
+    ``None`` — these feed :class:`~core.models.AirframeInfo`, whose whole
+    contract is that unknown is an answer.
+    """
+    data: bytes
+    if isinstance(raw, str):
+        try:
+            data = base64.b64decode(raw, validate=True)
+        except (binascii.Error, ValueError):
+            # Not base64 after all — some builds serve short byte arrays as
+            # the decoded string directly.
+            data = raw.encode("utf-8", errors="replace")
+        else:
+            # A short plain string can be valid base64 by accident ("C172"
+            # decodes to three bytes of garbage). If the decode produced
+            # something unprintable, the raw string was the value all along.
+            if not _extract_text(data) and raw.strip():
+                data = raw.encode("utf-8", errors="replace")
+    elif isinstance(raw, list) and all(isinstance(item, int) for item in raw):
+        try:
+            data = bytes(item & 0xFF for item in raw)
+        except ValueError:
+            return None
+    else:
+        return None
+    return _extract_text(data)
+
+
+def _extract_text(data: bytes) -> str | None:
+    """The printable prefix of a NUL-padded byte buffer, or ``None``.
+
+    Strict on purpose: a buffer that is not clean printable ASCII up to its
+    first NUL is treated as "not text at all" rather than salvaged, because the
+    caller uses that verdict to tell real base64 apart from a plain string that
+    merely decodes as base64.
+    """
+    prefix = data.split(b"\x00", 1)[0]
+    try:
+        text = prefix.decode("ascii")
+    except UnicodeDecodeError:
+        return None
+    if not all(character.isprintable() for character in text):
+        return None
+    return text.strip() or None
+
+
 class XPlaneNotReachable(RuntimeError):
     """The X-Plane Web API did not answer. Is the sim running with the API enabled?"""
 
@@ -349,7 +418,10 @@ class XPlaneSimAdapter:
                 "Start X-Plane 12.1 or newer and make sure its Web API is enabled."
             ) from exc
 
-        wanted = {path: key for key, path in DATAREFS.items()}
+        # Optional datarefs ride the same index scan but never gate the
+        # connect: absence just means the reads that want them answer
+        # "unknown". Only the required set below can fail the connection.
+        wanted = {path: key for key, path in (DATAREFS | OPTIONAL_DATAREFS).items()}
         index: dict[str, int] = {}
         for entry in response.json().get("data", []):
             key = wanted.get(entry.get("name"))
@@ -449,6 +521,36 @@ class XPlaneSimAdapter:
             on_ground=bool(values["on_ground"]),
         )
 
+    async def get_airframe(self) -> AirframeInfo:
+        """What the sim reports about the loaded airframe. Every field degrades.
+
+        Built from :data:`OPTIONAL_DATAREFS`, so a build that does not expose
+        one of them — their Web API availability is unverified across 12.x —
+        answers ``None`` for that field instead of failing. A value that does
+        not decode or is out of range degrades the same way: this read informs
+        a *default* (the approach category of issue #82), and a wrong guess
+        made loudly downstream beats a connection refused here.
+        """
+        raw_icao, raw_vso = await asyncio.gather(
+            self._read_optional("acf_icao"),
+            self._read_optional("acf_vso"),
+        )
+        vso: float | None = None
+        if raw_vso is not None:
+            try:
+                candidate = float(raw_vso)
+            except (TypeError, ValueError):
+                candidate = 0.0
+            if candidate > 0.0:
+                vso = candidate
+        return AirframeInfo(icao_type=_decode_dataref_text(raw_icao), vso_kias=vso)
+
+    async def _read_optional(self, key: str) -> Any | None:
+        """Read one optional dataref, or ``None`` when this build lacks it."""
+        if key not in self._ids:
+            return None
+        return await self._read(key)
+
     async def read_dataref(self, key: str) -> Any:
         """Read one dataref by its short :data:`DATAREFS` key.
 
@@ -540,7 +642,12 @@ class XPlaneSimAdapter:
                 await asyncio.sleep(_RELEASE_SETTLE_S)
 
     async def set_position(
-        self, position: GeoPosition, heading_deg: float, *, ias_kt: float | None = None
+        self,
+        position: GeoPosition,
+        heading_deg: float,
+        *,
+        ias_kt: float | None = None,
+        vertical_speed_fpm: float | None = None,
     ) -> None:
         """Teleport the aircraft, carrying ``ias_kt`` — or its current speed — onto the new heading.
 
@@ -571,6 +678,11 @@ class XPlaneSimAdapter:
             ias_kt: Indicated airspeed to arrive at. ``None`` reads the
                 aircraft's current speed instead — see the note below on why a
                 placement must not rely on that.
+            vertical_speed_fpm: Vertical speed to arrive with, feet per minute,
+                positive up. ``None`` arrives level. A caller that applied a
+                setup carrying a descent must pass it here too, for exactly the
+                reason ``ias_kt`` exists: the vector written here is the whole
+                velocity, and it used to be unconditionally level (issue #81).
 
         Raises:
             XPlaneRepositionFailed: if the aircraft did not arrive within
@@ -606,7 +718,9 @@ class XPlaneSimAdapter:
                     # second is both the likelier and the recoverable one.
                     origin = await self._settled_local_frame_origin(deadline)
                 attempts += 1
-                await self._write_placement(position, heading_deg, tas_kt, origin)
+                await self._write_placement(
+                    position, heading_deg, tas_kt, origin, vertical_speed_fpm
+                )
                 arrived = await self._await_arrival(position, deadline)
                 if arrived:
                     break
@@ -630,6 +744,7 @@ class XPlaneSimAdapter:
         heading_deg: float,
         tas_kt: float,
         origin: LocalFrameOrigin,
+        vertical_speed_fpm: float | None = None,
     ) -> None:
         """Steps 2 and 3 of the procedure, expressed in one frame.
 
@@ -645,12 +760,14 @@ class XPlaneSimAdapter:
             heading_deg: Target true heading in degrees.
             tas_kt: True airspeed to carry onto that heading, in knots.
             origin: The frame ``position`` is to be projected into.
+            vertical_speed_fpm: Vertical component of the arrival velocity,
+                feet per minute, positive up. ``None`` arrives level.
         """
         target = world_to_local(origin, position)
         await self._write("local_x", target.x_m)
         await self._write("local_y", target.y_m)
         await self._write("local_z", target.z_m)
-        await self._write_velocity_vector(heading_deg, tas_kt)
+        await self._write_velocity_vector(heading_deg, tas_kt, vertical_speed_fpm)
         await self._write("psi", heading_deg % 360.0)
 
     async def _settled_local_frame_origin(self, deadline: float) -> LocalFrameOrigin:
@@ -754,11 +871,23 @@ class XPlaneSimAdapter:
             temperature_from_deviation_c(target_ft, deviation_c),
         )
 
-    async def _write_velocity_vector(self, heading_deg: float, tas_kt: float) -> None:
+    async def _write_velocity_vector(
+        self, heading_deg: float, tas_kt: float, vertical_speed_fpm: float | None = None
+    ) -> None:
         """Set the local velocity vector to ``tas_kt`` **true** along ``heading_deg``.
 
         Writing zeros instead is what drops a repositioned aircraft out of the
         sky below stall speed, so the caller's speed is always carried over.
+
+        ``vertical_speed_fpm`` is the up axis of the same vector. ``None`` (and
+        0.0) arrive level — the historical behaviour, and the right one for
+        every placement that is not descending. A value makes the aircraft
+        already going down (or up) the slope when the flight model takes over:
+        without it, the descent rate a setup commanded was destroyed here one
+        call later (issue #81 — the vertical twin of issue #39). The horizontal
+        component deliberately stays the full TAS rather than its cosine
+        projection: at a 3° glide the difference is 0.14 %, noise against the
+        wind and pressure effects issue #42 tracks.
 
         This is the mechanical half only. The vector X-Plane consumes is a true
         one; turning the instructor's *indicated* speed into it belongs to
@@ -769,11 +898,14 @@ class XPlaneSimAdapter:
             heading_deg: True heading to fly, in degrees.
             tas_kt: True airspeed in knots. Negative values are clamped to zero
                 rather than flying the aircraft backwards.
+            vertical_speed_fpm: Vertical speed in feet per minute, positive up.
+                ``None`` means level.
         """
         speed_ms = max(0.0, tas_kt) * _METRES_PER_SECOND_PER_KNOT
         heading = math.radians(heading_deg % 360.0)
+        vertical_ms = (vertical_speed_fpm or 0.0) * _METRES_PER_FOOT / 60.0
         await self._write("local_vx", speed_ms * math.sin(heading))
-        await self._write("local_vy", 0.0)
+        await self._write("local_vy", vertical_ms)
         await self._write("local_vz", -speed_ms * math.cos(heading))
 
     async def clear_crash_state(self) -> None:
@@ -853,25 +985,22 @@ class XPlaneSimAdapter:
         Raises:
             CapabilityNotSupported: for fields belonging to a capability this
                 adapter does not declare (mass and fuel).
-            NotImplementedError: for fields whose X-Plane write path has not
-                been established yet.
         """
         if setup.gross_weight_kg is not None or setup.fuel_kg is not None:
             raise CapabilityNotSupported("xplane", "can_set_fuel_payload")
-
-        if setup.ils_freq_khz is not None:
-            raise NotImplementedError(
-                "ILS tuning is not wired up yet: X-Plane exposes the ILS receiver through "
-                "the NAV radios, so this needs the approach's localiser frequency routed "
-                "to nav1_freq_hz. Arrives with the Navigation manager."
-            )
 
         await self._write_configuration(setup)
         await self._write_autopilot(setup)
         await self._write_flight_model_state(setup)
 
     async def _write_configuration(self, setup: AircraftSetup) -> None:
-        """Write the switch-and-knob half of a setup. No freeze required."""
+        """Write the switch-and-knob half of a setup. No freeze required.
+
+        ``ils_freq_khz`` is an alias for the NAV1 frequency: X-Plane's ILS
+        receiver *is* the NAV1 radio, so there is exactly one dataref behind
+        the two fields. When a setup carries both, the explicit
+        ``nav1_freq_khz`` wins — a radio field beats its alias.
+        """
         writes: list[tuple[str, float | int | bool]] = []
 
         if setup.flaps_ratio is not None:
@@ -880,12 +1009,15 @@ class XPlaneSimAdapter:
             writes.append(("speedbrake_ratio", setup.speedbrake_ratio))
         if setup.elevator_trim_ratio is not None:
             writes.append(("elevator_trim", setup.elevator_trim_ratio))
+        if setup.throttle_ratio is not None:
+            writes.append(("throttle_ratio", setup.throttle_ratio))
         if setup.gear_down is not None:
             writes.append(("gear_handle_down", int(setup.gear_down)))
         if setup.autobrake_level is not None:
             writes.append(("autobrake_level", setup.autobrake_level))
-        if setup.nav1_freq_khz is not None:
-            writes.append(("nav1_freq", setup.nav1_freq_khz // 10))
+        nav1_khz = setup.nav1_freq_khz if setup.nav1_freq_khz is not None else setup.ils_freq_khz
+        if nav1_khz is not None:
+            writes.append(("nav1_freq", nav1_khz // 10))
         if setup.nav2_freq_khz is not None:
             writes.append(("nav2_freq", setup.nav2_freq_khz // 10))
         if setup.obs1_deg is not None:
@@ -1033,12 +1165,15 @@ class XPlaneSimAdapter:
 
             # Airspeed is not a dataref you can assign: it is derived from the
             # velocity vector, so it is written last, along whichever heading the
-            # setup asked for (or the aircraft's current one).
+            # setup asked for (or the aircraft's current one). The vertical
+            # speed rides the same vector: the `vh_ind_fpm` write above is the
+            # indicator, this is the physics, and writing only the former left
+            # the aircraft level (issue #81).
             if tas_kt is not None:
                 heading = setup.heading_deg
                 if heading is None:
                     heading = float(await self._read("psi"))
-                await self._write_velocity_vector(heading, tas_kt)
+                await self._write_velocity_vector(heading, tas_kt, setup.vertical_speed_fpm)
 
     async def _write_altitude(self, altitude_ft: float) -> None:
         """Move the aircraft vertically, leaving its horizontal position alone."""
