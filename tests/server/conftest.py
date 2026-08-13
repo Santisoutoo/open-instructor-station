@@ -142,6 +142,24 @@ FIX_GOXOL = Fix(
     region_code="ZZ",
 )
 
+#: A second fix **with the same identifier** in another region — fix idents are
+#: not globally unique either, and without a collision the route's list-ness is
+#: never exercised (same reasoning as the ZZT navaid pair above).
+FIX_GOXOL_ELSEWHERE = Fix(
+    ident="GOXOL",
+    position=GeoPosition(latitude=10.0, longitude=10.0),
+    region_code="YY",
+)
+
+#: A terminal fix on the field, 1.2 NM north of the reference point, so the
+#: spatial form has something nearer than GOXOL (30 NM out) to rank first.
+FIX_ZZF01 = Fix(
+    ident="ZZF01",
+    position=GeoPosition(latitude=40.02, longitude=-3.0),
+    region_code="ZZ",
+    terminal_airport_icao="ZZZZ",
+)
+
 HOLD_GOXOL = Hold(
     fix=Waypoint(ident="GOXOL", kind="fix", position=FIX_GOXOL.position, region_code="ZZ"),
     inbound_course_mag_deg=180.0,
@@ -198,7 +216,7 @@ def build_provider() -> InMemoryNavdataProvider:
         runways=[RUNWAY_36, RUNWAY_18],
         parking=[STAND],
         navaids=[VOR_ZZT, VOR_ZZT_ELSEWHERE, NDB_ZZN],
-        fixes=[FIX_GOXOL],
+        fixes=[FIX_GOXOL, FIX_GOXOL_ELSEWHERE, FIX_ZZF01],
         holds=[HOLD_GOXOL],
         procedures=[SID],
     )

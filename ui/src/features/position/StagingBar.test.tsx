@@ -44,6 +44,8 @@ const PREVIEW: PlacementPreview = {
     heading_deg: 0,
     ias_kt: 120,
     label: 'ZZZZ 36 10 NM final',
+    profile: 'final',
+    glideslope_deg: 3,
   },
   setup: { altitude_ft: 4184.4, heading_deg: 0, ias_kt: 120 },
   schematic: {

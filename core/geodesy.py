@@ -76,26 +76,33 @@ from __future__ import annotations
 import math
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import Literal, assert_never
+from typing import Any, Literal, assert_never
 
 from geographiclib.geodesic import Geodesic
 from pydantic import BaseModel, ConfigDict, Field
 
 from core.atmosphere import tas_from_ias
-from core.models import AircraftSetup, GeoPosition, Runway
+from core.models import AircraftSetup, GeoPosition, Ils, LightsSetup, Runway
 from core.navdata.models import Hold, Procedure, ProcedureLeg, Waypoint
 
 __all__ = [
     "APPROACH_CATEGORY_CIRCLING_IAS_KT",
     "APPROACH_CATEGORY_VAT_KT",
+    "BASE_FLAPS_RATIO",
+    "CIRCUIT_THROTTLE",
+    "CRUISE_THROTTLE",
     "DEFAULT_APPROACH_CATEGORY",
     "DEFAULT_GLIDESLOPE_DEG",
     "DEFAULT_HOLD_ENTRY_DISTANCE_NM",
     "DEFAULT_PATTERN_ALTITUDE_AGL_FT",
     "DEFAULT_PATTERN_LEG_DISTANCE_NM",
     "DEFAULT_PATTERN_WIDTH_NM",
+    "FEET_PER_MINUTE_PER_KNOT",
     "FEET_PER_NAUTICAL_MILE",
     "FINAL_DISTANCES_NM",
+    "FINAL_FLAPS_RATIO",
+    "FINAL_THROTTLE",
+    "FINAL_TRIM",
     "GROUND_IAS_KT",
     "HOLD_LEG_TIME_ALTITUDE_FT",
     "HOLD_LEG_TIME_HIGH_MIN",
@@ -117,6 +124,7 @@ __all__ = [
     "PatternPlacement",
     "PatternSide",
     "Placement",
+    "PlacementProfile",
     "RunwayPlacement",
     "TurnDirection",
     "coordinate_placement",
@@ -151,6 +159,12 @@ PatternLeg = Literal["downwind", "base", "crosswind", "upwind"]
 
 #: Which side of the runway the pattern is flown on.
 PatternSide = Literal["left", "right"]
+
+#: What kind of flying a placement puts the aircraft into. The profile decides
+#: the configuration :meth:`Placement.to_setup` emits — gear, flaps, throttle,
+#: trim, descent — because a short final is not configured like a hold, and
+#: speed alone is not a stabilised approach (issue #8).
+PlacementProfile = Literal["final", "circuit", "airborne", "ground"]
 
 #: The finals the Position Manager offers, named after their distance out.
 FinalPlacement = Literal[
@@ -321,6 +335,37 @@ DEFAULT_APPROACH_CATEGORY: ApproachCategory = "B"
 #: nowhere else.
 GROUND_IAS_KT: float = 0.0
 
+#: Horizontal feet covered per minute for each knot of ground speed:
+#: 6076.115486 ft per NM / 60 min ≈ 101.269. The descent arithmetic on a final
+#: is built on it — ground speed ≈ IAS at approach altitudes (and in the still
+#: air of a placement they are equal by construction), so the rate that holds a
+#: glidepath is ``ias_kt · this · tan(glideslope)``: -478 fpm for 90 kt on a
+#: 3° slope, which is the number a pilot expects to see on the VSI.
+FEET_PER_MINUTE_PER_KNOT: float = FEET_PER_NAUTICAL_MILE / 60.0
+
+#: The throttle and trim each placement profile hands over.
+#:
+#: **A hand-off state for a pilot, not a flight model.** These are fixed,
+#: airframe-generic constants — approach power and a touch of nose-up trim for
+#: a 3° descent in landing configuration — deliberately of the same honesty
+#: class as the category speed tables above: named here, disclosed verbatim in
+#: the preview notes, and always overridable by the instructor's sparse setup
+#: overlay, which wins by the existing merge order. Per-airframe trim curves
+#: are out of scope on purpose: a pilot is at the controls in a real session
+#: (issue #81's own framing), so the profile only has to hand over an
+#: aeroplane *near* its trimmed state instead of diverging away from it.
+FINAL_THROTTLE: float = 0.30
+FINAL_TRIM: float = 0.10
+CIRCUIT_THROTTLE: float = 0.50
+CRUISE_THROTTLE: float = 0.60
+
+#: Flap settings, same honesty class as the throttle and trim constants above.
+#: A final gets a mid-setting rather than full landing flap because full flap
+#: at a category-table speed exceeds a jet's Vfe — 0.5 is survivable
+#: everywhere. A base leg gets the first notch; every other leg is clean.
+FINAL_FLAPS_RATIO: float = 0.5
+BASE_FLAPS_RATIO: float = 0.25
+
 #: Distance out from the threshold, in nautical miles, for each named final.
 FINAL_DISTANCES_NM: Mapping[FinalPlacement, float] = MappingProxyType(
     {
@@ -367,10 +412,11 @@ class Placement(BaseModel):
     Everything an instructor station needs to reposition, and nothing about how
     the repositioning happens — writing it is the adapter's job.
 
-    ``ias_kt`` has **no default on purpose**. It is the one field of this model
-    that cannot be inferred from geometry, and leaving it out is precisely the
-    defect that put an aircraft on a perfect 10 NM final at 0 kt, so a new
-    placement type cannot be written without answering the question.
+    ``ias_kt`` and ``profile`` have **no default on purpose**. They are the two
+    fields of this model that cannot be inferred from geometry, and leaving the
+    speed out is precisely the defect that put an aircraft on a perfect 10 NM
+    final at 0 kt — so a new placement type cannot be written without answering
+    both questions: how fast, and what kind of flying this is.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -392,6 +438,30 @@ class Placement(BaseModel):
         min_length=1,
         description='Human-readable description, e.g. "LEMD 32L 10 NM final".',
     )
+    profile: PlacementProfile = Field(
+        description=(
+            "What kind of flying this placement is; decides the configuration to_setup() "
+            "emits. Required, no default — the same philosophy as ias_kt: a new placement "
+            "type cannot be written without answering the question."
+        )
+    )
+    ils: Ils | None = Field(
+        default=None,
+        description=(
+            "The ILS an approach placement is flown to, when the runway publishes one. "
+            "to_setup() tunes NAV1 and the OBS from it, so no caller can place an aircraft "
+            "on an approach while forgetting the radios. Finals only."
+        ),
+    )
+    glideslope_deg: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Glidepath angle in degrees; the descent rate follows from it. Finals only.",
+    )
+    pattern_leg: PatternLeg | None = Field(
+        default=None,
+        description="Which leg of the circuit; gear and flaps differ per leg. Circuit only.",
+    )
 
     @property
     def altitude_ft(self) -> float:
@@ -401,22 +471,86 @@ class Placement(BaseModel):
     def to_setup(self) -> AircraftSetup:
         """The aircraft state to apply **before** the reposition is written.
 
-        Only the three fields the geometry of a placement actually determines
-        are set — altitude, heading and speed. Every other field is left
-        ``None``, which an adapter reads as *leave that aspect untouched*.
-
-        The remaining thirteen fields of :class:`~core.models.AircraftSetup` —
-        mass, flaps, gear, spoilers, autobrake, lights, radios — are the full
-        pre-teleport setup, and they depend on the placement *profile* (a short
-        final is not configured like a 20 NM one) rather than on where the point
-        is. That is issue #8's, and it extends this method rather than replacing
-        it.
+        Three fields come from the geometry — altitude, heading and speed —
+        and the rest from the placement's :attr:`profile`, because a short
+        final is configured (gear, flaps, throttle, trim, descent, radios) and
+        a hold is merely flown level and clean. Speed alone is not a stabilised
+        approach; the profile's configuration is the rest of it (issue #8).
+        Anything the profile does not determine is left ``None``, which an
+        adapter reads as *leave that aspect untouched*.
         """
         return AircraftSetup(
             altitude_ft=self.position.altitude_ft,
             heading_deg=self.heading_deg,
             ias_kt=self.ias_kt,
+            **_profile_setup(self),
         )
+
+
+def _profile_setup(placement: Placement) -> dict[str, Any]:
+    """The configuration a placement's profile adds to its geometry.
+
+    One table, four rows. The numbers are the module's named hand-off
+    constants — see :data:`FINAL_THROTTLE` for what they are worth and why
+    they are deliberately airframe-generic.
+    """
+    profile = placement.profile
+    if profile == "final":
+        setup: dict[str, Any] = {
+            "gear_down": True,
+            "flaps_ratio": FINAL_FLAPS_RATIO,
+            "throttle_ratio": FINAL_THROTTLE,
+            "elevator_trim_ratio": FINAL_TRIM,
+            "roll_deg": 0.0,
+            "lights": LightsSetup(landing=True),
+        }
+        if placement.glideslope_deg is not None:
+            # In the still air of a placement ground speed equals IAS, one knot
+            # covers FEET_PER_MINUTE_PER_KNOT feet of ground per minute, and the
+            # rate that holds the slope is that run times its gradient: -478 fpm
+            # for 90 kt on 3°. Without it the aircraft arrives level, 0 fpm on a
+            # 3° path, and immediately diverges from the glideslope (#81).
+            setup["vertical_speed_fpm"] = -(
+                placement.ias_kt
+                * FEET_PER_MINUTE_PER_KNOT
+                * math.tan(math.radians(placement.glideslope_deg))
+            )
+        if placement.ils is not None:
+            setup["nav1_freq_khz"] = placement.ils.frequency_khz
+            setup["obs1_deg"] = placement.ils.localizer_mag_deg
+        return setup
+    if profile == "circuit":
+        # Configuration follows the leg: the aircraft configures as it comes
+        # round the circuit, so downwind and base carry the gear and base the
+        # first notch of flap, while upwind and crosswind are still clean.
+        leg = placement.pattern_leg
+        return {
+            "gear_down": leg in ("downwind", "base"),
+            "flaps_ratio": BASE_FLAPS_RATIO if leg == "base" else 0.0,
+            "throttle_ratio": CIRCUIT_THROTTLE,
+            "elevator_trim_ratio": 0.0,
+            "roll_deg": 0.0,
+            "vertical_speed_fpm": 0.0,
+        }
+    if profile == "airborne":
+        return {
+            "gear_down": False,
+            "flaps_ratio": 0.0,
+            "throttle_ratio": CRUISE_THROTTLE,
+            "elevator_trim_ratio": 0.0,
+            "roll_deg": 0.0,
+            "vertical_speed_fpm": 0.0,
+        }
+    if profile == "ground":
+        # Roll and vertical speed are deliberately left None: the aircraft is
+        # sitting on its gear and both belong to the terrain, not the placement.
+        return {
+            "gear_down": True,
+            "flaps_ratio": 0.0,
+            "throttle_ratio": 0.0,
+            "elevator_trim_ratio": 0.0,
+        }
+    assert_never(profile)  # pragma: no cover - exhaustive over PlacementProfile
 
 
 def _normalise_bearing(bearing_deg: float) -> float:
@@ -788,6 +922,7 @@ def final_placement(
     glideslope_deg: float = DEFAULT_GLIDESLOPE_DEG,
     ias_kt: float | None = None,
     category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+    ils: Ils | None = None,
 ) -> Placement:
     """Place the aircraft on a named final, on the glidepath, at approach speed.
 
@@ -800,6 +935,9 @@ def final_placement(
             ``category``'s threshold speed from :data:`APPROACH_CATEGORY_VAT_KT`.
         category: The aircraft's ICAO approach category, used only when
             ``ias_kt`` is ``None``.
+        ils: The ILS serving this approach, when the runway publishes one —
+            typically ``runway.ils``. Carried on the placement so its setup
+            tunes NAV1 and the OBS, and the radios arrive with the geometry.
 
     Returns:
         A :class:`Placement` on the extended centreline at the glidepath
@@ -815,6 +953,9 @@ def final_placement(
         heading_deg=_normalise_bearing(runway.true_bearing_deg),
         ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_VAT_KT, category),
         label=_runway_label(runway, what),
+        profile="final",
+        ils=ils,
+        glideslope_deg=glideslope_deg,
     )
 
 
@@ -873,6 +1014,8 @@ def pattern_placement(
         heading_deg=heading_deg,
         ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
         label=_runway_label(runway, f"{side}-hand {leg}"),
+        profile="circuit",
+        pattern_leg=leg,
     )
 
 
@@ -886,6 +1029,7 @@ def resolve_runway_placement(
     leg_distance_nm: float = DEFAULT_PATTERN_LEG_DISTANCE_NM,
     ias_kt: float | None = None,
     category: ApproachCategory = DEFAULT_APPROACH_CATEGORY,
+    ils: Ils | None = None,
 ) -> Placement:
     """Resolve any name in :data:`RUNWAY_PLACEMENTS` against a runway.
 
@@ -908,6 +1052,10 @@ def resolve_runway_placement(
             approach speed on a final and a circling speed on a circuit leg.
         category: The aircraft's ICAO approach category, used only when
             ``ias_kt`` is ``None``.
+        ils: The ILS serving the runway end, when one is published — typically
+            ``runway.ils``, passed explicitly so a caller resolving a
+            non-precision exercise on an ILS runway can withhold it. Finals
+            only; a circuit is flown visually.
 
     Returns:
         The resolved :class:`Placement`, always with a flying speed.
@@ -928,6 +1076,7 @@ def resolve_runway_placement(
                 glideslope_deg=glideslope_deg,
                 ias_kt=ias_kt,
                 category=category,
+                ils=ils,
             )
         case (
             "left_upwind"
@@ -974,12 +1123,17 @@ def coordinate_placement(
         default is *stationary*, and a caller putting the aircraft **airborne**
         must state ``ias_kt`` or it will arrive below stall speed. That is why
         this is the only placement in the module whose default is 0 kt.
+
+        The profile follows the speed: 0 kt is definitionally not flying, so a
+        stationary coordinate is ``"ground"`` — gear down, everything at idle —
+        and any other speed is ``"airborne"``.
     """
     return Placement(
         position=position,
         heading_deg=_normalise_bearing(heading_deg),
         ias_kt=ias_kt,
         label=f"{position.latitude:.4f}, {position.longitude:.4f}",
+        profile="ground" if ias_kt == GROUND_IAS_KT else "airborne",
     )
 
 
@@ -1045,6 +1199,7 @@ def waypoint_placement(
         heading_deg=_contextual_heading_deg(point, heading_deg, next_fix, previous_fix),
         ias_kt=_resolve_ias_kt(ias_kt, APPROACH_CATEGORY_CIRCLING_IAS_KT, category),
         label=f"over {ident}",
+        profile="airborne",
     )
 
 
@@ -1391,6 +1546,7 @@ def hold_placement(
         heading_deg=heading_deg,
         ias_kt=speed,
         label=f"{hold.fix.ident} hold — {_HOLD_PLACEMENT_LABELS[placement]}",
+        profile="airborne",
     )
 
 
@@ -1452,6 +1608,7 @@ def hold_entry_placement(
         heading_deg=course_to_fix,
         ias_kt=speed,
         label=f"{hold.fix.ident} hold — {entry} entry",
+        profile="airborne",
     )
 
 
@@ -1557,6 +1714,7 @@ def procedure_leg_placement(
         heading_deg=_contextual_heading_deg(fix.position, heading_deg, next_fix, previous_fix),
         ias_kt=speed,
         label=_leg_label(leg, fix, procedure_ident),
+        profile="airborne",
     )
 
 
