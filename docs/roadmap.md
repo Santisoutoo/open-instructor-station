@@ -104,7 +104,9 @@ STAR, on an approach, in a holding.
 
 **Automatic pre-teleport setup.** The complete state configuration from the feature spec:
 altitude, IAS, vertical speed, heading, pitch, roll, weight, fuel, flaps, spoilers, gear,
-autobrake, lights, NAV frequencies, ILS frequency and OBS course.
+autobrake, lights, NAV frequencies, ILS frequency and OBS course. **#8 closes here with mass
+(weight/fuel) split off to the Fuel & Payload Manager (#16, Phase 2)** — mass does not gate a
+stabilised placement, so a placement stays flyable without it.
 
 **Aircraft Control panel** — live read over the WebSocket, writes over REST.
 

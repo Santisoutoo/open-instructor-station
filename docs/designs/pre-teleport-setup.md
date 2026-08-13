@@ -172,6 +172,15 @@ a follow-up, not built here: the issue's stated ask is the category.
   fuel-tank arrays, payload stations, contract coverage and UI gating: that is the Fuel &
   Payload Manager (#16, Phase 2) whole. Mass does not gate a stabilised placement. The
   fields keep raising `CapabilityNotSupported`; #8 closes with that item split off to #16.
+
+  **Because #8 emits no mass, the §9.3 gap in `position-manager.md` stays latent and safe.**
+  That deviation — the whole `apply` fails rather than degrading when a setup carries a field
+  behind a capability the adapter lacks — was flagged as one that "stops being latent the day #8
+  lands and `to_setup()` starts setting mass". #8 lands *without* setting mass, so
+  `Placement.to_setup()` still produces only fields behind `can_set_aircraft_state`; nothing it
+  emits is gated by `can_set_fuel_payload`. No placement can therefore trip the whole-call
+  refusal. Capability-filtering is revisited with #16, which is the first thing that will make
+  `to_setup()` emit a fuel/payload field.
 - **Wind in the velocity vector** — #42, Phase 2 with the Weather Manager's datarefs.
 - **Merging the `apply_setup` + `set_position` freezes** — each pays its own ~1 s release
   settle and the measured apply latency was 3.3–4.1 s against the 5 s criterion. Halving
