@@ -54,6 +54,7 @@ const FAKE_MANIFEST: AircraftControlManifest = {
     entry('gear', 'gear_down', true),
     entry('autobrake', 'autobrake_level', true),
     entry('trim', 'elevator_trim_ratio', true),
+    entry('throttle', 'throttle_ratio', true),
     entry('lights', 'lights', true),
     entry('altitude', 'altitude_ft', true),
     entry('speed', 'ias_kt', true),

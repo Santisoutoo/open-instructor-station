@@ -84,6 +84,7 @@ AircraftControlId = Literal[
     "gear",
     "autobrake",
     "trim",
+    "throttle",
     "lights",
     # -- Direct flight state --
     "altitude",
@@ -124,6 +125,7 @@ _CONTROL_FIELDS: Mapping[AircraftControlId, tuple[str, str]] = {
     "gear": ("gear_down", DEFAULT_CAPABILITY),
     "autobrake": ("autobrake_level", DEFAULT_CAPABILITY),
     "trim": ("elevator_trim_ratio", DEFAULT_CAPABILITY),
+    "throttle": ("throttle_ratio", DEFAULT_CAPABILITY),
     "lights": ("lights", DEFAULT_CAPABILITY),
     "altitude": ("altitude_ft", DEFAULT_CAPABILITY),
     "speed": ("ias_kt", DEFAULT_CAPABILITY),
