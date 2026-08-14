@@ -31,12 +31,14 @@ from core.geodesy import (
     PATTERN_PLACEMENTS,
     RUNWAY_PLACEMENTS,
     SHORT_FINAL_DISTANCE_NM,
+    VAT_FROM_VSO,
     ApproachCategory,
     FinalPlacement,
     PatternLeg,
     PatternPlacement,
     Placement,
     RunwayPlacement,
+    category_for_vat,
     coordinate_placement,
     distance_and_bearing,
     final_approach_point,
@@ -813,6 +815,56 @@ def test_heavier_categories_fly_faster() -> None:
 def test_a_circuit_is_flown_faster_than_it_is_landed() -> None:
     for category in get_args(ApproachCategory):
         assert APPROACH_CATEGORY_CIRCLING_IAS_KT[category] > APPROACH_CATEGORY_VAT_KT[category]
+
+
+@pytest.mark.parametrize(
+    ("vat_kt", "expected"),
+    [
+        # Either side of every published band boundary: A <91, B 91-120,
+        # C 121-140, D 141-165, E 166-210.
+        (90.0, "A"),
+        (91.0, "B"),
+        (120.0, "B"),
+        (121.0, "C"),
+        (140.0, "C"),
+        (141.0, "D"),
+        (165.0, "D"),
+        (166.0, "E"),
+        (210.0, "E"),
+    ],
+)
+def test_the_category_bands_by_vat(vat_kt: float, expected: ApproachCategory) -> None:
+    """The PANS-OPS bands, walked at their boundaries — off-by-one is the whole risk."""
+    assert category_for_vat(vat_kt) == expected
+
+
+def test_a_vat_above_the_table_clamps_to_e() -> None:
+    """There is no category F: the table ends at 210 kt, and faster is still E."""
+    assert category_for_vat(211.0) == "E"
+    assert category_for_vat(400.0) == "E"
+
+
+@pytest.mark.parametrize("vat_kt", [0.0, -1.0])
+def test_a_non_positive_vat_is_a_caller_bug(vat_kt: float) -> None:
+    """Zero cannot be laundered into 'category A' — upstream arithmetic went wrong."""
+    with pytest.raises(ValueError, match="positive"):
+        category_for_vat(vat_kt)
+
+
+def test_the_band_tops_agree_with_the_vat_table() -> None:
+    """Two statements of the same published table must never drift apart:
+    every category's top-of-band speed classifies as that category."""
+    for category, top_kt in APPROACH_CATEGORY_VAT_KT.items():
+        assert category_for_vat(top_kt) == category
+
+
+def test_a_c172_stall_speed_derives_category_a() -> None:
+    """Issue #82's motivating example: Vso 48 kt → V_AT 62.4 kt → category A —
+    not the B default that put a trainer on final at 120 kt."""
+    assert VAT_FROM_VSO == 1.3
+    vat_kt = VAT_FROM_VSO * 48.0
+    assert vat_kt == pytest.approx(62.4)
+    assert category_for_vat(vat_kt) == "A"
 
 
 @pytest.mark.parametrize("name", list(FINAL_DISTANCES_NM))
