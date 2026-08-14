@@ -18,14 +18,17 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.models import AirframeInfo
 from core.navdata.provider import NavdataProvider
 from core.sim_adapter import SimAdapter
 
 __all__ = [
     "Settings",
     "get_adapter",
+    "get_airframe_info",
     "get_navdata",
     "get_settings",
+    "load_airframe_info",
     "reset_adapter",
     "reset_navdata",
 ]
@@ -79,6 +82,48 @@ def get_adapter() -> SimAdapter:
     return _build_adapter(get_settings())
 
 
+#: What the loaded airframe is known to be, read once at adapter connect. A
+#: module-level value next to the adapter singleton rather than an ``lru_cache``
+#: because it is *written* by the lifespan, not computed on first read — the
+#: all-``None`` model is the honest answer until a connect has happened.
+_airframe_info: AirframeInfo = AirframeInfo()
+
+
+async def load_airframe_info() -> AirframeInfo:
+    """Read the loaded airframe from the connected adapter and cache it.
+
+    Called from the app lifespan, immediately after
+    :meth:`~core.sim_adapter.SimAdapter.connect` succeeds. This is the **only**
+    place the airframe is read from the simulator: everything downstream —
+    notably the approach-category derivation in the position routes (issue
+    #82) — reads the cache through :func:`get_airframe_info` instead, so no
+    request handler ever awaits the simulator for it.
+    """
+    global _airframe_info
+    _airframe_info = await get_adapter().get_airframe()
+    return _airframe_info
+
+
+def get_airframe_info() -> AirframeInfo:
+    """The airframe cached at adapter connect. Synchronous, no simulator I/O.
+
+    ``preview_placement`` is deliberately ``def`` and never awaits the
+    simulator, which is why this is a cache read and not a call.
+
+    **The cache can be stale.** The loaded airframe changes rarely, but a user
+    who swaps aircraft mid-session is served the *previous* aircraft's stall
+    speed — and therefore its approach category — until the server reconnects.
+    That is accepted: the failure mode is exactly the pre-#82 status quo, a
+    wrong-but-disclosed category default, and the preview's notes still say
+    where the number came from. A lazy TTL re-read is the noted follow-up if
+    mid-session swaps turn out to matter in practice.
+
+    Before any connect (or after a failed one) this is the all-``None`` model,
+    which downstream reads as "unknown" and degrades to the category B default.
+    """
+    return _airframe_info
+
+
 def _build_navdata(settings: Settings) -> NavdataProvider:
     """Construct the navdata provider named by ``settings``.
 
@@ -130,15 +175,19 @@ def get_navdata() -> NavdataProvider:
 
 
 def reset_adapter() -> None:
-    """Drop the cached settings, adapter and navdata provider.
+    """Drop the cached settings, adapter, navdata provider and airframe.
 
-    All three together: they are read from the same ``Settings`` object, so a
-    test that reconfigures one and leaves another cached would be running
-    against a mismatched pair.
+    All of them together: the first three are read from the same ``Settings``
+    object, so a test that reconfigures one and leaves another cached would be
+    running against a mismatched pair — and the airframe was read from the
+    adapter being dropped, so keeping it would serve the old simulator's
+    aircraft against the new one.
     """
+    global _airframe_info
     get_adapter.cache_clear()
     get_navdata.cache_clear()
     get_settings.cache_clear()
+    _airframe_info = AirframeInfo()
 
 
 def reset_navdata() -> None:
