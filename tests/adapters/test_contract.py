@@ -711,19 +711,73 @@ async def test_apply_setup_leaves_the_autopilot_alone_when_asked_for_nothing(
     Worth its own test because the failure mode is invisible: a writer that read
     ``None`` as "off" would silently disarm a mode the instructor never mentioned
     every time an unrelated control was written.
+
+    Two duck-typed read-backs verify it, and one of them must exist (issue #83 —
+    this test used to ``skip`` itself against a live adapter, which left the
+    contract verified only by the Fake agreeing with itself):
+
+    * The Fake records what was applied; ``applied_setup`` shows the fields the
+      setup never mentioned still ``None``.
+    * A live adapter exposes ``read_dataref`` (the same duck-typing precedent as
+      :func:`_frozen_for_readback` and the throttle test): the four autopilot
+      values the setup does not carry are snapshotted before the write and must
+      read back unchanged after it — while the heading dial, the one field it
+      *does* carry, must have moved, or the four "unchanged" assertions prove
+      nothing. The write is deliberately inert — a heading dial with no servos
+      engaged flies nobody anywhere — and the dial goes back in a ``finally``
+      (live-suite rule 3).
+
+    An adapter exposing neither affordance **fails** this test outright, never
+    skips: a skip here is exactly how the gap stayed hidden.
     """
     if not adapter.capabilities.can_control_autopilot:
         pytest.skip(f"{adapter.name} does not declare can_control_autopilot")
 
-    await adapter.apply_setup(AircraftSetup(target_heading_deg=90.0))
+    read = getattr(adapter, "read_dataref", None)
+    if read is None:
+        await adapter.apply_setup(AircraftSetup(target_heading_deg=90.0))
 
-    applied = getattr(adapter, "applied_setup", None)
-    if applied is None:
-        pytest.skip(f"{adapter.name} exposes no applied-setup read-back")
-    assert applied.target_heading_deg == pytest.approx(90.0)
-    assert applied.autopilot_master is None
-    assert applied.autopilot_nav is None
-    assert applied.flight_director is None
+        applied = getattr(adapter, "applied_setup", None)
+        if applied is None:
+            pytest.fail(
+                f"{adapter.name} exposes neither `applied_setup` nor `read_dataref`, "
+                "so the autopilot None-contract cannot be verified against it. Give "
+                "the adapter a read-back affordance — skipping here is how this gap "
+                "went unverified in the first place (issue #83)."
+            )
+        assert applied.target_heading_deg == pytest.approx(90.0)
+        assert applied.autopilot_master is None
+        assert applied.autopilot_nav is None
+        assert applied.flight_director is None
+        return
+
+    untouched_keys = (
+        "autopilot_mode",
+        "autopilot_altitude_dial_ft",
+        "autopilot_airspeed_dial",
+        "autopilot_vvi_dial_fpm",
+    )
+    before = {key: float(await read(key)) for key in untouched_keys}
+    original_heading = float(await read("autopilot_heading_dial_deg"))
+    # The target must provably differ from where the dial already sits, or
+    # "changed" is not observable. The dial reads back in magnetic degrees.
+    target_heading = 90.0 if abs(original_heading - 90.0) > 5.0 else 180.0
+    try:
+        await adapter.apply_setup(AircraftSetup(target_heading_deg=target_heading))
+
+        after = {key: float(await read(key)) for key in untouched_keys}
+        assert after["autopilot_mode"] == before["autopilot_mode"]
+        assert after["autopilot_altitude_dial_ft"] == pytest.approx(
+            before["autopilot_altitude_dial_ft"]
+        )
+        assert after["autopilot_airspeed_dial"] == pytest.approx(before["autopilot_airspeed_dial"])
+        assert after["autopilot_vvi_dial_fpm"] == pytest.approx(before["autopilot_vvi_dial_fpm"])
+        # The one field the setup did carry must have landed.
+        assert float(await read("autopilot_heading_dial_deg")) == pytest.approx(
+            target_heading, abs=0.5
+        )
+    finally:
+        await adapter.apply_setup(AircraftSetup(target_heading_deg=original_heading))
 
 
 # --------------------------------------------------------------------------

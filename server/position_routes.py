@@ -42,9 +42,11 @@ from core.geodesy import (
     FINAL_DISTANCES_NM,
     GROUND_IAS_KT,
     METRES_PER_NAUTICAL_MILE,
+    VAT_FROM_VSO,
     ApproachCategory,
     Placement,
     RunwayPlacement,
+    category_for_vat,
     coordinate_placement,
     distance_and_bearing,
     hold_placement,
@@ -59,7 +61,7 @@ from core.models import AircraftSetup, AircraftState, GeoPosition, Runway
 from core.navdata.models import Hold, Procedure, ProcedureKind, ProcedureLeg, Waypoint
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
-from server.deps import get_adapter, get_navdata
+from server.deps import get_adapter, get_airframe_info, get_navdata
 
 __all__ = [
     "CAPABILITY_UNAVAILABLE_STATUS",
@@ -381,8 +383,24 @@ def _local_ground_elevation_ft(provider: NavdataProvider, position: GeoPosition)
     return nearby[0].elevation_ft if nearby else 0.0
 
 
-def request_category(request: PlacementRequest) -> ApproachCategory:
-    """The stated approach category, or the project's default.
+def request_category(request: PlacementRequest) -> tuple[ApproachCategory, str | None]:
+    """The approach category to resolve speeds with, and the note that discloses it.
+
+    A fallback chain, most specific source first:
+
+    1. **The category stated in the request.** The instructor's word is final.
+       No note of its own: the speed notes already name the category they used,
+       and the instructor chose it.
+    2. **Derived from the loaded airframe** (issue #82): the stall speed the
+       adapter reported at connect, through the published PANS-OPS arithmetic —
+       ``Vso → 1.3·Vso = V_AT → band``. The note states that whole chain,
+       because a derived category and a guessed one must never read the same.
+       The airframe is a cache and can be stale after a mid-session aircraft
+       swap — see :func:`server.deps.get_airframe_info` for why that is
+       accepted.
+    3. **The project's category B default**, with today's honest story
+       unchanged: the speed notes call the result a category default and tell
+       the instructor to set a speed if they know the airframe.
 
     **The wire says "not stated" with ``null``, not with "B".** Every one of these fields
     could have carried its default in the schema instead, but then a generated client would
@@ -391,7 +409,17 @@ def request_category(request: PlacementRequest) -> ApproachCategory:
     preview's notes exist to report.
     """
     stated = getattr(request, "category", None)
-    return DEFAULT_APPROACH_CATEGORY if stated is None else stated
+    if stated is not None:
+        return stated, None
+    airframe = get_airframe_info()
+    if airframe.vso_kias is not None:
+        vat_kt = VAT_FROM_VSO * airframe.vso_kias
+        category = category_for_vat(vat_kt)
+        return category, (
+            f"Category {category} — derived from the loaded airframe "
+            f"(Vso {airframe.vso_kias:g} kt, V_AT {vat_kt:.0f} kt)."
+        )
+    return DEFAULT_APPROACH_CATEGORY, None
 
 
 def _resolve(
@@ -415,7 +443,7 @@ def _resolve_placement(
 ) -> tuple[Placement, PlacementSchematic, list[str]]:
     notes: list[str] = []
 
-    category = request_category(request)
+    category, category_note = request_category(request)
 
     if isinstance(request, RunwayPlacementRequest):
         runway = _runway(provider, request.airport_icao, request.runway_ident)
@@ -456,6 +484,12 @@ def _resolve_placement(
                 provenance="threshold" if distance_nm is not None else "circling",
             )
         )
+        # The derivation is disclosed only where the category shaped the speed:
+        # an explicit ias_kt makes the category a bystander, and crediting a
+        # bystander is the exact dishonesty these notes exist to avoid. The
+        # same guard repeats at every category-resolved speed below.
+        if request.ias_kt is None and category_note is not None:
+            notes.append(category_note)
         schematic = _runway_schematic(runway, placement, request.placement, glideslope_deg)
         return placement, schematic, notes
 
@@ -527,6 +561,8 @@ def _resolve_placement(
         # A bare fix has no published band, so the category's circling speed is
         # used unclamped, as a generic manoeuvring speed.
         notes.append(_speed_note(request.ias_kt, placement, category, provenance="circling"))
+        if request.ias_kt is None and category_note is not None:
+            notes.append(category_note)
         return placement, PlacementSchematic(), notes
 
     if isinstance(request, ProcedureLegPlacementRequest):
@@ -558,6 +594,8 @@ def _resolve_placement(
                 request.ias_kt, placement, category, provenance=provenance, bound_kt=bound_kt
             )
         )
+        if request.ias_kt is None and category_note is not None:
+            notes.append(category_note)
         notes.append(f"{leg.path_terminator} leg {leg.sequence} of {procedure.ident}.")
         return placement, PlacementSchematic(), notes
 
@@ -593,6 +631,8 @@ def _resolve_placement(
     notes.append(
         _speed_note(request.ias_kt, placement, category, provenance=provenance, bound_kt=bound_kt)
     )
+    if request.ias_kt is None and category_note is not None:
+        notes.append(category_note)
     return placement, PlacementSchematic(), notes
 
 

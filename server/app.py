@@ -37,7 +37,7 @@ from core.models import AircraftSetup, AircraftState
 from core.navdata.provider import NavdataUnavailable
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from server import navdata_routes, position_routes
-from server.deps import get_adapter
+from server.deps import get_adapter, load_airframe_info
 
 __all__ = [
     "CONTROL_IDS",
@@ -84,6 +84,7 @@ AircraftControlId = Literal[
     "gear",
     "autobrake",
     "trim",
+    "throttle",
     "lights",
     # -- Direct flight state --
     "altitude",
@@ -124,6 +125,7 @@ _CONTROL_FIELDS: Mapping[AircraftControlId, tuple[str, str]] = {
     "gear": ("gear_down", DEFAULT_CAPABILITY),
     "autobrake": ("autobrake_level", DEFAULT_CAPABILITY),
     "trim": ("elevator_trim_ratio", DEFAULT_CAPABILITY),
+    "throttle": ("throttle_ratio", DEFAULT_CAPABILITY),
     "lights": ("lights", DEFAULT_CAPABILITY),
     "altitude": ("altitude_ft", DEFAULT_CAPABILITY),
     "speed": ("ias_kt", DEFAULT_CAPABILITY),
@@ -255,6 +257,16 @@ async def _lifespan(app: FastAPI) -> AsyncIterator[None]:
         await adapter.connect()
     except Exception:
         logger.exception("Adapter %r failed to connect at startup", adapter.name)
+    else:
+        # The one read of the loaded airframe (issue #82). Here and not in a
+        # request handler, because the preview route is deliberately sync and
+        # must never await the simulator — it reads the cache this fills. A
+        # failure degrades to the all-None airframe (category B default) and
+        # must not stop the server any more than a failed connect does.
+        try:
+            await load_airframe_info()
+        except Exception:
+            logger.exception("Could not read the loaded airframe from %r", adapter.name)
     try:
         yield
     finally:

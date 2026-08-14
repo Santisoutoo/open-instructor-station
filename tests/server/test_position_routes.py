@@ -39,7 +39,7 @@ from core.geodesy import (
     FEET_PER_MINUTE_PER_KNOT,
     glideslope_altitude_ft,
 )
-from core.models import AircraftSetup, GeoPosition, Ils, LightsSetup, Runway
+from core.models import AircraftSetup, AirframeInfo, GeoPosition, Ils, LightsSetup, Runway
 from core.navdata.in_memory import InMemoryNavdataProvider
 from core.navdata.models import (
     Airport,
@@ -185,6 +185,78 @@ class TestNotes:
         assert "137 kt, exactly as requested." in notes
         # The instructor named the number, so it must not be attributed to a chart.
         assert "category default" not in notes
+
+
+class TestTheCategoryComesFromTheLoadedAirframe:
+    """Issue #82: an unstated category is derived before it is guessed.
+
+    The pre-#82 defect, measured on the Phase 1 live validation: a C172 —
+    category A, V_AT around 62 kt — placed on a 10 NM final at 120 kt, because
+    an unstated category was assumed to be B. Since PR #87 the adapter reports
+    the loaded airframe's stall speed, the lifespan caches it at connect, and
+    ``request_category`` runs the published arithmetic — Vso → 1.3·Vso → band —
+    before falling back to the guess. The chain has to be visible in the notes,
+    because a derived category and a guessed one must never read the same.
+    """
+
+    @pytest.fixture
+    def c172_client(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+        """A client whose adapter reports a C172 (Vso 48 kt).
+
+        Resets the adapter cache on the way **out** as well as in: the airframe
+        cache is refilled at every lifespan startup from whatever adapter is
+        cached, so a C172 fake left behind would quietly hand its category-A
+        speeds to every later test built on the default adapter.
+        """
+        provider = build_provider()
+        monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: provider)
+        monkeypatch.setattr(
+            server.deps,
+            "_build_adapter",
+            lambda _settings: FakeSimAdapter(
+                airframe=AirframeInfo(icao_type="C172", vso_kias=48.0)
+            ),
+        )
+        reset_adapter()
+        reset_navdata()
+        yield TestClient(create_app())
+        reset_adapter()
+        reset_navdata()
+
+    def test_a_final_flies_the_derived_category_speed(self, c172_client: TestClient) -> None:
+        """90 kt — the top of band A — not the B default's 120."""
+        body = preview(c172_client, FINAL_10NM)
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["A"]
+        notes = " ".join(body["notes"])
+        assert "Category A — derived from the loaded airframe (Vso 48 kt, V_AT 62 kt)." in notes
+
+    def test_a_circuit_flies_the_derived_category_circling_speed(
+        self, c172_client: TestClient
+    ) -> None:
+        body = preview(c172_client, {**FINAL_10NM, "placement": "left_downwind"})
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_CIRCLING_IAS_KT["A"]
+        assert "derived from the loaded airframe" in " ".join(body["notes"])
+
+    def test_an_explicit_category_still_wins(self, c172_client: TestClient) -> None:
+        """The instructor's word is final, and the derivation never ran."""
+        body = preview(c172_client, {**FINAL_10NM, "category": "C"})
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["C"]
+        assert "derived from the loaded airframe" not in " ".join(body["notes"])
+
+    def test_an_explicit_speed_silences_the_derivation(self, c172_client: TestClient) -> None:
+        """The category never touched the outcome, so the notes must not imply it did."""
+        body = preview(c172_client, {**FINAL_10NM, "ias_kt": 65.0})
+        assert body["placement"]["ias_kt"] == 65.0
+        assert "derived from the loaded airframe" not in " ".join(body["notes"])
+
+    def test_an_unknown_airframe_keeps_the_disclosed_default(self, client: TestClient) -> None:
+        """The default fake reports the all-``None`` airframe: today's category B
+        default, with today's honest note, and no airframe credited."""
+        body = preview(client, FINAL_10NM)
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["B"]
+        notes = " ".join(body["notes"])
+        assert "category default" in notes
+        assert "derived from the loaded airframe" not in notes
 
 
 class TestTheProfileConfigurationIsStagedAndDisclosed:

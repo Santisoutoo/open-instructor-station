@@ -483,7 +483,7 @@ export interface components {
              * @description Panel control identifier.
              * @enum {string}
              */
-            control: "flaps" | "speedbrake" | "gear" | "autobrake" | "trim" | "lights" | "altitude" | "speed" | "vertical_speed" | "heading" | "autopilot_master" | "autopilot_nav" | "autopilot_app" | "autopilot_hdg" | "flight_director" | "target_altitude" | "target_speed" | "target_heading" | "target_vertical_speed";
+            control: "flaps" | "speedbrake" | "gear" | "autobrake" | "trim" | "throttle" | "lights" | "altitude" | "speed" | "vertical_speed" | "heading" | "autopilot_master" | "autopilot_nav" | "autopilot_app" | "autopilot_hdg" | "flight_director" | "target_altitude" | "target_speed" | "target_heading" | "target_vertical_speed";
             /**
              * Setup Field
              * @description The AircraftSetup field this control writes.
