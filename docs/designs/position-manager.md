@@ -789,6 +789,13 @@ adapter anyway is caught and mapped to the same status as defence in depth.
 > One consequence is a small gain: the design's §15.5 worried that
 > `server/app.py::_CONTROL_FIELDS` and `SETUP_FIELD_CAPABILITY` would be two places mapping a
 > setup field to a capability. Only one exists, so there is nothing to converge.
+>
+> **Update (#8 closed):** #8 landed without emitting mass — `gross_weight_kg` / `fuel_kg` were
+> split off to the Fuel & Payload Manager (#16, Phase 2); see `pre-teleport-setup.md` § *Deferred,
+> with rationale*. So `to_setup()` still sets only `can_set_aircraft_state` fields and the
+> divergence above **remains latent**: nothing yet produces a `can_set_fuel_payload` field, so no
+> placement can trip the whole-call refusal. This section stops being latent when #16 makes
+> `to_setup()` emit mass, which is where the capability-filtering decision is revisited.
 
 ---
 
@@ -1396,7 +1403,9 @@ was not on the never-parallelise list.
 
 1. The contract test that a setup applied before a teleport survives it (§11) — the one missing
    test that could hide issue #39 on real hardware.
-2. Capability filtering, or at least a decision, before #8 lands and starts setting mass (§9.3).
+2. ~~Capability filtering, or at least a decision, before #8 lands and starts setting mass (§9.3).~~
+   **Decided:** #8 closed without emitting mass (deferred to #16), so the gap stays latent; the
+   filtering decision is revisited with #16. See §9.3's update.
 3. `heading_deg` on `HoldPlacementRequest`, so the magnetic fallback has an escape hatch (§10.3).
 4. Move the request models and the resolver into `core/placements.py` (§13, §7.6), which is also
    the cheapest route to §10's machine error codes.
