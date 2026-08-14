@@ -102,10 +102,18 @@ COMMANDED_IAS_TOLERANCE_KT = {"fake": 0.1, "xplane": 15.0}
 #: confused (the same construction as :data:`COMMANDED_IAS_KT`).
 COMMANDED_VS_FPM = -600.0
 
-#: Tolerance on that read-back. The Fake stores what it is handed; a live
-#: aircraft starts flying — unpiloted — the instant the freeze is released, so
-#: the variometer is read against a settling aeroplane.
-COMMANDED_VS_TOLERANCE_FPM = {"fake": 0.1, "xplane": 300.0}
+#: Tolerance on that read-back. Both adapters are read while frozen against the
+#: value the teleport *wrote* into the velocity vector, not the variometer of a
+#: settling aeroplane, so the round-trip is near-exact on either side. (An
+#: earlier version read ``vh_ind_fpm`` immediately after releasing the freeze
+#: and needed ``xplane: 300.0`` to absorb the settling transient — which still
+#: read the wrong sign when the aircraft entered the test from a disturbed
+#: attitude, making the assertion flaky under full-suite ordering.)
+COMMANDED_VS_TOLERANCE_FPM = {"fake": 0.1, "xplane": 5.0}
+
+#: ``local_vy`` (the up axis of the velocity vector) is metres/second; the
+#: contract speaks feet/minute. 60 s/min ÷ 0.3048 m/ft.
+_FPM_PER_MS = 60.0 / 0.3048
 
 #: Throttle :func:`test_apply_setup_delivers_the_throttle` commands. Approach
 #: power — far from both idle and the full thrust a mis-read default would be.
@@ -467,10 +475,17 @@ async def test_set_position_delivers_the_vertical_speed(adapter: SimAdapter) -> 
     descent a setup commanded one call later — every 3° final used to arrive in
     level flight regardless of what was asked.
 
-    The read is taken immediately after ``set_position`` returns, not inside a
-    freeze: a frozen flight model does not integrate, so the variometer only
-    means something once the aircraft is flying again. The tolerance absorbs
-    the second of unpiloted settling that costs.
+    What is asserted is the vertical component the teleport *wrote into the
+    velocity vector*, read back while the flight model is still frozen — not the
+    variometer. A frozen model does not integrate, so the vector is exactly what
+    ``set_position`` set and the read is deterministic. Reading ``vh_ind_fpm``
+    immediately after releasing the freeze instead (the previous approach) was
+    flaky under full-suite ordering: from a disturbed entry attitude the ~1 s of
+    unpiloted settling could swamp the commanded rate and even flip its sign
+    (issue #12 live run, 2026-08-14). On a live adapter the written component is
+    ``local_vy`` (metres/second, up), reached through ``read_dataref`` — the
+    same duck-typing the autopilot None-contract test uses (issue #83); the Fake
+    mirrors the commanded rate in its aircraft state.
     """
     if not adapter.capabilities.can_set_position:
         pytest.skip(f"{adapter.name} does not declare can_set_position")
@@ -484,15 +499,20 @@ async def test_set_position_delivers_the_vertical_speed(adapter: SimAdapter) -> 
         longitude=horizontal.longitude,
         altitude_ft=original.altitude_ft + HOP_CLIMB_FT,
     )
+    read = getattr(adapter, "read_dataref", None)
     try:
-        await adapter.set_position(
-            target,
-            heading_deg=225.0,
-            ias_kt=COMMANDED_IAS_KT,
-            vertical_speed_fpm=COMMANDED_VS_FPM,
-        )
-        state = await adapter.get_aircraft_state()
-        assert state.vertical_speed_fpm == pytest.approx(
+        async with _frozen_for_readback(adapter):
+            await adapter.set_position(
+                target,
+                heading_deg=225.0,
+                ias_kt=COMMANDED_IAS_KT,
+                vertical_speed_fpm=COMMANDED_VS_FPM,
+            )
+            if read is not None:
+                delivered_fpm = float(await read("local_vy")) * _FPM_PER_MS
+            else:
+                delivered_fpm = (await adapter.get_aircraft_state()).vertical_speed_fpm
+        assert delivered_fpm == pytest.approx(
             COMMANDED_VS_FPM, abs=COMMANDED_VS_TOLERANCE_FPM[adapter.name]
         )
     finally:
