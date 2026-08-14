@@ -116,6 +116,7 @@ __all__ = [
     "RUNWAY_PLACEMENTS",
     "SHORT_FINAL_DISTANCE_NM",
     "TEARDROP_ENTRY_SECTOR_DEG",
+    "VAT_FROM_VSO",
     "ApproachCategory",
     "FinalPlacement",
     "HoldEntry",
@@ -127,6 +128,7 @@ __all__ = [
     "PlacementProfile",
     "RunwayPlacement",
     "TurnDirection",
+    "category_for_vat",
     "coordinate_placement",
     "distance_and_bearing",
     "final_approach_point",
@@ -318,6 +320,19 @@ APPROACH_CATEGORY_CIRCLING_IAS_KT: Mapping[ApproachCategory, float] = MappingPro
         "E": 240.0,
     }
 )
+
+#: How PANS-OPS defines the threshold speed the category bands are read with:
+#: ``Vat`` is **1.3 x the stall speed in the landing configuration (Vso)** at
+#: maximum certificated landing mass. This is the published definition, not a
+#: tuning knob — it is what lets a stall speed read from the loaded airframe
+#: stand in for a category the caller did not state (issue #82).
+#:
+#: The honest caveat: a simulator reports the aircraft file's ``Vso``, which is
+#: not necessarily quoted at maximum landing mass. A ``Vso`` quoted light reads
+#: the band low — but the band it lands in is off by one at worst, against the
+#: pre-#82 status quo of assuming category B for a category A trainer and
+#: putting it on final 30 kt fast.
+VAT_FROM_VSO: float = 1.3
 
 #: The category assumed when the caller does not state one.
 #:
@@ -854,6 +869,40 @@ def _constrained_ias_kt(
     if min_kt is not None:
         speed = max(speed, min_kt)
     return max(speed, APPROACH_CATEGORY_VAT_KT[category])
+
+
+def category_for_vat(vat_kt: float) -> ApproachCategory:
+    """The ICAO approach category whose published ``Vat`` band contains ``vat_kt``.
+
+    The PANS-OPS bands, by threshold speed: A below 91 kt, B 91-120, C 121-140,
+    D 141-165, E 166-210. The comparisons are ``< 91``, ``< 121`` and so on, so
+    a computed value falling in one of the table's integer gaps (120.4 kt, say)
+    reads as the slower band — the one whose procedure speeds it can actually
+    fly.
+
+    **Above 210 kt the table simply ends** — there is no category F — so the
+    answer is clamped to ``"E"`` rather than invented: E's speeds are the
+    fastest any chart publishes, and an aeroplane beyond them is at least
+    handed the fastest of them instead of an exception.
+
+    Zero or negative is a **caller bug**, not a data condition, and raises
+    :class:`ValueError`. Every ``Vat`` computed in this project is
+    :data:`VAT_FROM_VSO` times a stall speed that
+    :class:`~core.models.AirframeInfo` validates as strictly positive, so a
+    non-positive value means the arithmetic went wrong upstream — it must not
+    be laundered into "category A".
+    """
+    if vat_kt <= 0.0:
+        raise ValueError(f"Vat must be a positive speed in knots, got {vat_kt!r}.")
+    if vat_kt < 91.0:
+        return "A"
+    if vat_kt < 121.0:
+        return "B"
+    if vat_kt < 141.0:
+        return "C"
+    if vat_kt < 166.0:
+        return "D"
+    return "E"
 
 
 def _position_of(fix: GeoPosition | Waypoint) -> GeoPosition:
