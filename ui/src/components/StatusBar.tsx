@@ -1,5 +1,6 @@
 import { formatScenarioId } from '../features/scenarios/format';
 import { scenariosApi } from '../features/scenarios/scenariosApi';
+import { useScenarioRunStatus } from '../features/scenarios/useScenarioRun';
 import {
   formatAltitude,
   formatHeading,
@@ -20,14 +21,14 @@ export function StatusBar() {
   const demoFeed = useAppSelector((state) => state.ui.demoFeed);
   const connectionStatus = useAppSelector((state) => state.connection.status);
 
-  // Read-only reflections of the Scenarios feature's own RTK Query cache — `useQueryState`
-  // never opens a fetch of its own, so this footer never asks the server anything the
-  // Scenarios panel (or a run just started from it) has not already asked. Whichever
-  // scenario is running is server state; this component knows nothing about scenarios
-  // beyond that.
+  // `useScenarioRunStatus` is an active subscription, not a passive cache read — the
+  // footer is always mounted while the Scenarios panel is not (it unmounts on tab
+  // switch), so this component must be able to notice a run finishing or failing on its
+  // own. The manifest read stays passive: this footer never needs to trigger that fetch
+  // itself, only borrow whichever scenario name the Scenarios panel (or a run already in
+  // progress) has already caused to be cached.
   const cachedManifest = scenariosApi.endpoints.getScenarios.useQueryState();
-  const cachedRun = scenariosApi.endpoints.getScenarioRun.useQueryState();
-  const scenarioRun = cachedRun.data ?? null;
+  const scenarioRun = useScenarioRunStatus();
   const scenarioName =
     scenarioRun !== null
       ? (cachedManifest.data?.scenarios.find((scenario) => scenario.id === scenarioRun.scenario_id)

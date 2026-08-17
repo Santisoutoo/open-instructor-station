@@ -8,11 +8,9 @@ Position (:mod:`core.placements`) and Fuel & Payload's raw
 reinvented: a typo'd field fails validation exactly as it would over that
 manager's own REST endpoint. No HTTP, no dataref name, no simulator import.
 
-The directory scan (``core/scenarios/loader.py``) and the shipped YAML files
-(``core/scenarios/data/``) are a later, separate track — this package
-currently carries only the document model (``models.py``) and the capability
-pre-flight check (``preflight.py``), the two pieces the loader and the engine
-both depend on.
+``models.py`` and ``preflight.py`` are what the loader and the engine both
+depend on; ``loader.py`` (the directory scan) and ``data/`` (the 14 shipped
+YAML files) build on top of them.
 
 The design this package implements is ``docs/designs/scenario-generator.md``.
 """
