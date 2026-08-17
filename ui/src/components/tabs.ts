@@ -59,6 +59,14 @@ export const TABS: readonly TabDefinition[] = [
       })),
   },
   {
+    id: 'fuel-payload',
+    label: 'Fuel & payload',
+    load: () =>
+      import('../features/fuel-payload/FuelPayloadPanel').then((m) => ({
+        default: m.FuelPayloadPanel,
+      })),
+  },
+  {
     id: 'map',
     label: 'Map',
     keepMounted: true,
