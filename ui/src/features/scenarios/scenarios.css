@@ -174,7 +174,17 @@
   color: var(--text);
 }
 
-/* Dots, not badges: dim while pending, ok-green once done. */
+.scenarios-bar__step--failed {
+  color: var(--danger);
+}
+
+.scenarios-bar__step-error {
+  margin-left: 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 400;
+}
+
+/* Dots, not badges: dim while pending, accent while running, ok-green once done. */
 .scenarios-bar__dot {
   flex: none;
   width: 8px;
@@ -184,8 +194,18 @@
   opacity: 0.45;
 }
 
+.scenarios-bar__step--running .scenarios-bar__dot {
+  background: var(--accent);
+  opacity: 1;
+}
+
 .scenarios-bar__step--done .scenarios-bar__dot {
   background: var(--ok);
+  opacity: 1;
+}
+
+.scenarios-bar__step--failed .scenarios-bar__dot {
+  background: var(--danger);
   opacity: 1;
 }
 
@@ -195,7 +215,13 @@
   color: var(--ok);
 }
 
-.scenarios-bar__stop {
+.scenarios-bar__failed {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--danger);
+}
+
+.scenarios-bar__dismiss {
   min-height: 44px;
   margin-left: auto;
   padding: 0 0.9rem;
@@ -208,12 +234,12 @@
   cursor: pointer;
 }
 
-.scenarios-bar__stop:hover {
+.scenarios-bar__dismiss:hover {
   border-color: var(--text-dim);
   transition: border-color 80ms ease-out;
 }
 
-.scenarios-bar__stop:focus-visible {
+.scenarios-bar__dismiss:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }

@@ -1,4 +1,5 @@
-import { selectScenarioRun } from '../features/scenarios/scenariosSlice';
+import { formatScenarioId } from '../features/scenarios/format';
+import { scenariosApi } from '../features/scenarios/scenariosApi';
 import {
   formatAltitude,
   formatHeading,
@@ -18,7 +19,20 @@ export function StatusBar() {
   const latest = useAppSelector((state) => state.telemetry.latest);
   const demoFeed = useAppSelector((state) => state.ui.demoFeed);
   const connectionStatus = useAppSelector((state) => state.connection.status);
-  const scenarioRun = useAppSelector(selectScenarioRun);
+
+  // Read-only reflections of the Scenarios feature's own RTK Query cache — `useQueryState`
+  // never opens a fetch of its own, so this footer never asks the server anything the
+  // Scenarios panel (or a run just started from it) has not already asked. Whichever
+  // scenario is running is server state; this component knows nothing about scenarios
+  // beyond that.
+  const cachedManifest = scenariosApi.endpoints.getScenarios.useQueryState();
+  const cachedRun = scenariosApi.endpoints.getScenarioRun.useQueryState();
+  const scenarioRun = cachedRun.data ?? null;
+  const scenarioName =
+    scenarioRun !== null
+      ? (cachedManifest.data?.scenarios.find((scenario) => scenario.id === scenarioRun.scenario_id)
+          ?.name ?? formatScenarioId(scenarioRun.scenario_id))
+      : null;
 
   const connected = connectionStatus === 'connected';
   const demoActive = demoFeed && !connected;
@@ -64,10 +78,10 @@ export function StatusBar() {
       )}
 
       <div className="statusbar__right">
-        {scenarioRun !== null && !scenarioRun.stopped && (
+        {scenarioRun !== null && scenarioRun.status === 'running' && (
           <span className="statusbar__scenario-chip">
             <span className="statusbar__scenario-dot" aria-hidden="true" />
-            {scenarioRun.name}
+            {scenarioName}
           </span>
         )}
         {demoActive && <span className="statusbar__demo-chip">Demo data</span>}

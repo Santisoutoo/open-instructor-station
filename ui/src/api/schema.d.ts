@@ -699,11 +699,8 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * Arm Failure
-         * @description Register one armed failure with a trigger. Not idempotent — arming twice arms two.
-         */
-        post: operations["arm_failure_api_failures_arm_post"];
+        /** Arm Failure Route */
+        post: operations["arm_failure_route_api_failures_arm_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -764,6 +761,89 @@ export interface paths {
          * @description Repair every active failure and disarm every armed one (D12) — the one-tap reset.
          */
         post: operations["clear_all_failures_api_failures_clear_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Scenarios
+         * @description Every shipped scenario, with ``available``/``reason`` against the active adapter.
+         */
+        get: operations["get_scenarios_api_scenarios_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Current Run
+         * @description The current or most recently finished run's status. ``null`` if nothing has run.
+         */
+        get: operations["get_current_run_api_scenarios_run_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/{scenario_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Scenario
+         * @description One scenario's full document plus its availability.
+         */
+        get: operations["get_scenario_api_scenarios__scenario_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/{scenario_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Scenario
+         * @description Pre-flight check, then start the background run (§3.2).
+         *
+         *     The adapter is never called when the pre-flight check fails: that is the
+         *     whole mechanism behind "never attempted halfway through".
+         */
+        post: operations["run_scenario_api_scenarios__scenario_id__run_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1282,7 +1362,7 @@ export interface components {
          */
         ApplyPlacementRequest: {
             /** Placement */
-            placement: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            placement: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             /** @description The instructor's edits. Merged OVER the preview's setup rather than replacing it, so a client that omits a field cannot silently drop the geometry-derived altitude. */
             setup?: components["schemas"]["AircraftSetup"] | null;
         };
@@ -2320,7 +2400,7 @@ export interface components {
          */
         PlacementPreview: {
             /** Request */
-            request: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            request: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             placement: components["schemas"]["Placement"];
             /** @description The state to apply before the teleport. */
             setup: components["schemas"]["AircraftSetup"];
@@ -2695,6 +2775,170 @@ export interface components {
             ias_kt?: number | null;
             /** Category */
             category?: ("A" | "B" | "C" | "D" | "E") | null;
+        };
+        /**
+         * RunwayThresholdPlacementRequest
+         * @description On the runway centreline at the threshold, facing the runway heading,
+         *     at 0 kt — lined up for a takeoff brief. Distinct from RunwayPlacementRequest,
+         *     which is exclusively airborne final/pattern geometry; this is the one ground
+         *     position anchored to a runway rather than to a parking stand. Resolves
+         *     through core.geodesy.coordinate_placement(runway.threshold,
+         *     runway.true_bearing_deg, ias_kt=GROUND_IAS_KT) — the construction
+         *     GROUND_IAS_KT's own docstring already names ("a runway threshold for a
+         *     takeoff brief") but never wired to a request.
+         */
+        RunwayThresholdPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "runway_threshold";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+        };
+        /**
+         * ScenarioDetail
+         * @description One scenario's full document plus its availability, for a preview view.
+         */
+        ScenarioDetail: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Tags */
+            tags: string[];
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+            document: components["schemas"]["ScenarioDocument"];
+        };
+        /**
+         * ScenarioDocument
+         * @description The validated shape of one scenario YAML file. core/-only: no HTTP, no
+         *     dataref, no adapter import, no SimAdapter instance held anywhere near it.
+         */
+        ScenarioDocument: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /**
+             * Tags
+             * @default []
+             */
+            tags: string[];
+            /** Position */
+            position?: (components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"]) | null;
+            aircraft_state?: components["schemas"]["AircraftSetup"] | null;
+            weather?: components["schemas"]["WeatherRequest"] | null;
+            failures?: components["schemas"]["ScenarioFailuresBlock"] | null;
+            traffic?: components["schemas"]["ScenarioTrafficBlock"] | null;
+        };
+        /**
+         * ScenarioFailuresBlock
+         * @description Reuses core.failures' own request models verbatim — no re-derivation.
+         */
+        ScenarioFailuresBlock: {
+            /**
+             * Immediate
+             * @default []
+             */
+            immediate: components["schemas"]["InjectFailureRequest"][];
+            /**
+             * Armed
+             * @default []
+             */
+            armed: components["schemas"]["ArmFailureRequest"][];
+        };
+        /**
+         * ScenarioManifest
+         * @description Every shipped scenario, whether it can run on the active adapter, and why not.
+         */
+        ScenarioManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioSummary"][];
+            /**
+             * Load Errors
+             * @default []
+             */
+            load_errors: string[];
+        };
+        /**
+         * ScenarioRunStatus
+         * @description The whole run's progress — what ``GET /api/scenarios/run`` polls.
+         */
+        ScenarioRunStatus: {
+            /** Scenario Id */
+            scenario_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "failed";
+            /** Steps */
+            steps: components["schemas"]["ScenarioStepStatus"][];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /**
+         * ScenarioStepStatus
+         * @description One declared step's progress. Only the blocks a scenario declares appear.
+         */
+        ScenarioStepStatus: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "weather" | "aircraft_state" | "position" | "failures" | "traffic";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "done" | "failed";
+            /** Detail */
+            detail?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * ScenarioSummary
+         * @description One manifest row.
+         */
+        ScenarioSummary: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Tags */
+            tags: string[];
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ScenarioTrafficBlock
+         * @description Declares that this scenario needs traffic. No spawn geometry here — that
+         *     is manager 13's model (Phase 3); this lets a scenario state the need today
+         *     and be greyed out honestly until the capability exists anywhere.
+         */
+        ScenarioTrafficBlock: {
+            /** Description */
+            description: string;
         };
         /**
          * SchematicPoint
@@ -3640,7 +3884,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+                "application/json": components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             };
         };
         responses: {
@@ -3982,7 +4226,7 @@ export interface operations {
             };
         };
     };
-    arm_failure_api_failures_arm_post: {
+    arm_failure_route_api_failures_arm_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -4095,6 +4339,108 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+        };
+    };
+    get_scenarios_api_scenarios_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioManifest"];
+                };
+            };
+        };
+    };
+    get_current_run_api_scenarios_run_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRunStatus"] | null;
+                };
+            };
+        };
+    };
+    get_scenario_api_scenarios__scenario_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_scenario_api_scenarios__scenario_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRunStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

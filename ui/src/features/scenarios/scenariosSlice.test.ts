@@ -1,30 +1,15 @@
 /**
- * Client state of the Scenarios panel. The property that matters is order: the run's
- * checklist ticks strictly in the sequence the scenario declared, because the plan the
- * instructor is watching is the plan the engine executes.
+ * Client state of the Scenarios panel. Thin by design (§7.2): the catalogue and a run's
+ * progress are both server state in `scenariosApi.ts`'s RTK Query cache, so this slice
+ * only ever tracks which card is selected and which run's bar has been dismissed.
  */
 
 import { describe, expect, it } from 'vitest';
 import reducer, {
   initialScenariosUiState,
-  runCleared,
-  runStarted,
-  runStepCompleted,
-  runStopped,
+  runDismissed,
   scenarioSelected,
-  selectScenarioRun,
 } from './scenariosSlice';
-
-const START = {
-  id: 'wind-shear',
-  name: 'Wind shear',
-  steps: ['Set weather', 'Position aircraft'],
-};
-
-function startedState() {
-  const selected = reducer(undefined, scenarioSelected('wind-shear'));
-  return reducer(selected, runStarted(START));
-}
 
 describe('scenarioSelected', () => {
   it('selects a card', () => {
@@ -39,68 +24,25 @@ describe('scenarioSelected', () => {
   });
 });
 
-describe('runStarted', () => {
-  it('seeds the checklist from the declared steps, none done yet', () => {
-    const run = startedState().runState;
+describe('runDismissed', () => {
+  it('records the dismissed run key, leaving the card selection untouched', () => {
+    const selected = reducer(undefined, scenarioSelected('wind-shear'));
+    const dismissed = reducer(
+      selected,
+      runDismissed('engine-failure-after-v1:2026-08-17T12:00:00Z'),
+    );
 
-    expect(run).not.toBeNull();
-    expect(run?.id).toBe('wind-shear');
-    expect(run?.name).toBe('Wind shear');
-    expect(run?.stopped).toBe(false);
-    expect(run?.steps).toEqual([
-      { label: 'Set weather', done: false },
-      { label: 'Position aircraft', done: false },
-    ]);
+    expect(dismissed.dismissedRunKey).toBe('engine-failure-after-v1:2026-08-17T12:00:00Z');
+    expect(dismissed.selectedId).toBe('wind-shear');
   });
 
-  it('stamps a numeric start time in the action, not in the reducer', () => {
-    const action = runStarted(START);
-    expect(typeof action.payload.startedAt).toBe('number');
-    expect(startedState().runState?.startedAt).toBeGreaterThan(0);
-  });
-});
-
-describe('runStepCompleted', () => {
-  it('marks steps done strictly in order', () => {
-    let state = startedState();
-
-    state = reducer(state, runStepCompleted());
-    expect(state.runState?.steps.map((step) => step.done)).toEqual([true, false]);
-
-    state = reducer(state, runStepCompleted());
-    expect(state.runState?.steps.map((step) => step.done)).toEqual([true, true]);
+  it('starts with no dismissed run', () => {
+    expect(initialScenariosUiState.dismissedRunKey).toBeNull();
   });
 
-  it('is a no-op once every step is done, and without a run', () => {
-    let state = startedState();
-    state = reducer(state, runStepCompleted());
-    state = reducer(state, runStepCompleted());
-    const settled = reducer(state, runStepCompleted());
-    expect(settled.runState?.steps.map((step) => step.done)).toEqual([true, true]);
-
-    expect(reducer(initialScenariosUiState, runStepCompleted()).runState).toBeNull();
-  });
-});
-
-describe('runStopped / runCleared', () => {
-  it('stopping flags the run, clearing removes it', () => {
-    let state = reducer(startedState(), runStopped());
-    expect(state.runState?.stopped).toBe(true);
-
-    state = reducer(state, runCleared());
-    expect(state.runState).toBeNull();
-  });
-
-  it('clearing keeps the card selection', () => {
-    const state = reducer(reducer(startedState(), runStopped()), runCleared());
-    expect(state.selectedId).toBe('wind-shear');
-  });
-});
-
-describe('selectScenarioRun', () => {
-  it('reads the run out of the slice slot', () => {
-    const state = startedState();
-    expect(selectScenarioRun({ scenarios: state })).toBe(state.runState);
-    expect(selectScenarioRun({ scenarios: initialScenariosUiState })).toBeNull();
+  it('overwrites the previous dismissal when a different run is dismissed', () => {
+    let state = reducer(undefined, runDismissed('a:1'));
+    state = reducer(state, runDismissed('b:2'));
+    expect(state.dismissedRunKey).toBe('b:2');
   });
 });

@@ -2,21 +2,25 @@
  * One scenario in the catalogue grid.
  *
  * Two-tap run, no modals: the first tap selects the card (amber border) and reveals the
- * inline Run button — the one solid-accent primary in the view; the second tap starts
- * the run. An unavailable scenario is dimmed and disabled but never hidden, and always
- * says why (feature-spec §2: unavailable with the reason, never offered then failed).
+ * inline Run button — the one solid-accent primary in the view; the second tap starts the
+ * run. An unavailable scenario is dimmed and disabled but never hidden, and always says
+ * why (design §3.1: the 501 sentence naming every missing capability, surfaced verbatim
+ * as `reason`).
  */
 
-import type { Scenario } from './mock';
+import type { ScenarioSummary } from '../../api/models';
 
 export function ScenarioCard({
   scenario,
   selected,
+  runDisabled,
   onSelect,
   onRun,
 }: {
-  scenario: Scenario;
+  scenario: ScenarioSummary;
   selected: boolean;
+  /** True while another scenario is running — the server only runs one at a time. */
+  runDisabled: boolean;
   onSelect: () => void;
   onRun: () => void;
 }) {
@@ -35,21 +39,26 @@ export function ScenarioCard({
         onClick={onSelect}
       >
         <h3 className="scenarios-card__name">{scenario.name}</h3>
-        <p className="scenarios-card__nature">{scenario.nature}</p>
+        <p className="scenarios-card__nature">{scenario.description}</p>
         <span className="scenarios-card__chips">
-          {scenario.blocks.map((block) => (
-            <span key={block} className="scenarios-card__chip">
-              {block}
+          {scenario.tags.map((tag) => (
+            <span key={tag} className="scenarios-card__chip">
+              {tag}
             </span>
           ))}
         </span>
-        {scenario.unavailableReason !== null && (
-          <p className="scenarios-card__reason">{scenario.unavailableReason}</p>
+        {scenario.reason != null && (
+          <p className="scenarios-card__reason">{scenario.reason}</p>
         )}
       </button>
       {selected && scenario.available && (
-        <button type="button" className="scenarios-card__run" onClick={onRun}>
-          Run scenario
+        <button
+          type="button"
+          className="scenarios-card__run"
+          disabled={runDisabled}
+          onClick={onRun}
+        >
+          {runDisabled ? 'A scenario is running…' : 'Run scenario'}
         </button>
       )}
     </article>
