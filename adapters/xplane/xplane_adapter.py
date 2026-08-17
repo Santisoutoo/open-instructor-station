@@ -86,6 +86,13 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from adapters.xplane.failure_datarefs import (
+    FAILURE_DATAREFS,
+    STATE_FAILED,
+    STATE_WORKING,
+    dataref_paths_for,
+    iter_dataref_combos,
+)
 from core.atmosphere import (
     ISA_SEA_LEVEL_PRESSURE_PA,
     isa_deviation_c,
@@ -96,6 +103,7 @@ from core.atmosphere import (
 from core.failures import (
     FAILURE_CATALOGUE,
     ActiveFailure,
+    FailureId,
     FailureRef,
     FailureSupport,
     FailureSupportManifest,
@@ -280,6 +288,15 @@ _CAPABILITIES = Capabilities(
     can_set_fuel_payload=False,
     can_control_camera=False,
     can_pushback=False,
+)
+
+#: §5.4 — rendered once in the Failures panel, verbatim. Study-level add-ons
+#: often run their own internal failure model and may ignore ``rel_*``
+#: entirely; D10's read-back cannot detect that from the dataref side, because
+#: the dataref itself still reports "failed" honestly.
+_FAILURE_MANIFEST_CAVEAT = (
+    "Aircraft with their own failure model (many study-level add-ons) may ignore "
+    "simulator failures. Verify against your aircraft before a lesson depends on one."
 )
 
 _METRES_PER_FOOT = 0.3048
@@ -583,6 +600,7 @@ class XPlaneSimAdapter:
         self._client: httpx.AsyncClient | None = None
         self._ids: dict[str, int] = {}
         self._command_ids: dict[str, int] = {}
+        self._failure_ids: dict[tuple[FailureId, int | None], tuple[int, ...]] = {}
         self._freeze_depth = 0
 
     # -- Identity ---------------------------------------------------------
@@ -633,11 +651,23 @@ class XPlaneSimAdapter:
         # connect: absence just means the reads that want them answer
         # "unknown". Only the required set below can fail the connection.
         wanted = {path: key for key, path in (DATAREFS | OPTIONAL_DATAREFS).items()}
+        # Failure datarefs (D11, §5.3) ride the identical scan and the identical
+        # posture: every path this file has a guess for is resolved here, and a
+        # guess that does not exist on this install simply never lands in
+        # ``failure_index`` below — it degrades that one catalogue entry to
+        # unsupported, it never fails this connect().
+        failure_combo_by_path: dict[str, tuple[FailureId, int | None]] = {
+            path: combo for combo in iter_dataref_combos() for path in dataref_paths_for(*combo)
+        }
         index: dict[str, int] = {}
+        failure_index: dict[str, int] = {}
         for entry in response.json().get("data", []):
-            key = wanted.get(entry.get("name"))
+            name = entry.get("name")
+            key = wanted.get(name)
             if key is not None:
                 index[key] = int(entry["id"])
+            if name in failure_combo_by_path:
+                failure_index[name] = int(entry["id"])
 
         missing = sorted(set(DATAREFS) - set(index))
         if missing:
@@ -658,15 +688,29 @@ class XPlaneSimAdapter:
                 raise XPlaneNotReachable(f"X-Plane does not expose the command {path!r}.")
             commands[key] = int(entries[0]["id"])
 
+        # A combo counts as supported only when *every* one of its datarefs
+        # resolved — a partial resolve (one bus of two, say) is treated the
+        # same as none, the conservative reading of D11: a half-mapped entry
+        # would write an incomplete failure and call it done.
+        failure_ids: dict[tuple[FailureId, int | None], tuple[int, ...]] = {}
+        for combo in iter_dataref_combos():
+            resolved = [failure_index.get(path) for path in dataref_paths_for(*combo)]
+            if resolved and all(dataref_id is not None for dataref_id in resolved):
+                failure_ids[combo] = tuple(
+                    dataref_id for dataref_id in resolved if dataref_id is not None
+                )
+
         self._client = client
         self._ids = index
         self._command_ids = commands
+        self._failure_ids = failure_ids
 
     async def disconnect(self) -> None:
         """Close the HTTP client. Idempotent, never raises."""
         client, self._client = self._client, None
         self._ids = {}
         self._command_ids = {}
+        self._failure_ids = {}
         if client is not None:
             await client.aclose()
 
@@ -679,16 +723,35 @@ class XPlaneSimAdapter:
 
     async def _read(self, key: str) -> Any:
         """Read one dataref value by its short :data:`DATAREFS` key."""
-        client = self._require_client()
-        response = await client.get(f"/api/v2/datarefs/{self._ids[key]}/value")
-        response.raise_for_status()
-        return response.json()["data"]
+        self._require_client()
+        return await self._read_by_id(self._ids[key])
 
     async def _write(self, key: str, value: float | int | bool, index: int | None = None) -> None:
         """Write one dataref value, optionally a single element of an array."""
+        self._require_client()
+        await self._write_by_id(self._ids[key], value, index=index)
+
+    async def _read_by_id(self, dataref_id: int) -> Any:
+        """Read one dataref value by its already-resolved numeric id.
+
+        The escape hatch :meth:`_read` uses under a short :data:`DATAREFS` key,
+        and the one the failure mapping uses directly: failure datarefs are
+        resolved per ``(failure_id, engine_index)`` combo at :meth:`connect`
+        time (D11, §5.3) rather than given a short key each, since there can be
+        up to eight per indexed entry.
+        """
+        client = self._require_client()
+        response = await client.get(f"/api/v2/datarefs/{dataref_id}/value")
+        response.raise_for_status()
+        return response.json()["data"]
+
+    async def _write_by_id(
+        self, dataref_id: int, value: float | int | bool, index: int | None = None
+    ) -> None:
+        """Write one dataref value by its already-resolved numeric id. See :meth:`_read_by_id`."""
         client = self._require_client()
         response = await client.patch(
-            f"/api/v2/datarefs/{self._ids[key]}/value",
+            f"/api/v2/datarefs/{dataref_id}/value",
             json={"data": value},
             params=None if index is None else {"index": index},
         )
@@ -756,7 +819,7 @@ class XPlaneSimAdapter:
                 vso = candidate
         return AirframeInfo(icao_type=_decode_dataref_text(raw_icao), vso_kias=vso)
 
-    # -- Weather, Failures, Fuel & Payload ---------------------------------
+    # -- Weather, Fuel & Payload --------------------------------------------
     #
     # can_set_weather stays False on this adapter (weather-manager.md D16,
     # §7.3) despite real progress: §11.1's manual-mode question is now
@@ -778,13 +841,12 @@ class XPlaneSimAdapter:
     # cloud test tolerates the slow convergence. get_weather()/set_weather()
     # below are real implementations that are DEAD CODE on this adapter
     # today — the capability check at the top of each raises before a single
-    # dataref is touched, exactly like the failures/fuel stubs that follow.
-    # can_inject_failures/can_set_fuel_payload have no mapping yet and stay
-    # simple refusing stubs.
+    # dataref is touched.
     #
-    # get_failure_support() and get_active_failures() are the two
-    # capability-free reads (failures-manager.md §4: "no is an answer, never
-    # an exception") and degrade honestly instead of raising.
+    # Fuel & Payload's own adapter track has not merged into this branch yet
+    # (only Failures has, via dev), so get_loadout()/apply_setup()'s loadout
+    # branch below are still refusing stubs (fuel-payload.md D15) — real
+    # dataref mapping lands with that manager's own merge.
 
     async def get_weather(self) -> WeatherState:
         """Read the commanded weather from the region datarefs (§7.2's closing paragraph).
@@ -1285,32 +1347,148 @@ class XPlaneSimAdapter:
                 return direction_deg, speed_kt
         return levels[-1][1], levels[-1][2]
 
-    async def get_failure_support(self) -> FailureSupportManifest:
-        """Every catalogue entry, unsupported — this adapter has no failure mapping yet."""
-        reason = f"{self.name!r} does not declare can_inject_failures."
-        return FailureSupportManifest(
-            caveat=None,
-            entries=tuple(
-                FailureSupport(failure_id=spec.failure_id, supported=False, reason=reason)
-                for spec in FAILURE_CATALOGUE
-            ),
-        )
-
-    async def inject_failure(self, failure: FailureRef) -> None:
-        raise CapabilityNotSupported(self.name, "can_inject_failures")
-
-    async def clear_failure(self, failure: FailureRef) -> None:
-        raise CapabilityNotSupported(self.name, "can_inject_failures")
-
-    async def clear_all_failures(self) -> None:
-        raise CapabilityNotSupported(self.name, "can_inject_failures")
-
-    async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
-        """No failures can be seen through this adapter yet."""
-        return ()
-
     async def get_loadout(self) -> LoadoutState:
         raise CapabilityNotSupported(self.name, "can_set_fuel_payload")
+
+    # -- Failures -----------------------------------------------------------
+    #
+    # can_inject_failures stays False on this adapter (D11 plus this session's
+    # explicit instruction — see the module docstring of
+    # adapters/xplane/failure_datarefs.py for why). The four methods below are
+    # nonetheless real implementations, not stubs: the dataref mapping and the
+    # connect-time probing that makes a wrong guess degrade instead of throw
+    # (§5.3) are both live, so flipping the flag once a spike has verified
+    # §5.1's value enum against a real install is the only change this manager
+    # still needs. Until then every one of these methods is dead code in
+    # production — the capability check on the first line of each guarantees
+    # it — but it is exercised by nothing less than the same
+    # DATAREFS/OPTIONAL_DATAREFS-style resolution the rest of this adapter
+    # already relies on, so there is nothing hand-wavy left to write once the
+    # flag flips.
+
+    async def get_failure_support(self) -> FailureSupportManifest:
+        """Every catalogue entry, resolved against this adapter and this install.
+
+        A capability-free read (failures-manager.md D4): "no" is an answer,
+        never an exception. Without ``can_inject_failures`` declared, every
+        entry is unsupported with that one reason — the flag gates the whole
+        group before any per-entry question is even asked. With the flag
+        declared, each entry is resolved against §5.2's mapping and this
+        install's dataref index (§5.3): an entry with no known dataref at all
+        carries :attr:`~adapters.xplane.failure_datarefs.FailureDatarefMapping.unsupported_reason`;
+        an entry with a guess that did not resolve at :meth:`connect` time
+        carries the same posture as any other optional dataref on this
+        adapter — disabled, with a reason, never a runtime throw.
+        """
+        if not self.capabilities.can_inject_failures:
+            reason = f"{self.name!r} does not declare can_inject_failures."
+            return FailureSupportManifest(
+                caveat=None,
+                entries=tuple(
+                    FailureSupport(failure_id=spec.failure_id, supported=False, reason=reason)
+                    for spec in FAILURE_CATALOGUE
+                ),
+            )
+        entries = []
+        for spec in FAILURE_CATALOGUE:
+            mapping = FAILURE_DATAREFS[spec.failure_id]
+            if mapping.unsupported_reason is not None:
+                entries.append(
+                    FailureSupport(
+                        failure_id=spec.failure_id,
+                        supported=False,
+                        reason=mapping.unsupported_reason,
+                    )
+                )
+                continue
+            representative_index = 1 if spec.takes_engine_index else None
+            if (spec.failure_id, representative_index) in self._failure_ids:
+                entries.append(FailureSupport(failure_id=spec.failure_id, supported=True))
+            else:
+                paths = ", ".join(dataref_paths_for(spec.failure_id, representative_index))
+                entries.append(
+                    FailureSupport(
+                        failure_id=spec.failure_id,
+                        supported=False,
+                        reason=f"No {paths!r} dataref on this X-Plane install.",
+                    )
+                )
+        return FailureSupportManifest(caveat=_FAILURE_MANIFEST_CAVEAT, entries=tuple(entries))
+
+    async def inject_failure(self, failure: FailureRef) -> None:
+        """Write :data:`~adapters.xplane.failure_datarefs.STATE_FAILED` to every mapped dataref.
+
+        Idempotent: writing the same "failed now" value twice is a no-op as
+        far as the simulator is concerned.
+        """
+        if not self.capabilities.can_inject_failures:
+            raise CapabilityNotSupported(self.name, "can_inject_failures")
+        for dataref_id in self._resolved_failure_dataref_ids(failure):
+            await self._write_by_id(dataref_id, STATE_FAILED)
+
+    async def clear_failure(self, failure: FailureRef) -> None:
+        """Write :data:`~adapters.xplane.failure_datarefs.STATE_WORKING` to every mapped dataref."""
+        if not self.capabilities.can_inject_failures:
+            raise CapabilityNotSupported(self.name, "can_inject_failures")
+        for dataref_id in self._resolved_failure_dataref_ids(failure):
+            await self._write_by_id(dataref_id, STATE_WORKING)
+
+    async def clear_all_failures(self) -> None:
+        """Fire ``fix_all_systems`` and write "working" to every resolved failure dataref.
+
+        Both (§5.1): the command is believed to repair everything, and the
+        explicit zeros make the outcome independent of that belief.
+        """
+        if not self.capabilities.can_inject_failures:
+            raise CapabilityNotSupported(self.name, "can_inject_failures")
+        await self._activate("fix_all_systems")
+        for dataref_ids in self._failure_ids.values():
+            for dataref_id in dataref_ids:
+                await self._write_by_id(dataref_id, STATE_WORKING)
+
+    async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
+        """Read every resolved failure dataref; an entry is active iff any of them reads "failed".
+
+        A capability-free read (D10): the simulator is the source of truth,
+        never a ledger of what was asked for — a teleport's ``fix_all_systems``
+        repairs every failure behind any ledger's back, so a read that trusted
+        one would lie the moment the Position Manager is used mid-exercise.
+        """
+        if not self.capabilities.can_inject_failures:
+            return ()
+        active: list[ActiveFailure] = []
+        for spec in FAILURE_CATALOGUE:
+            engine_indices: tuple[int | None, ...] = (
+                tuple(range(1, 9)) if spec.takes_engine_index else (None,)
+            )
+            for engine_index in engine_indices:
+                dataref_ids = self._failure_ids.get((spec.failure_id, engine_index))
+                if not dataref_ids:
+                    continue
+                values = await asyncio.gather(
+                    *(self._read_by_id(dataref_id) for dataref_id in dataref_ids)
+                )
+                if any(int(value) == STATE_FAILED for value in values):
+                    active.append(
+                        ActiveFailure(failure_id=spec.failure_id, engine_index=engine_index)
+                    )
+        return tuple(active)
+
+    def _resolved_failure_dataref_ids(self, failure: FailureRef) -> tuple[int, ...]:
+        """The dataref ids one :class:`~core.failures.FailureRef` resolves to on this install.
+
+        Raises:
+            CapabilityNotSupported: the entry (or this specific engine index of
+                it) did not resolve at :meth:`connect` time — an unsupported
+                entry reached this far, which should never happen once the UI
+                gates on :meth:`get_failure_support`, but this is the defence
+                the design asks for regardless (§4: "an unsupported failure_id
+                raises CapabilityNotSupported").
+        """
+        dataref_ids = self._failure_ids.get((failure.failure_id, failure.engine_index))
+        if not dataref_ids:
+            raise CapabilityNotSupported(self.name, "can_inject_failures")
+        return dataref_ids
 
     async def _read_optional(self, key: str) -> Any | None:
         """Read one optional dataref, or ``None`` when this build lacks it."""

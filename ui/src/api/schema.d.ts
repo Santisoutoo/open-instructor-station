@@ -538,10 +538,169 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/failures/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalogue
+         * @description The whole catalogue, merged with the adapter's support manifest.
+         *
+         *     Capability-free (§2.1): it answers "what could I do here?" even when the
+         *     answer is "nothing, and here is why" for every entry.
+         */
+        get: operations["get_catalogue_api_failures_catalogue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Active failures (the simulator's truth, D10) plus armed ones (the scheduler).
+         */
+        get: operations["get_status_api_failures_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inject Failure
+         * @description Fail one system now. Injecting an already-failed system is a no-op.
+         */
+        post: operations["inject_failure_api_failures_inject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/arm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Arm Failure
+         * @description Register one armed failure with a trigger. Not idempotent — arming twice arms two.
+         */
+        post: operations["arm_failure_api_failures_arm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/armed/{armed_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disarm Failure
+         * @description Disarm one armed failure before it fires. 404 when it may have already fired.
+         */
+        delete: operations["disarm_failure_api_failures_armed__armed_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear Failure
+         * @description Repair one active failure. Clearing something that is not failed is a no-op.
+         */
+        post: operations["clear_failure_api_failures_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/clear-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear All Failures
+         * @description Repair every active failure and disarm every armed one (D12) — the one-tap reset.
+         */
+        post: operations["clear_all_failures_api_failures_clear_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActiveFailure
+         * @description One failure the simulator reports as failed right now.
+         */
+        ActiveFailure: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+        };
         /**
          * AircraftControlManifest
          * @description The full control catalogue, resolved against the active adapter.
@@ -918,6 +1077,38 @@ export interface components {
             has_procedures: boolean;
         };
         /**
+         * AltitudeAboveTrigger
+         * @description Fires when ``altitude_ft >= threshold``. Inclusive, MSL.
+         */
+        AltitudeAboveTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "altitude_above";
+            /**
+             * Altitude Ft
+             * @description Feet MSL, inclusive.
+             */
+            altitude_ft: number;
+        };
+        /**
+         * AltitudeBelowTrigger
+         * @description Fires when ``altitude_ft <= threshold``. Inclusive, MSL.
+         */
+        AltitudeBelowTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "altitude_below";
+            /**
+             * Altitude Ft
+             * @description Feet MSL, inclusive.
+             */
+            altitude_ft: number;
+        };
+        /**
          * AltitudeConstraint
          * @description An altitude restriction, straight off the leg record.
          *
@@ -973,6 +1164,61 @@ export interface components {
             placement: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             /** @description The instructor's edits. Merged OVER the preview's setup rather than replacing it, so a client that omits a field cannot silently drop the geometry-derived altitude. */
             setup?: components["schemas"]["AircraftSetup"] | null;
+        };
+        /**
+         * ArmFailureRequest
+         * @description ``POST /api/failures/arm``.
+         */
+        ArmFailureRequest: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+            /** Trigger */
+            trigger: components["schemas"]["AltitudeAboveTrigger"] | components["schemas"]["AltitudeBelowTrigger"] | components["schemas"]["SpeedAboveTrigger"] | components["schemas"]["SpeedBelowTrigger"] | components["schemas"]["DelayTrigger"];
+        };
+        /**
+         * ArmedFailure
+         * @description One armed failure, as listed and as returned by ``/arm``.
+         *
+         *     Built by :class:`~core.failure_scheduler.FailureScheduler`, never by a
+         *     request body — the server assigns ``armed_id`` and ``armed_at``.
+         */
+        ArmedFailure: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+            /**
+             * Armed Id
+             * @description Server-assigned opaque id (uuid4 hex).
+             */
+            armed_id: string;
+            /** Trigger */
+            trigger: components["schemas"]["AltitudeAboveTrigger"] | components["schemas"]["AltitudeBelowTrigger"] | components["schemas"]["SpeedAboveTrigger"] | components["schemas"]["SpeedBelowTrigger"] | components["schemas"]["DelayTrigger"];
+            /**
+             * Armed At
+             * Format: date-time
+             * @description UTC wall clock, for the panel's countdown display.
+             */
+            armed_at: string;
+            /**
+             * Last Error
+             * @description Set when the trigger fired but injection failed; retried every frame.
+             */
+            last_error?: string | null;
         };
         /**
          * Capabilities
@@ -1033,6 +1279,22 @@ export interface components {
             can_pushback: boolean;
         };
         /**
+         * ClearFailureRequest
+         * @description ``POST /api/failures/clear`` — nothing beyond the ref.
+         */
+        ClearFailureRequest: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+        };
+        /**
          * CloudLayer
          * @description One cloud stratum. Base below tops, both MSL.
          */
@@ -1074,6 +1336,80 @@ export interface components {
             heading_deg?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
+        };
+        /**
+         * DelayTrigger
+         * @description Fires ``delay_s`` seconds of wall-clock time after arming.
+         *
+         *     Wall clock, not sim time: the station cannot see sim time, and saying so
+         *     beats pretending.
+         */
+        DelayTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "delay";
+            /**
+             * Delay S
+             * @description Seconds after arming.
+             */
+            delay_s: number;
+        };
+        /**
+         * FailureCatalogueEntry
+         * @description One catalogue entry, resolved against the active adapter's support manifest.
+         */
+        FailureCatalogueEntry: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /** Label */
+            label: string;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "engine" | "fuel" | "electrical" | "hydraulics" | "instruments" | "avionics" | "flight_controls" | "gear" | "airframe";
+            /** Takes Engine Index */
+            takes_engine_index: boolean;
+            /** Description */
+            description: string;
+            /** Supported */
+            supported: boolean;
+            /** Best Effort */
+            best_effort: boolean;
+            /** Reason */
+            reason: string | null;
+        };
+        /**
+         * FailureCatalogueResponse
+         * @description The full catalogue, in display order, merged with the adapter's support manifest.
+         */
+        FailureCatalogueResponse: {
+            /** Adapter */
+            adapter: string;
+            /** Caveat */
+            caveat: string | null;
+            /** Failures */
+            failures: components["schemas"]["FailureCatalogueEntry"][];
+        };
+        /**
+         * FailuresStatus
+         * @description ``GET /api/failures/status`` — the whole picture the panel polls.
+         *
+         *     ``active`` is read back from the simulator itself, never from a server-side
+         *     ledger (D10): a teleport's ``fix_all_systems`` repairs everything behind
+         *     any ledger's back. ``armed`` comes from the scheduler, which is the only
+         *     honest home for arming state (D5).
+         */
+        FailuresStatus: {
+            /** Active */
+            active: components["schemas"]["ActiveFailure"][];
+            /** Armed */
+            armed: components["schemas"]["ArmedFailure"][];
         };
         /**
          * Fix
@@ -1355,6 +1691,22 @@ export interface components {
              * @description Human-readable, e.g. "apt.dat — 8.1 M / 12.4 M lines".
              */
             detail?: string | null;
+        };
+        /**
+         * InjectFailureRequest
+         * @description ``POST /api/failures/inject`` — nothing beyond the ref.
+         */
+        InjectFailureRequest: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
         };
         /**
          * LightsSetup
@@ -2055,6 +2407,41 @@ export interface components {
              * @enum {string}
              */
             role: "threshold" | "runway_end" | "placement" | "glidepath" | "leg" | "fix";
+        };
+        /**
+         * SpeedAboveTrigger
+         * @description Fires when ``ias_kt >= threshold``. Inclusive.
+         *
+         *     This is the V1-cut trigger: armed on the ground before the roll, it fires
+         *     as the aircraft accelerates through V1.
+         */
+        SpeedAboveTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "speed_above";
+            /**
+             * Ias Kt
+             * @description Knots indicated, inclusive.
+             */
+            ias_kt: number;
+        };
+        /**
+         * SpeedBelowTrigger
+         * @description Fires when ``ias_kt <= threshold``. Inclusive.
+         */
+        SpeedBelowTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "speed_below";
+            /**
+             * Ias Kt
+             * @description Knots indicated, inclusive.
+             */
+            ias_kt: number;
         };
         /**
          * SpeedConstraint
@@ -3095,6 +3482,196 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalogue_api_failures_catalogue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureCatalogueResponse"];
+                };
+            };
+        };
+    };
+    get_status_api_failures_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+        };
+    };
+    inject_failure_api_failures_inject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InjectFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    arm_failure_api_failures_arm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArmFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArmedFailure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disarm_failure_api_failures_armed__armed_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                armed_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_failure_api_failures_clear_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClearFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_all_failures_api_failures_clear_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
                 };
             };
         };

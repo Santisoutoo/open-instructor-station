@@ -1,43 +1,49 @@
 import { useAppDispatch, useAppSelector } from '../../store';
-import { systemToggled } from './failuresSlice';
+import { CATEGORY_LABELS, CATEGORY_ORDER } from './categories';
+import { categoryToggled } from './failuresSlice';
 import { FailureRow, type RowStatus } from './FailureRow';
-import { SYSTEM_LABELS, SYSTEM_ORDER } from './mock';
-import type { FailureDefinition, FailuresBoard } from './types.mock';
+import type { FailureCatalogueEntry, FailuresStatus } from '../../api/models';
 
 interface FailureCatalogueProps {
-  catalogue: FailureDefinition[];
-  board: FailuresBoard;
+  catalogue: FailureCatalogueEntry[];
+  status: FailuresStatus;
 }
 
-function rowStatus(board: FailuresBoard, failureId: string): RowStatus {
-  if (board.active.some((entry) => entry.failureId === failureId)) {
+/**
+ * A row's status ignores engine index: an indexed failure active on one engine still
+ * reads as "active" for the whole row, and the engine it hit is stated on the
+ * `ActiveStrip` chip instead — the catalogue's job is "is this kind of failure doing
+ * something right now", not per-engine bookkeeping.
+ */
+function rowStatus(status: FailuresStatus, failureId: string): RowStatus {
+  if (status.active.some((entry) => entry.failure_id === failureId)) {
     return 'active';
   }
-  if (board.armed.some((entry) => entry.failureId === failureId)) {
+  if (status.armed.some((entry) => entry.failure_id === failureId)) {
     return 'armed';
   }
   return 'idle';
 }
 
 /**
- * The catalogue accordion, grouped by system. One group open at a time; while the
+ * The catalogue accordion, grouped by category. One group open at a time; while the
  * search field has text the accordion yields to a flat filtered view across all
  * groups, headers included, so a match is never hidden behind a closed group.
  */
-export function FailureCatalogue({ catalogue, board }: FailureCatalogueProps) {
+export function FailureCatalogue({ catalogue, status }: FailureCatalogueProps) {
   const dispatch = useAppDispatch();
   const searchText = useAppSelector((state) => state.failures.searchText);
-  const openSystem = useAppSelector((state) => state.failures.openSystem);
+  const openCategory = useAppSelector((state) => state.failures.openCategory);
   const draft = useAppSelector((state) => state.failures.armDraft);
 
   const query = searchText.trim().toLowerCase();
   const searching = query !== '';
   const matches = searching
     ? catalogue.filter(
-        (definition) =>
-          definition.label.toLowerCase().includes(query) ||
-          definition.description.toLowerCase().includes(query) ||
-          SYSTEM_LABELS[definition.system].toLowerCase().includes(query),
+        (entry) =>
+          entry.label.toLowerCase().includes(query) ||
+          entry.description.toLowerCase().includes(query) ||
+          CATEGORY_LABELS[entry.category].toLowerCase().includes(query),
       )
     : catalogue;
 
@@ -47,36 +53,36 @@ export function FailureCatalogue({ catalogue, board }: FailureCatalogueProps) {
 
   return (
     <div className="failures-groups">
-      {SYSTEM_ORDER.map((system) => {
-        const group = matches.filter((definition) => definition.system === system);
+      {CATEGORY_ORDER.map((category) => {
+        const group = matches.filter((entry) => entry.category === category);
         if (group.length === 0) {
           return null;
         }
-        const open = searching || openSystem === system;
+        const open = searching || openCategory === category;
         return (
-          <section key={system} className="failures-group">
+          <section key={category} className="failures-group">
             {searching ? (
-              <h3 className="failures-group__title">{SYSTEM_LABELS[system]}</h3>
+              <h3 className="failures-group__title">{CATEGORY_LABELS[category]}</h3>
             ) : (
               <button
                 type="button"
                 className="failures-group__header"
                 aria-expanded={open}
                 onClick={() => {
-                  dispatch(systemToggled(system));
+                  dispatch(categoryToggled(category));
                 }}
               >
-                <span>{SYSTEM_LABELS[system]}</span>
+                <span>{CATEGORY_LABELS[category]}</span>
                 <span className="failures-group__count">{group.length}</span>
               </button>
             )}
             {open && (
               <ul className="failures-rows">
-                {group.map((definition) => (
+                {group.map((entry) => (
                   <FailureRow
-                    key={definition.id}
-                    definition={definition}
-                    status={rowStatus(board, definition.id)}
+                    key={entry.failure_id}
+                    entry={entry}
+                    status={rowStatus(status, entry.failure_id)}
                     draft={draft}
                   />
                 ))}
