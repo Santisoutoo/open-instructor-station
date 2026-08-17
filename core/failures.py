@@ -22,6 +22,7 @@ module carries only the vocabulary the ``SimAdapter`` contract needs.
 
 from __future__ import annotations
 
+from datetime import datetime
 from types import MappingProxyType
 from typing import Annotated, Literal, get_args
 
@@ -35,6 +36,8 @@ __all__ = [
     "AltitudeAboveTrigger",
     "AltitudeBelowTrigger",
     "ArmFailureRequest",
+    "ArmedFailure",
+    "ClearFailureRequest",
     "DelayTrigger",
     "FailureCategory",
     "FailureId",
@@ -43,6 +46,7 @@ __all__ = [
     "FailureSupport",
     "FailureSupportManifest",
     "FailureTrigger",
+    "FailuresStatus",
     "InjectFailureRequest",
     "SpeedAboveTrigger",
     "SpeedBelowTrigger",
@@ -435,6 +439,10 @@ class InjectFailureRequest(FailureRef):
     """``POST /api/failures/inject`` — nothing beyond the ref."""
 
 
+class ClearFailureRequest(FailureRef):
+    """``POST /api/failures/clear`` — nothing beyond the ref."""
+
+
 class ArmFailureRequest(FailureRef):
     """``POST /api/failures/arm``."""
 
@@ -443,3 +451,34 @@ class ArmFailureRequest(FailureRef):
 
 class ActiveFailure(FailureRef):
     """One failure the simulator reports as failed right now."""
+
+
+class ArmedFailure(FailureRef):
+    """One armed failure, as listed and as returned by ``/arm``.
+
+    Built by :class:`~core.failure_scheduler.FailureScheduler`, never by a
+    request body — the server assigns ``armed_id`` and ``armed_at``.
+    """
+
+    armed_id: str = Field(description="Server-assigned opaque id (uuid4 hex).")
+    trigger: FailureTrigger
+    armed_at: datetime = Field(description="UTC wall clock, for the panel's countdown display.")
+    last_error: str | None = Field(
+        default=None,
+        description="Set when the trigger fired but injection failed; retried every frame.",
+    )
+
+
+class FailuresStatus(BaseModel):
+    """``GET /api/failures/status`` — the whole picture the panel polls.
+
+    ``active`` is read back from the simulator itself, never from a server-side
+    ledger (D10): a teleport's ``fix_all_systems`` repairs everything behind
+    any ledger's back. ``armed`` comes from the scheduler, which is the only
+    honest home for arming state (D5).
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    active: list[ActiveFailure]
+    armed: list[ArmedFailure]
