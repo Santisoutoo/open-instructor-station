@@ -19,6 +19,8 @@ Surface:
 * ``/api/fuel-payload/*`` — the Fuel & Payload Manager, in
   :mod:`server.fuel_payload_routes`.
 * ``/api/failures/*`` — the Failures Manager, in :mod:`server.failure_routes`.
+* ``/api/scenarios/*`` — the Flight Scenario Generator, in
+  :mod:`server.scenario_routes`.
 
 The UI (built separately into ``ui/dist``) is served from ``/`` when it exists;
 the server starts perfectly well without it.
@@ -45,6 +47,7 @@ from server import (
     fuel_payload_routes,
     navdata_routes,
     position_routes,
+    scenario_routes,
     weather_routes,
 )
 from server.deps import get_adapter, load_airframe_info
@@ -385,6 +388,7 @@ def create_app() -> FastAPI:
     app.include_router(weather_routes.router)
     app.include_router(fuel_payload_routes.router)
     app.include_router(failure_routes.router)
+    app.include_router(scenario_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
 
     _mount_ui(app)

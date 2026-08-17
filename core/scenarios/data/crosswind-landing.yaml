@@ -1,0 +1,16 @@
+name: "Crosswind landing"
+description: >
+  Short final for runway 36 at ZZZZ, with 20 kt gusting 25 blowing 90° off
+  the runway — a full crosswind correction into the flare and touchdown.
+tags: [weather, crosswind, approach, landing]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: short_final
+
+weather:
+  preset: crosswind
+  airport_icao: ZZZZ
+  runway_ident: "36"

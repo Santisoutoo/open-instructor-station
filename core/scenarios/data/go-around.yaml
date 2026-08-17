@@ -1,0 +1,16 @@
+name: "Go-around"
+description: >
+  Short final for runway 36 at ZZZZ, low and fully configured to land —
+  a pure position-and-state exercise for practising the go-around and
+  missed-approach procedure, with no weather or failure of its own.
+tags: [position, go-around, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: short_final
+
+aircraft_state:
+  flaps_ratio: 1.0
+  gear_down: true

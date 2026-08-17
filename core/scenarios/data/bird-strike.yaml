@@ -1,0 +1,19 @@
+name: "Bird strike"
+description: >
+  On approach to runway 36 at ZZZZ, 10 NM out, in clear weather, a bird
+  strike occurs immediately — an unannounced airframe event with no engine
+  index of its own.
+tags: [failure, airframe, bird-strike, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: final_10nm
+
+weather:
+  preset: cavok
+
+failures:
+  immediate:
+    - failure_id: airframe.bird_strike

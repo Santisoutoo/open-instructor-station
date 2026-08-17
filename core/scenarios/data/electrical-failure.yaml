@@ -1,0 +1,22 @@
+name: "Electrical failure"
+description: >
+  On approach to runway 36 at ZZZZ, 10 NM out, in clear weather, a total
+  electrical failure is armed to fire 90 seconds after arming — loss of
+  every electrical bus partway through the approach.
+tags: [failure, electrical, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: final_10nm
+
+weather:
+  preset: cavok
+
+failures:
+  armed:
+    - failure_id: electrical.system
+      trigger:
+        type: delay
+        delay_s: 90.0
