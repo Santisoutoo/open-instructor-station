@@ -9,6 +9,7 @@ export const TAB_IDS = [
   'scenarios',
   'weather',
   'failures',
+  'fuel-payload',
   'map',
   'aircraft',
   'landing',

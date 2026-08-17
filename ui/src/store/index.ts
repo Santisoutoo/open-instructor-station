@@ -4,6 +4,7 @@ import { useDispatch, useSelector, useStore } from 'react-redux';
 import { instructorApi } from '../api/instructorApi';
 import aircraftReducer from '../features/aircraft/aircraftSlice';
 import failuresReducer from '../features/failures/failuresSlice';
+import fuelPayloadReducer from '../features/fuel-payload/fuelPayloadSlice';
 import landingReducer from '../features/landing/landingSlice';
 import mapReducer from '../features/map/mapSlice';
 import positionReducer from '../features/position/positionSlice';
@@ -27,6 +28,7 @@ const reducerMap = {
   position: positionReducer,
   weather: weatherReducer,
   failures: failuresReducer,
+  fuelPayload: fuelPayloadReducer,
   scenarios: scenariosReducer,
   map: mapReducer,
   landing: landingReducer,
