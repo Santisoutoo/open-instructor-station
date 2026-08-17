@@ -64,6 +64,42 @@ class TestCreateGetRoundTrip:
         assert root.is_dir()
 
 
+class TestUntrustedProfileId:
+    """`profile_id` reaches `get`/`delete` straight from a URL path parameter, so it
+    is untrusted input — a shape not matching what `create()` ever assigns must
+    never reach a filesystem path (PR #108 review, defense-in-depth)."""
+
+    def test_get_on_a_traversal_shaped_id_returns_none(
+        self, tmp_path: Path, store: ProfileStore
+    ) -> None:
+        # A real file placed just outside the store's own root -- if the guard were
+        # missing, `../secret` would resolve to exactly this file.
+        secret = tmp_path / "secret.json"
+        secret.write_text("not a profile", encoding="utf-8")
+        assert store.get("../secret") is None
+
+    def test_delete_on_a_traversal_shaped_id_returns_false_and_does_not_touch_the_file(
+        self, tmp_path: Path, store: ProfileStore
+    ) -> None:
+        secret = tmp_path / "secret.json"
+        secret.write_text("not a profile", encoding="utf-8")
+        assert store.delete("../secret") is False
+        assert secret.exists()
+
+    def test_get_on_an_id_of_the_wrong_length_returns_none(self, store: ProfileStore) -> None:
+        assert store.get("a" * 31) is None
+        assert store.get("a" * 33) is None
+
+    def test_get_on_a_non_hex_id_returns_none(self, store: ProfileStore) -> None:
+        assert store.get("g" * 32) is None
+
+    def test_export_on_a_traversal_shaped_id_returns_none(self, store: ProfileStore) -> None:
+        assert store.export_bytes("../../etc/passwd") is None
+
+    def test_replace_on_a_traversal_shaped_id_returns_none(self, store: ProfileStore) -> None:
+        assert store.replace("../../etc/passwd", _draft()) is None
+
+
 class TestList:
     def test_empty_store_lists_nothing(self, store: ProfileStore) -> None:
         assert store.list() == []

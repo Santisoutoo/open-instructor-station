@@ -21,6 +21,8 @@ refusal inside its 200 body instead.
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ValidationError
@@ -45,6 +47,8 @@ __all__ = [
     "apply_profile",
     "router",
 ]
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
@@ -120,6 +124,20 @@ def _reason(exc: Exception) -> str:
     return str(exc)
 
 
+def _unexpected_reason(exc: Exception, *, component: str, profile_id: str) -> str:
+    """Log and stringify an exception none of the expected types anticipated.
+
+    D8's whole contract is that one component's failure never prevents another's
+    attempt — an adapter-specific exception this module cannot enumerate up front
+    (``XPlaneRepositionFailed``, ``XPlaneNotReachable``, a connection drop mid-call)
+    must not be allowed to propagate out of ``apply_profile`` and abort the
+    components after it, the way an unguarded ``server/scenario_engine.py`` step
+    already once needed a defensive fallback for (see its own module docstring).
+    """
+    logger.exception("Profile %r: %s failed unexpectedly", profile_id, component)
+    return _reason(exc)
+
+
 # ---------------------------------------------------------------------------
 # Apply orchestration (D10: lives here, not in core/ — resolving what
 # degrades means calling the adapter through the other managers' own apply
@@ -128,7 +146,7 @@ def _reason(exc: Exception) -> str:
 
 
 async def _apply_position(
-    document: ScenarioDocument, *, adapter: SimAdapter, navdata: NavdataProvider
+    document: ScenarioDocument, *, adapter: SimAdapter, navdata: NavdataProvider, profile_id: str
 ) -> ProfilePositionOutcome:
     placement = document.position
     setup = document.aircraft_state
@@ -145,12 +163,15 @@ async def _apply_position(
         assert setup is not None  # narrowed by the guard above
         await adapter.apply_setup(setup)
         return ProfilePositionOutcome(attempted=True, applied=True)
-    except (HTTPException, CapabilityNotSupported, NavdataUnavailable) as exc:
+    except (HTTPException, CapabilityNotSupported, NavdataUnavailable, ValueError) as exc:
         return ProfilePositionOutcome(attempted=True, applied=False, reason=_reason(exc))
+    except Exception as exc:  # D8's own defensive fallback, see _unexpected_reason
+        reason = _unexpected_reason(exc, component="position", profile_id=profile_id)
+        return ProfilePositionOutcome(attempted=True, applied=False, reason=reason)
 
 
 async def _apply_weather(
-    document: ScenarioDocument, *, adapter: SimAdapter, navdata: NavdataProvider
+    document: ScenarioDocument, *, adapter: SimAdapter, navdata: NavdataProvider, profile_id: str
 ) -> ProfileWeatherOutcome:
     request = document.weather
     if request is None:
@@ -159,8 +180,17 @@ async def _apply_weather(
         setup, notes = await run_in_threadpool(_resolve_weather, navdata, request)
         await adapter.set_weather(setup)
         state = await adapter.get_weather()
-    except (HTTPException, CapabilityNotSupported, WeatherRejected, NavdataUnavailable) as exc:
+    except (
+        HTTPException,
+        CapabilityNotSupported,
+        WeatherRejected,
+        NavdataUnavailable,
+        ValueError,
+    ) as exc:
         return ProfileWeatherOutcome(attempted=True, applied=False, reason=_reason(exc))
+    except Exception as exc:  # D8's own defensive fallback, see _unexpected_reason
+        reason = _unexpected_reason(exc, component="weather", profile_id=profile_id)
+        return ProfileWeatherOutcome(attempted=True, applied=False, reason=reason)
     return ProfileWeatherOutcome(
         attempted=True,
         applied=True,
@@ -169,7 +199,7 @@ async def _apply_weather(
 
 
 async def _apply_failures(
-    document: ScenarioDocument, *, adapter: SimAdapter
+    document: ScenarioDocument, *, adapter: SimAdapter, profile_id: str
 ) -> tuple[ProfileFailureOutcome, ...]:
     block = document.failures
     if block is None:
@@ -180,9 +210,15 @@ async def _apply_failures(
     for ref in block.immediate:
         try:
             await adapter.inject_failure(ref)
-        except (CapabilityNotSupported, HTTPException) as exc:
+        except (CapabilityNotSupported, HTTPException, ValueError) as exc:
             outcomes.append(
                 ProfileFailureOutcome(ref=ref, applied=False, armed=False, reason=_reason(exc))
+            )
+            continue
+        except Exception as exc:  # D8's own defensive fallback
+            reason = _unexpected_reason(exc, component="failures", profile_id=profile_id)
+            outcomes.append(
+                ProfileFailureOutcome(ref=ref, applied=False, armed=False, reason=reason)
             )
             continue
         outcomes.append(ProfileFailureOutcome(ref=ref, applied=True, armed=False))
@@ -193,11 +229,17 @@ async def _apply_failures(
         )
         try:
             armed = await arm_failure(armed_request, adapter=adapter)
-        except (CapabilityNotSupported, HTTPException) as exc:
+        except (CapabilityNotSupported, HTTPException, ValueError) as exc:
             outcomes.append(
                 ProfileFailureOutcome(
                     ref=armed_ref, applied=False, armed=False, reason=_reason(exc)
                 )
+            )
+            continue
+        except Exception as exc:  # D8's own defensive fallback
+            reason = _unexpected_reason(exc, component="failures", profile_id=profile_id)
+            outcomes.append(
+                ProfileFailureOutcome(ref=armed_ref, applied=False, armed=False, reason=reason)
             )
             continue
         outcomes.append(
@@ -256,9 +298,15 @@ async def apply_profile(
     profile: TrainingProfile, *, adapter: SimAdapter, navdata: NavdataProvider
 ) -> ProfileApplyResult:
     """Run a profile's embedded scenario, each component attempted independently (D8)."""
-    position = await _apply_position(profile.scenario, adapter=adapter, navdata=navdata)
-    weather = await _apply_weather(profile.scenario, adapter=adapter, navdata=navdata)
-    failures = await _apply_failures(profile.scenario, adapter=adapter)
+    position = await _apply_position(
+        profile.scenario, adapter=adapter, navdata=navdata, profile_id=profile.profile_id
+    )
+    weather = await _apply_weather(
+        profile.scenario, adapter=adapter, navdata=navdata, profile_id=profile.profile_id
+    )
+    failures = await _apply_failures(
+        profile.scenario, adapter=adapter, profile_id=profile.profile_id
+    )
     return ProfileApplyResult(
         profile_id=profile.profile_id,
         position=position,

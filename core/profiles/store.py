@@ -10,6 +10,7 @@ uses). Every read treats a missing directory as an empty store.
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
@@ -27,6 +28,16 @@ logger = logging.getLogger(__name__)
 #: reusing them would let an uploaded file collide with, or impersonate, an
 #: existing profile.
 _IGNORED_ON_IMPORT = frozenset({"profile_id", "created_at", "updated_at", "format_version"})
+
+#: `create()` only ever assigns `uuid.uuid4().hex` — 32 lowercase hex characters, no
+#: dashes. `get`/`delete` receive `profile_id` from the URL, so it is untrusted:
+#: `_path()` builds a `Path` with `/`, which does not collapse `..` segments, and an
+#: id shaped like `../../../etc/passwd` would otherwise be handed straight to the
+#: filesystem. Any id not matching this shape is treated as "not found" rather than
+#: ever reaching `_path()` — the same posture `ProfileStoreError`'s docstring already
+#: draws between "not found" and "the store itself failed", just applied one layer
+#: earlier.
+_VALID_PROFILE_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 class ProfileStoreError(RuntimeError):
@@ -120,7 +131,13 @@ class ProfileStore:
         Raises :class:`ProfileStoreError` when the file exists but its
         content will not parse — distinct from "not found", the same
         distinction :class:`ProfileStoreError`'s own docstring draws.
+
+        An id not shaped like one this store ever assigns (see
+        ``_VALID_PROFILE_ID``) answers ``None`` without ever building a
+        filesystem path from it.
         """
+        if _VALID_PROFILE_ID.match(profile_id) is None:
+            return None
         path = self._path(profile_id)
         if not path.is_file():
             return None
@@ -168,7 +185,13 @@ class ProfileStore:
         return profile
 
     def delete(self, profile_id: str) -> bool:
-        """``False`` when the file was already gone. Never raises for that case."""
+        """``False`` when the file was already gone. Never raises for that case.
+
+        Same shape-check as :meth:`get` — an id this store could never have
+        assigned answers ``False`` without touching the filesystem.
+        """
+        if _VALID_PROFILE_ID.match(profile_id) is None:
+            return False
         path = self._path(profile_id)
         try:
             path.unlink()

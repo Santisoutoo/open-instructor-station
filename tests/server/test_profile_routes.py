@@ -44,6 +44,20 @@ class _NoFailuresAdapter(FakeSimAdapter):
         return super().capabilities.model_copy(update={"can_inject_failures": False})
 
 
+class _PositionBlowsUpAdapter(FakeSimAdapter):
+    """``set_position`` raises an exception none of ``_apply_position``'s named
+    ``except`` clauses anticipate — standing in for an adapter-specific failure
+    like ``XPlaneRepositionFailed``/``XPlaneNotReachable`` (PR #108 review,
+    finding 1). Proves the defensive fallback, not just the enumerated cases."""
+
+    @property
+    def name(self) -> str:
+        return "position-blows-up"
+
+    async def set_position(self, *args: object, **kwargs: object) -> None:
+        raise RuntimeError("the reposition write never converged")
+
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -72,6 +86,19 @@ def no_failures_client(
 ) -> Iterator[TestClient]:
     del navdata, profile_store  # ordering dependency only
     monkeypatch.setattr(server.deps, "_build_adapter", lambda _settings: _NoFailuresAdapter())
+    reset_adapter()
+    yield TestClient(create_app())
+    reset_adapter()
+
+
+@pytest.fixture
+def position_blows_up_client(
+    navdata: InMemoryNavdataProvider,
+    profile_store: ProfileStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[TestClient]:
+    del navdata, profile_store  # ordering dependency only
+    monkeypatch.setattr(server.deps, "_build_adapter", lambda _settings: _PositionBlowsUpAdapter())
     reset_adapter()
     yield TestClient(create_app())
     reset_adapter()
@@ -111,6 +138,28 @@ def _degraded_draft() -> dict[str, object]:
     )
     return {
         "name": "Degraded profile",
+        "description": "",
+        "author": None,
+        "scenario": scenario.model_dump(mode="json"),
+    }
+
+
+def _resolvable_draft() -> dict[str, object]:
+    """Position resolves cleanly (ZZZZ, unlike `_degraded_draft`'s ZZZQ) -- this
+    scenario should reach `adapter.set_position` and let it fail there instead."""
+    scenario = ScenarioDocument(
+        name="Resolvable profile",
+        description="Every component should be attempted regardless of position's fate.",
+        position=RunwayThresholdPlacementRequest(
+            type="runway_threshold", airport_icao="ZZZZ", runway_ident="36"
+        ),
+        weather=WeatherRequest(preset="cavok"),
+        failures=ScenarioFailuresBlock(
+            immediate=(InjectFailureRequest(failure_id="airframe.smoke"),)
+        ),
+    )
+    return {
+        "name": "Resolvable profile",
         "description": "",
         "author": None,
         "scenario": scenario.model_dump(mode="json"),
@@ -295,6 +344,29 @@ class TestApply:
         assert body["weather"]["attempted"] is False
         assert body["failures"][0]["applied"] is False
         assert "can_inject_failures" in body["failures"][0]["reason"]
+
+    def test_an_unanticipated_exception_from_one_component_never_prevents_the_others(
+        self, position_blows_up_client: TestClient
+    ) -> None:
+        """PR #108 review, finding 1: `_apply_position` used to catch only
+        `(HTTPException, CapabilityNotSupported, NavdataUnavailable)`. An
+        adapter-specific failure outside that set (`RuntimeError` here, standing
+        in for `XPlaneRepositionFailed`/`XPlaneNotReachable`) would propagate
+        out of `apply_profile` entirely and abort the run -- 500, weather and
+        failures never even attempted. It must instead degrade like any other
+        position failure, with weather and failures still applied."""
+        with position_blows_up_client:
+            created = position_blows_up_client.post("/api/profiles", json=_resolvable_draft())
+            profile_id = created.json()["profile_id"]
+            response = position_blows_up_client.post(f"/api/profiles/{profile_id}/apply")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["degraded"] is True
+        assert body["position"]["attempted"] is True
+        assert body["position"]["applied"] is False
+        assert "never converged" in body["position"]["reason"]
+        assert body["weather"]["applied"] is True
+        assert body["failures"][0]["applied"] is True
 
 
 # ---------------------------------------------------------------------------

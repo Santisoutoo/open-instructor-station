@@ -67,7 +67,11 @@ function FailureBuilder() {
   const supported = (catalogue?.failures ?? []).filter((entry) => entry.supported);
 
   const [failureId, setFailureId] = useState<FailureId | ''>('');
-  const [engineIndex, setEngineIndex] = useState<number | ''>('');
+  // Never blank -- an indexed failure's engine_index is required (FailureRef.engine_index:
+  // "Required iff the entry is indexed"), so the field always holds a valid 1-8 value rather
+  // than risking a silent `null` that only surfaces as a generic 422 at save time. Mirrors
+  // FailureRow.tsx's own `useState(1)` for the same reason.
+  const [engineIndex, setEngineIndex] = useState<number>(1);
   const [when, setWhen] = useState<'immediate' | FailureTriggerType>('immediate');
   const [threshold, setThreshold] = useState<number | ''>('');
 
@@ -96,12 +100,12 @@ function FailureBuilder() {
     dispatch(
       saveDraftFailureAdded({
         failureId,
-        engineIndex: entry?.takes_engine_index === true && engineIndex !== '' ? engineIndex : null,
+        engineIndex: entry?.takes_engine_index === true ? engineIndex : null,
         trigger,
       }),
     );
     setFailureId('');
-    setEngineIndex('');
+    setEngineIndex(1);
     setWhen('immediate');
     setThreshold('');
   };
@@ -151,11 +155,14 @@ function FailureBuilder() {
             type="number"
             min={1}
             max={8}
-            placeholder="Engine #"
             value={engineIndex}
             onChange={(event) => {
+              // An invalid or out-of-range edit is simply not applied, rather than being
+              // allowed to clear the field -- engineIndex must always be a valid 1-8 value.
               const value = Number(event.target.value);
-              setEngineIndex(event.target.value === '' || !Number.isFinite(value) ? '' : value);
+              if (Number.isFinite(value) && value >= 1 && value <= 8) {
+                setEngineIndex(value);
+              }
             }}
           />
         )}

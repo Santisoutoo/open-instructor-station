@@ -34,6 +34,16 @@ const CATALOGUE: FailureCatalogueResponse = {
       best_effort: false,
       reason: null,
     },
+    {
+      failure_id: 'engine.failure',
+      label: 'Engine failure',
+      category: 'engine',
+      takes_engine_index: true,
+      description: 'Total loss of engine power.',
+      supported: true,
+      best_effort: false,
+      reason: null,
+    },
   ],
 };
 
@@ -134,5 +144,43 @@ describe('SaveProfileForm', () => {
         traffic: null,
       },
     });
+  });
+
+  it('an engine-indexed failure always carries a valid engine index -- never a blank one', async () => {
+    /**
+     * Regression: the engine-index field used to default to '', so adding an indexed
+     * failure without ever touching the field silently produced `engine_index: null`
+     * -- an entry the server would 422 on save, with no earlier feedback. It now
+     * defaults to 1, matching `FailureRow.tsx`'s own established pattern.
+     */
+    const { calls } = stubApi({
+      'failures/catalogue': { body: CATALOGUE },
+      profiles: {
+        body: {
+          format_version: 1,
+          profile_id: 'a'.repeat(32),
+          name: 'V1 cut',
+          description: '',
+          author: null,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+          scenario: { name: 'V1 cut', description: '', tags: [] },
+        },
+      },
+    });
+    renderForm(buildState());
+
+    await userEvent.type(screen.getByLabelText('Name'), 'V1 cut');
+
+    // Add the indexed failure WITHOUT touching the engine-index field.
+    await userEvent.selectOptions(await screen.findByLabelText('Failure'), 'engine.failure');
+    await userEvent.click(screen.getByRole('button', { name: 'Add' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Save profile' }));
+
+    const posted = callsTo(calls, '/api/profiles').find((call) => call.method === 'POST');
+    const body = posted?.body as { scenario: { failures: { immediate: unknown[] } } };
+    expect(body.scenario.failures.immediate).toEqual([
+      { failure_id: 'engine.failure', engine_index: 1 },
+    ]);
   });
 });

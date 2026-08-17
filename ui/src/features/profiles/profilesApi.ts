@@ -14,15 +14,16 @@
  * `docs/designs/training-profiles.md`'s panel outline, §7.1): `ProfileList.tsx` renders
  * a plain `<a href="/api/profiles/{id}/export" download>` so the browser handles the
  * download natively, with zero client-side blob juggling.
+ *
+ * `GET /api/profiles/{id}` and `PUT /api/profiles/{id}` exist on the server (D13:
+ * REST completeness for scripting and a later UI, not scope creep) but have no
+ * client binding here — no row-expand or edit UI in this Phase 2 panel calls
+ * either. Add `getProfile`/`replaceProfile` back alongside whichever UI first
+ * needs them, rather than shipping an unexercised hook ahead of that need.
  */
 
 import { instructorApi } from '../../api/instructorApi';
-import type {
-  ProfileApplyResult,
-  ProfileSummary,
-  TrainingProfile,
-  TrainingProfileCreate,
-} from '../../api/models';
+import type { ProfileApplyResult, ProfileSummary, TrainingProfile, TrainingProfileCreate } from '../../api/models';
 
 export const profilesApi = instructorApi.injectEndpoints({
   endpoints: (builder) => ({
@@ -31,30 +32,10 @@ export const profilesApi = instructorApi.injectEndpoints({
       query: () => 'profiles',
       providesTags: ['Profiles'],
     }),
-    /** One profile, in full. Fetched when a row expands. */
-    getProfile: builder.query<TrainingProfile, string>({
-      query: (profileId) => `profiles/${profileId}`,
-      providesTags: (_result, _error, profileId) => [{ type: 'Profiles', id: profileId }],
-    }),
     /** Save a new profile. The server assigns `profile_id` and timestamps. */
     createProfile: builder.mutation<TrainingProfile, TrainingProfileCreate>({
       query: (draft) => ({ url: 'profiles', method: 'POST', body: draft }),
       invalidatesTags: ['Profiles'],
-    }),
-    /** Replace name/description/author/scenario of an existing profile. Never creates. */
-    replaceProfile: builder.mutation<
-      TrainingProfile,
-      { profileId: string; draft: TrainingProfileCreate }
-    >({
-      query: ({ profileId, draft }) => ({
-        url: `profiles/${profileId}`,
-        method: 'PUT',
-        body: draft,
-      }),
-      invalidatesTags: (_result, _error, { profileId }) => [
-        'Profiles',
-        { type: 'Profiles', id: profileId },
-      ],
     }),
     /** Remove a profile. */
     deleteProfile: builder.mutation<void, string>({
@@ -79,9 +60,7 @@ export const profilesApi = instructorApi.injectEndpoints({
 
 export const {
   useGetProfilesQuery,
-  useGetProfileQuery,
   useCreateProfileMutation,
-  useReplaceProfileMutation,
   useDeleteProfileMutation,
   useApplyProfileMutation,
   useImportProfileMutation,
