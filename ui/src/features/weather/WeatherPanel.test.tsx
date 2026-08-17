@@ -5,7 +5,7 @@
  * apply, cache updated, staging gone.
  */
 
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { setupStore } from '../../store';
@@ -75,11 +75,14 @@ describe('WeatherPanel', () => {
     });
     const store = renderPanel();
 
-    // Let the mock latency elapse so the gate opens.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
+    // Let the mock latency elapse so the gate opens. `vi.waitFor` polls in small
+    // increments and advances the fake clock between polls, unlike a single blind
+    // `advanceTimersByTimeAsync` jump — RTK Query's dispatch-then-subscriber-notify
+    // chain can still have a pending microtask hop when a big jump's promise settles,
+    // which showed up as an intermittent "Reading the current weather…" failure.
+    await vi.waitFor(() => {
+      expect(screen.getByText('270° / 5 kt')).toBeInTheDocument();
     });
-    expect(screen.getByText('270° / 5 kt')).toBeInTheDocument();
 
     // First tap stages: the editors and the staging bar appear, nothing applies.
     fireEvent.click(screen.getByRole('button', { name: /CAVOK/ }));
@@ -89,11 +92,10 @@ describe('WeatherPanel', () => {
 
     // Apply commits; after the mock latency the cache is the applied weather.
     fireEvent.click(apply);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => {
+      expect(store.getState().weather.staged).toBe(false);
     });
 
-    expect(store.getState().weather.staged).toBe(false);
     expect(screen.queryByRole('button', { name: 'Apply weather' })).toBeNull();
     expect(screen.getByRole('status')).toHaveTextContent('Weather applied.');
     // The current-weather readout now shows CAVOK's wind, not the fixture day's.
