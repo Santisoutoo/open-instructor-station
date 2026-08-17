@@ -371,7 +371,17 @@ export interface paths {
         };
         /**
          * Get Fixes
-         * @description Fixes by identifier — a list, because fix idents are not globally unique.
+         * @description Fixes by identifier, or every fix near a point.
+         *
+         *     **Two query forms, one path**, because they answer the same question from
+         *     the two directions an instructor asks it: "where is GOXOL?" and "what fixes
+         *     are around here?". Exactly one of ``ident`` and ``lat``/``lon`` must be
+         *     given — sending both would leave the server to invent a precedence, and
+         *     sending neither would ask for every fix on Earth.
+         *
+         *     A list either way: fix identifiers are **not** globally unique, so the
+         *     single-ident form returns every match sorted by ident then region, and the
+         *     caller disambiguates with ``region`` or ``terminal_airport``.
          */
         get: operations["get_fixes_api_navdata_fixes_get"];
         put?: never;
@@ -442,6 +452,95 @@ export interface paths {
          * @description Place the aircraft. Setup first, then the teleport — see the module docstring.
          */
         post: operations["apply_placement_api_position_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Capability + reason, resolved mass limits and their provenance, the preset catalogue.
+         *
+         *     ``def``, not ``async def``: everything here is a capability-flag check and
+         *     a cached ``AirframeInfo`` read, never simulator I/O.
+         */
+        get: operations["get_manifest_api_fuel_payload_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fuel Payload
+         * @description The current loadout plus its computed mass-and-balance.
+         */
+        get: operations["get_fuel_payload_api_fuel_payload_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Fuel Payload
+         * @description Resolve ``request`` into the exact loadout and mass-and-balance ``apply`` would produce.
+         *
+         *     Writes nothing: ``get_loadout()`` is read but ``apply_setup`` is never
+         *     called.
+         */
+        post: operations["preview_fuel_payload_api_fuel_payload_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Fuel Payload
+         * @description Re-resolve, refuse if out of envelope and not overridden, write, read back.
+         *
+         *     Idempotent: the body states an absolute target loadout, never a delta —
+         *     replaying it writes the same numbers again.
+         */
+        post: operations["apply_fuel_payload_api_fuel_payload_apply_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -564,6 +663,8 @@ export interface components {
              * @description Total fuel in kilograms.
              */
             fuel_kg?: number | null;
+            /** @description Per-tank fuel and per-station payload. Requires can_set_fuel_payload, the same flag as gross_weight_kg/fuel_kg. When both are set, loadout is authoritative. */
+            loadout?: components["schemas"]["Loadout"] | null;
             /**
              * Flaps Ratio
              * @description 0 = up, 1 = fully deployed.
@@ -732,6 +833,38 @@ export interface components {
              * @default false
              */
             on_ground: boolean;
+        };
+        /**
+         * AirframeMassLimits
+         * @description Static mass-and-balance facts about the loaded airframe.
+         *
+         *     All-or-nothing: an adapter that cannot supply the complete set reports
+         *     ``None`` on :attr:`AirframeInfo.mass_limits` rather than a half-populated
+         *     model.
+         */
+        AirframeMassLimits: {
+            /** Empty Weight Kg */
+            empty_weight_kg: number;
+            /** Empty Cg Arm In */
+            empty_cg_arm_in: number;
+            /** Max Takeoff Weight Kg */
+            max_takeoff_weight_kg: number;
+            /** Max Zero Fuel Weight Kg */
+            max_zero_fuel_weight_kg?: number | null;
+            /** Max Fuel Kg */
+            max_fuel_kg: number;
+            /** Fuel Tank Capacities Kg */
+            fuel_tank_capacities_kg: number[];
+            /**
+             * Fuel Tank Arms In
+             * @description Same order/length as capacities.
+             */
+            fuel_tank_arms_in: number[];
+            /** Payload Station Capacities Kg */
+            payload_station_capacities_kg: number[];
+            /** Payload Station Arms In */
+            payload_station_arms_in: number[];
+            cg_envelope: components["schemas"]["CgEnvelope"];
         };
         /**
          * Airport
@@ -941,6 +1074,32 @@ export interface components {
             can_pushback: boolean;
         };
         /**
+         * CgEnvelope
+         * @description A weight-vs-CG-limit polygon, linearly interpolated between points.
+         */
+        CgEnvelope: {
+            /**
+             * Points
+             * @description Ascending by weight_kg. Outside the range is a validation failure — no straight-line extrapolation past a published envelope.
+             */
+            points: components["schemas"]["CgEnvelopePoint"][];
+        };
+        /** CgEnvelopePoint */
+        CgEnvelopePoint: {
+            /** Weight Kg */
+            weight_kg: number;
+            /**
+             * Fwd Limit In
+             * @description Forward CG limit at this weight, inches aft of datum.
+             */
+            fwd_limit_in: number;
+            /**
+             * Aft Limit In
+             * @description Aft CG limit at this weight. >= fwd_limit_in.
+             */
+            aft_limit_in: number;
+        };
+        /**
          * CoordinatePlacementRequest
          * @description An arbitrary latitude/longitude/altitude.
          */
@@ -1010,6 +1169,118 @@ export interface components {
              * @description The CIFP file's airport, used to scope terminal fixes.
              */
             airport_icao?: string | null;
+        };
+        /**
+         * FuelPayloadApplyResult
+         * @description What actually happened. ``state`` is the read-back — the honest verdict.
+         */
+        FuelPayloadApplyResult: {
+            applied: components["schemas"]["LoadoutState"];
+            state: components["schemas"]["FuelPayloadState"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * FuelPayloadManifest
+         * @description ``GET /manifest`` — this manager's ``GET /api/aircraft/controls``.
+         *
+         *     Answers without touching the simulator or the navdata index: capability
+         *     flags are static and ``AirframeInfo`` is the cache
+         *     ``server.deps.load_airframe_info`` already populates at connect. Always
+         *     200, always fast.
+         */
+        FuelPayloadManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Supported */
+            supported: boolean;
+            /** Reason */
+            reason: string | null;
+            /** Icao Type */
+            icao_type: string | null;
+            /**
+             * Limits Source
+             * @enum {string}
+             */
+            limits_source: "adapter" | "table" | "unknown";
+            /**
+             * Limits Note
+             * @description The table entry's disclaimer, when limits_source == 'table'.
+             */
+            limits_note?: string | null;
+            /** @description The resolved mass/CG facts themselves -- empty weight, MTOW, tank/station capacities and arms, the CG envelope polygon -- so the panel can render MTOW and the envelope without a second round trip. None iff limits_source == 'unknown'. */
+            limits?: components["schemas"]["AirframeMassLimits"] | null;
+            /** Tank Count */
+            tank_count: number;
+            /** Station Count */
+            station_count: number;
+            /** Presets */
+            presets: components["schemas"]["FuelPayloadPresetInfo"][];
+        };
+        /**
+         * FuelPayloadPresetInfo
+         * @description One catalogue entry, as the manifest lists it.
+         */
+        FuelPayloadPresetInfo: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "ferry" | "training" | "full" | "empty";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+        };
+        /**
+         * FuelPayloadPreview
+         * @description What ``apply`` would produce. Writes nothing.
+         */
+        FuelPayloadPreview: {
+            request: components["schemas"]["FuelPayloadRequest"];
+            /** @description Fully resolved — exactly what apply would write. */
+            loadout: components["schemas"]["LoadoutState"];
+            mass_and_balance: components["schemas"]["MassAndBalanceResult"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * FuelPayloadRequest
+         * @description One fuel/payload instruction: a preset, a manual loadout, or both.
+         *
+         *     Lives in ``core/`` (D12), not the router — the Scenario Generator's YAML
+         *     fuel/payload block validates against this exact model, same as
+         *     ``core.weather.models.WeatherRequest`` and ``core.failures.ArmFailureRequest``.
+         *
+         *     ``loadout`` is an overlay: when both ``preset`` and ``loadout`` are given,
+         *     the preset resolves first and ``loadout`` is applied on top, list by list
+         *     (``core.models.Loadout``'s own "None untouched / list replaces the whole
+         *     set" semantics — D10).
+         */
+        FuelPayloadRequest: {
+            /** Preset */
+            preset?: ("ferry" | "training" | "full" | "empty") | null;
+            loadout?: components["schemas"]["Loadout"] | null;
+            /**
+             * Override Envelope
+             * @description Ignored by preview; enforced by apply (D8). An explicit, named opt-in past a verifiably out-of-envelope loadout, never the default.
+             * @default false
+             */
+            override_envelope: boolean;
+        };
+        /**
+         * FuelPayloadState
+         * @description The current loadout plus its computed mass-and-balance.
+         */
+        FuelPayloadState: {
+            loadout: components["schemas"]["LoadoutState"];
+            mass_and_balance: components["schemas"]["MassAndBalanceResult"];
         };
         /**
          * GeoPosition
@@ -1254,6 +1525,79 @@ export interface components {
             strobe?: boolean | null;
         };
         /**
+         * Loadout
+         * @description Fuel and payload — the sparse write model nested on :class:`AircraftSetup`.
+         *
+         *     ``None`` means "leave that aspect untouched"; a provided list REPLACES the
+         *     whole set of tanks/stations, ``[]`` empties every one — the Weather
+         *     Manager's wind/cloud-layer semantics (``docs/designs/weather-manager.md``
+         *     D3), for the identical reason: there is no defensible per-index merge.
+         */
+        Loadout: {
+            /** Tanks */
+            tanks?: components["schemas"]["TankFuel"][] | null;
+            /** Stations */
+            stations?: components["schemas"]["PayloadStation"][] | null;
+        };
+        /**
+         * LoadoutState
+         * @description Fully populated fuel and payload, as reported by ``get_loadout()``.
+         *
+         *     Every known tank/station is present — mirrors :class:`AircraftState`'s
+         *     "always complete" convention rather than :class:`AircraftSetup`'s "None
+         *     means untouched" one (the same ``WeatherState``/``WeatherSetup`` split).
+         */
+        LoadoutState: {
+            /**
+             * Tanks
+             * @description Every known tank, in adapter order. [] if none.
+             */
+            tanks: components["schemas"]["TankFuel"][];
+            /**
+             * Stations
+             * @description Every known station, in adapter order. [] if none.
+             */
+            stations: components["schemas"]["PayloadStation"][];
+        };
+        /**
+         * MassAndBalanceResult
+         * @description The computed mass-and-balance verdict for one loadout.
+         *
+         *     ``limits_source`` and ``within_envelope`` are how D7 is expressed:
+         *     ``within_envelope`` is ``None`` (never ``False``) exactly when
+         *     ``limits_source == "unknown"`` — "unverifiable" is disclosed, never
+         *     invented as either a pass or a fail.
+         */
+        MassAndBalanceResult: {
+            /** Gross Weight Kg */
+            gross_weight_kg: number;
+            /** Fuel Kg */
+            fuel_kg: number;
+            /** Payload Kg */
+            payload_kg: number;
+            /**
+             * Cg Arm In
+             * @description None when limits are unknown.
+             */
+            cg_arm_in?: number | null;
+            /**
+             * Limits Source
+             * @enum {string}
+             */
+            limits_source: "adapter" | "table" | "unknown";
+            /**
+             * Within Envelope
+             * @description None only when limits_source == 'unknown'.
+             */
+            within_envelope?: boolean | null;
+            /**
+             * Violations
+             * @description Human sentences. Empty unless within_envelope is False.
+             * @default []
+             */
+            violations: string[];
+        };
+        /**
          * Navaid
          * @description A ground-based navigation aid.
          *
@@ -1426,6 +1770,40 @@ export interface components {
              * @default []
              */
             airline_codes: string[];
+        };
+        /**
+         * PayloadStation
+         * @description Mass at one payload station.
+         *
+         *     The simulator itself does not distinguish what a station is FOR — X-Plane's
+         *     ``m_stations`` array and MSFS's payload stations are both bare masses at
+         *     bare positions. ``kind`` is an instructor-facing label, assigned here or by
+         *     a future per-aircraft mapping table, never invented from the mass alone.
+         */
+        PayloadStation: {
+            /**
+             * Station Index
+             * @description 0-based, adapter order.
+             */
+            station_index: number;
+            /**
+             * Kind
+             * @description Instructor-facing classification.
+             * @default other
+             * @enum {string}
+             */
+            kind: "crew" | "passenger" | "cargo" | "other";
+            /**
+             * Label
+             * @description Display label, e.g. "Pilot". Blank when unknown.
+             * @default
+             */
+            label: string;
+            /**
+             * Weight Kg
+             * @description Mass placed at this station, kilograms.
+             */
+            weight_kg: number;
         };
         /**
          * Placement
@@ -1917,6 +2295,22 @@ export interface components {
              *     shows this string and never formats a constraint itself.
              */
             readonly display: string;
+        };
+        /**
+         * TankFuel
+         * @description Fuel in one tank.
+         */
+        TankFuel: {
+            /**
+             * Tank Index
+             * @description 0-based tank index, in the order get_loadout() reports — adapter-defined.
+             */
+            tank_index: number;
+            /**
+             * Fuel Kg
+             * @description Fuel mass in this tank, kilograms.
+             */
+            fuel_kg: number;
         };
         /** ValidationError */
         ValidationError: {
@@ -2470,10 +2864,17 @@ export interface operations {
     };
     get_fixes_api_navdata_fixes_get: {
         parameters: {
-            query: {
-                ident: string;
+            query?: {
+                /** @description Fix identifier. */
+                ident?: string | null;
+                /** @description ICAO region code, e.g. 'LE'. */
                 region?: string | null;
+                /** @description Scope to one airport's terminal fixes. */
                 terminal_airport?: string | null;
+                lat?: number | null;
+                lon?: number | null;
+                radius_nm?: number;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -2587,6 +2988,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlacementResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_manifest_api_fuel_payload_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadManifest"];
+                };
+            };
+        };
+    };
+    get_fuel_payload_api_fuel_payload_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadState"];
+                };
+            };
+        };
+    };
+    preview_fuel_payload_api_fuel_payload_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FuelPayloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_fuel_payload_api_fuel_payload_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FuelPayloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadApplyResult"];
                 };
             };
             /** @description Validation Error */

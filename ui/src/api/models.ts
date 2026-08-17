@@ -131,6 +131,58 @@ export type RunwayPlacementName =
 export type ApproachCategory =
   components['schemas']['RunwayPlacementRequest']['category'];
 
+// ---------------------------------------------------------------------------
+// Fuel & Payload Manager
+// ---------------------------------------------------------------------------
+
+/** Fuel in one tank — `core.models.TankFuel`. */
+export type TankFuel = components['schemas']['TankFuel'];
+
+/** Mass at one payload station — `core.models.PayloadStation`. */
+export type PayloadStation = components['schemas']['PayloadStation'];
+
+/** Instructor-facing station classification. The simulator itself does not know it. */
+export type StationKind = PayloadStation['kind'];
+
+/** The sparse write model nested on `AircraftSetup.loadout`. `None` means "untouched". */
+export type Loadout = components['schemas']['Loadout'];
+
+/** Fully populated fuel and payload, as `get_loadout()` reports it. */
+export type LoadoutState = components['schemas']['LoadoutState'];
+
+/** One point of a weight-vs-CG-limit envelope polygon. */
+export type CgEnvelopePoint = components['schemas']['CgEnvelopePoint'];
+
+/** The envelope polygon, linearly interpolated between its points. */
+export type CgEnvelope = components['schemas']['CgEnvelope'];
+
+/** Static mass/CG facts about the loaded airframe. `None` means genuinely unverifiable. */
+export type AirframeMassLimits = components['schemas']['AirframeMassLimits'];
+
+/** The computed mass-and-balance verdict for one loadout. */
+export type MassAndBalanceResult = components['schemas']['MassAndBalanceResult'];
+
+/** One preset catalogue entry, as `GET /api/fuel-payload/manifest` lists it. */
+export type FuelPayloadPresetInfo = components['schemas']['FuelPayloadPresetInfo'];
+
+/** The closed set of fuel/payload presets: Ferry, Training, Full, Empty. */
+export type FuelPayloadPresetId = FuelPayloadPresetInfo['id'];
+
+/** `GET /api/fuel-payload/manifest` — capability, resolved limits, the preset catalogue. */
+export type FuelPayloadManifest = components['schemas']['FuelPayloadManifest'];
+
+/** `GET /api/fuel-payload` — the current loadout plus its computed mass-and-balance. */
+export type FuelPayloadState = components['schemas']['FuelPayloadState'];
+
+/** The body of `POST /api/fuel-payload/preview` and `/apply` — one shape for both. */
+export type FuelPayloadRequest = components['schemas']['FuelPayloadRequest'];
+
+/** What `apply` would produce. Writes nothing. */
+export type FuelPayloadPreview = components['schemas']['FuelPayloadPreview'];
+
+/** What actually happened. `state` is the read-back — the honest verdict. */
+export type FuelPayloadApplyResult = components['schemas']['FuelPayloadApplyResult'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',

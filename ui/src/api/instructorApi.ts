@@ -37,6 +37,7 @@ export const instructorApi = createApi({
     'AircraftControls',
     'NavdataStatus',
     'Airport',
+    'FuelPayload',
   ],
   endpoints: (builder) => ({
     getHealth: builder.query<HealthResponse, void>({
