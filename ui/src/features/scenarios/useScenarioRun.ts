@@ -1,35 +1,70 @@
 /**
- * The mock run engine: while a run is live, tick one step per interval.
+ * Bridges the polled run status into the panel and the status bar.
  *
- * This is a visual progression only — it dispatches into the scenarios slice and
- * nowhere else. At backend integration the server executes the plan and this hook is
- * replaced by the WebSocket reporting real step completion.
+ * The server owns run progress (`GET /api/scenarios/run`, `server/scenario_engine.py`);
+ * this module owns only what the server cannot: *when* to poll, and (for the panel)
+ * whether the instructor has dismissed the bar for the run currently in the cache.
+ *
+ * `useScenarioRunStatus` is the one place that actually subscribes — every caller gets
+ * an active `useGetScenarioRunQuery`, not a passive `useQueryState` read, precisely
+ * because `StatusBar` is always mounted while `ScenariosPanel` is not (every tab except
+ * `map` unmounts on tab switch, `ui/src/components/tabs.ts`). A passive read in
+ * `StatusBar` would go stale the moment the instructor left the Scenarios tab: the
+ * fetch itself would never happen, and a run that later failed server-side would keep
+ * showing "running" in the footer indefinitely. RTK Query merges concurrent
+ * subscriptions to the same query, so `StatusBar` and `ScenariosPanel` mounted together
+ * cost one fetch, not two.
+ *
+ * Polling turns on only while the most recently known run is `"running"` — the same
+ * "read the cache before the query that answers it" shape
+ * `features/position/PositionPanel.tsx` uses for navdata-status polling, so deciding the
+ * interval never opens a second subscription. Once a run settles (`"completed"` /
+ * `"failed"`), polling stops on its own; `getScenarioRun`'s `keepUnusedDataFor` keeps that
+ * final snapshot in the cache for the rest of the session.
  */
 
-import { useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { runStepCompleted } from './scenariosSlice';
+import { runKey } from './format';
+import { scenariosApi, useGetScenarioRunQuery } from './scenariosApi';
+import { runDismissed } from './scenariosSlice';
+import type { ScenarioRunStatus } from '../../api/models';
 
-export const RUN_STEP_INTERVAL_MS = 1200;
+const RUN_POLL_MS = 1000;
 
-export function useScenarioRun(): void {
+const useGetScenarioRunState = scenariosApi.endpoints.getScenarioRun.useQueryState;
+
+/** The one active subscription to `GET /api/scenarios/run`. Safe to call from more than
+ * one mounted component at once — see the module docstring. */
+export function useScenarioRunStatus(): ScenarioRunStatus | null {
+  const cached = useGetScenarioRunState();
+  const { data } = useGetScenarioRunQuery(undefined, {
+    pollingInterval: cached.data?.status === 'running' ? RUN_POLL_MS : 0,
+    skipPollingIfUnfocused: true,
+  });
+
+  return data ?? null;
+}
+
+export interface ScenarioRunView {
+  /** The run to show, or `null` when there is none or it has been dismissed. */
+  run: ScenarioRunStatus | null;
+  /** Hide the bar client-side. The run itself keeps going server-side regardless. */
+  dismiss: () => void;
+}
+
+export function useScenarioRun(): ScenarioRunView {
   const dispatch = useAppDispatch();
-  const runState = useAppSelector((state) => state.scenarios.runState);
+  const dismissedKey = useAppSelector((state) => state.scenarios.dismissedRunKey);
 
-  // Collapsed to a boolean so completing a step (a new runState object) does not
-  // restart the interval — the cadence stays steady across the whole run.
-  const running =
-    runState !== null && !runState.stopped && runState.steps.some((step) => !step.done);
+  const run = useScenarioRunStatus();
+  const visible = run !== null && runKey(run) !== dismissedKey;
 
-  useEffect(() => {
-    if (!running) {
-      return;
-    }
-    const id = window.setInterval(() => {
-      dispatch(runStepCompleted());
-    }, RUN_STEP_INTERVAL_MS);
-    return () => {
-      window.clearInterval(id);
-    };
-  }, [running, dispatch]);
+  return {
+    run: visible ? run : null,
+    dismiss: () => {
+      if (run !== null) {
+        dispatch(runDismissed(runKey(run)));
+      }
+    },
+  };
 }

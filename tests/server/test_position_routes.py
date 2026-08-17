@@ -327,6 +327,41 @@ class TestTheProfileConfigurationIsStagedAndDisclosed:
         notes = " ".join(body["notes"])
         assert "Configured for the ground: gear down, flaps up, throttle idle." in notes
 
+    def test_a_runway_threshold_places_the_aircraft_at_the_exact_threshold_at_0_kt(
+        self, client: TestClient
+    ) -> None:
+        """The new seventh placement arm (scenario-generator.md D5), added so a
+        takeoff-roll scenario can express a position no other arm could: on the
+        centreline, at the threshold, facing the runway heading, stationary."""
+        body = preview(
+            client, {"type": "runway_threshold", "airport_icao": "ZZZZ", "runway_ident": "36"}
+        )
+        placement = body["placement"]
+        assert placement["position"]["latitude"] == pytest.approx(RUNWAY_36.threshold.latitude)
+        assert placement["position"]["longitude"] == pytest.approx(RUNWAY_36.threshold.longitude)
+        assert placement["heading_deg"] == pytest.approx(RUNWAY_36.true_bearing_deg)
+        assert placement["ias_kt"] == 0.0
+        notes = " ".join(body["notes"])
+        assert "threshold" in notes
+        assert "0 kt" in notes
+
+    def test_a_runway_threshold_faces_the_opposite_direction_on_the_opposite_end(
+        self, client: TestClient
+    ) -> None:
+        """The reciprocal runway resolves to the reciprocal threshold and heading --
+        the exact off-by-one this arm's wiring could get wrong silently (see PR #107
+        review)."""
+        body = preview(
+            client, {"type": "runway_threshold", "airport_icao": "ZZZZ", "runway_ident": "18"}
+        )
+        placement = body["placement"]
+        assert placement["position"]["latitude"] == pytest.approx(RUNWAY_18.threshold.latitude)
+        assert placement["position"]["longitude"] == pytest.approx(RUNWAY_18.threshold.longitude)
+        assert placement["heading_deg"] == pytest.approx(RUNWAY_18.true_bearing_deg)
+        # Different threshold, different heading: proves the two ends are not aliases.
+        assert placement["position"]["latitude"] != pytest.approx(RUNWAY_36.threshold.latitude)
+        assert placement["heading_deg"] != pytest.approx(RUNWAY_36.true_bearing_deg)
+
     def test_a_hold_is_clean_and_level(self, client: TestClient) -> None:
         body = preview(client, {"type": "hold", "fix_ident": "GOXOL"})
         setup = body["setup"]

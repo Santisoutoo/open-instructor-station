@@ -1,4 +1,6 @@
-import { selectScenarioRun } from '../features/scenarios/scenariosSlice';
+import { formatScenarioId } from '../features/scenarios/format';
+import { scenariosApi } from '../features/scenarios/scenariosApi';
+import { useScenarioRunStatus } from '../features/scenarios/useScenarioRun';
 import {
   formatAltitude,
   formatHeading,
@@ -18,7 +20,20 @@ export function StatusBar() {
   const latest = useAppSelector((state) => state.telemetry.latest);
   const demoFeed = useAppSelector((state) => state.ui.demoFeed);
   const connectionStatus = useAppSelector((state) => state.connection.status);
-  const scenarioRun = useAppSelector(selectScenarioRun);
+
+  // `useScenarioRunStatus` is an active subscription, not a passive cache read — the
+  // footer is always mounted while the Scenarios panel is not (it unmounts on tab
+  // switch), so this component must be able to notice a run finishing or failing on its
+  // own. The manifest read stays passive: this footer never needs to trigger that fetch
+  // itself, only borrow whichever scenario name the Scenarios panel (or a run already in
+  // progress) has already caused to be cached.
+  const cachedManifest = scenariosApi.endpoints.getScenarios.useQueryState();
+  const scenarioRun = useScenarioRunStatus();
+  const scenarioName =
+    scenarioRun !== null
+      ? (cachedManifest.data?.scenarios.find((scenario) => scenario.id === scenarioRun.scenario_id)
+          ?.name ?? formatScenarioId(scenarioRun.scenario_id))
+      : null;
 
   const connected = connectionStatus === 'connected';
   const demoActive = demoFeed && !connected;
@@ -64,10 +79,10 @@ export function StatusBar() {
       )}
 
       <div className="statusbar__right">
-        {scenarioRun !== null && !scenarioRun.stopped && (
+        {scenarioRun !== null && scenarioRun.status === 'running' && (
           <span className="statusbar__scenario-chip">
             <span className="statusbar__scenario-dot" aria-hidden="true" />
-            {scenarioRun.name}
+            {scenarioName}
           </span>
         )}
         {demoActive && <span className="statusbar__demo-chip">Demo data</span>}

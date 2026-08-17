@@ -265,6 +265,35 @@ export type ClearFailureRequest = components['schemas']['ClearFailureRequest'];
 /** The body of `POST /api/failures/arm`. */
 export type ArmFailureRequest = components['schemas']['ArmFailureRequest'];
 
+// ---------------------------------------------------------------------------
+// Flight Scenario Generator
+// ---------------------------------------------------------------------------
+
+/** One manifest row — `GET /api/scenarios`, `GET /api/scenarios/{id}`. */
+export type ScenarioSummary = components['schemas']['ScenarioSummary'];
+
+/** A scenario's full validated document, plus its availability — `GET /api/scenarios/{id}`. */
+export type ScenarioDetail = components['schemas']['ScenarioDetail'];
+
+/** Every shipped scenario, whether it can run on the active adapter, and why not. */
+export type ScenarioManifest = components['schemas']['ScenarioManifest'];
+
+/** The validated shape of one scenario YAML file, as the server parsed it. */
+export type ScenarioDocument = components['schemas']['ScenarioDocument'];
+
+/** The whole run's progress — `GET /api/scenarios/run`, polled while `status === 'running'`. */
+export type ScenarioRunStatus = components['schemas']['ScenarioRunStatus'];
+
+/** One declared step's progress. Only the blocks a scenario declares appear. */
+export type ScenarioStepStatus = components['schemas']['ScenarioStepStatus'];
+
+/** The fixed execution order: weather -> aircraft_state -> position -> failures -> traffic. */
+export type ScenarioStepName = ScenarioStepStatus['name'];
+
+export type ScenarioStepStatusValue = ScenarioStepStatus['status'];
+
+export type ScenarioRunStatusValue = ScenarioRunStatus['status'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',

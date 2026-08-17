@@ -1419,6 +1419,29 @@ pytest && ruff check . && ruff format --check . && mypy .
 cd ui && npm run lint && npm run typecheck && npm test && npm run build
 ```
 
+---
+
+## 22. Addendum — §20 follow-up 4, done (`docs/designs/scenario-generator.md` D4, D5)
+
+§7.6's regret and §20's follow-up 4 are resolved: the six `PlacementRequest` variant models moved
+out of `server/position_routes.py` into **`core/placements.py`**, verbatim, no wire-format change
+— done as part of the Scenario Generator's own foundation track (D4), because that manager's YAML
+documents need to validate a placement without importing `server/`, the exact gap §7.6 named.
+`server/position_routes.py` imports the models back and re-exports them under its own `__all__`;
+`_resolve_placement` and every other piece of resolution logic stays in `server/` — only the
+request models moved.
+
+A seventh arm was added alongside the move, **not anticipated by this design**:
+`RunwayThresholdPlacementRequest` — on the runway centreline at the threshold, facing the runway
+heading, at 0 kt. `GROUND_IAS_KT`'s own docstring already named this use ("a runway threshold for
+a takeoff brief") but nothing in this manager ever wired it to a request; two of the Scenario
+Generator's shipped exercises (a V1-cut and a rejected takeoff) need exactly this and cannot
+express it through any of the existing six arms — `CoordinatePlacementRequest` would need a
+hand-computed threshold coordinate a YAML author has no navdata access to compute. It resolves
+through `core.geodesy.coordinate_placement(runway.threshold, runway.true_bearing_deg,
+ias_kt=GROUND_IAS_KT)` and returns an empty `PlacementSchematic()`; `_resolve_placement` gained one
+`isinstance` branch for it.
+
 Then, against `OIS_ADAPTER=fake OIS_NAVDATA=in_memory` with the Vite dev server, one batched
 browser session: airport search → runway → stage a 10 NM final → check the schematic and the
 notes → commit → read the applied state back, plus a console check. No live simulator is needed for
