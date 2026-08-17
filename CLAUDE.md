@@ -137,6 +137,8 @@ per-task decision.
 | `implementer` | Build the design on a `feature/*` branch. Leaves a PR ready; never merges. |
 | `tester` | Write and run unit + contract tests against `FakeSimAdapter`. Never green-washes. |
 | `sim-validator` | Automated live validation, unattended: starts X-Plane if it is not up, runs `pytest -m sim` + an E2E smoke (read datarefs → teleport → restore), shuts down and reports. Never runs in CI. |
+| `reviewer-python` | Report-only review of a PR/diff's Python (`core/`, `adapters/`, `server/`, `tests/`, `bridge/`): correctness, project rules, overengineering. Never edits, never merges. |
+| `reviewer-typescript` | Report-only review of a PR/diff's frontend (`ui/`): correctness, project rules, overengineering. Never edits, never merges. |
 
 ---
 
@@ -145,6 +147,23 @@ per-task decision.
 | Skill | Use for |
 |---|---|
 | `sim-lifecycle` | Driving the X-Plane 12 **process**: launch at an airport, wait for a real flight, place the aircraft, quit, restore the user's preferences. Developer tooling — `spikes/sim_lifecycle.py`, never imported by the app, never in CI. Rule 1 forbids *the application* launching a simulator; it does not forbid the test harness. **Only shut down a simulator you started.** |
+
+---
+
+## MCP tooling (developer-only)
+
+**`xplane-datarefs`** ([Santisoutoo/xplane-dataref-mcp](https://github.com/Santisoutoo/xplane-dataref-mcp),
+PyPI, launched via `uvx` from the repo's `.mcp.json`) — searches ~10,000 datarefs and ~3,000
+commands and reads live values over the same X-Plane Web API (:8086) the adapter uses.
+
+- **Use it for:** dataref discovery when building an adapter mapping (the Phase 2
+  Weather/Failures work is mostly this), live debugging against a running sim, and verifying a
+  dataref hypothesis *before* writing adapter code or a spike.
+- **Limits:** dataref access is **read-only** — writes are still validated with spikes and
+  `pytest -m sim`. Needs a live simulator, and the Docker Desktop gotcha applies (~4.1 s per
+  request without it). `execute_command` mutates the sim and is deliberately not pre-approved.
+- Same status as `sim-lifecycle`: developer tooling only — **never part of the application,
+  never in CI**. The app reaches the Web API exclusively through `adapters/xplane/`.
 
 ---
 
