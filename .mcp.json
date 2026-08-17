@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "xplane-datarefs": {
+      "command": "uvx",
+      "args": ["xplane-dataref-mcp"],
+      "env": { "XPLANE_URL": "http://127.0.0.1:8086" }
+    }
+  }
+}
