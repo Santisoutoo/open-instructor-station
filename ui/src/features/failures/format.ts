@@ -5,9 +5,7 @@
  * identical on the tablet, the desktop and CI regardless of system locale.
  */
 
-import type { AircraftState } from '../../api/models';
-import { distanceNm } from './triggers';
-import type { ArmedFailure, FailureTrigger, TriggerType } from './types.mock';
+import type { AircraftState, ArmedFailure, FailureTrigger, FailureTriggerType } from '../../api/models';
 
 const INTEGER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
@@ -25,33 +23,42 @@ export function formatDuration(totalSeconds: number): string {
   return `${minutes} min ${seconds} s`;
 }
 
-/** The armed chip's condition, e.g. `at 3,000 ft climbing` or `after 1 min 30 s`. */
+/** The armed chip's condition, e.g. `at or above 3,000 ft` or `after 1 min 30 s`. */
 export function triggerPhrase(trigger: FailureTrigger): string {
   switch (trigger.type) {
-    case 'altitude':
-      return `at ${INTEGER.format(trigger.altitudeFt)} ft ${trigger.sense}`;
-    case 'ias':
-      return `at ${INTEGER.format(trigger.iasKt)} kt or ${trigger.sense}`;
+    case 'altitude_above':
+      return `at or above ${INTEGER.format(trigger.altitude_ft)} ft`;
+    case 'altitude_below':
+      return `at or below ${INTEGER.format(trigger.altitude_ft)} ft`;
+    case 'speed_above':
+      return `at or above ${INTEGER.format(trigger.ias_kt)} kt`;
+    case 'speed_below':
+      return `at or below ${INTEGER.format(trigger.ias_kt)} kt`;
     case 'delay':
-      return `after ${formatDuration(trigger.delayS)}`;
-    case 'distance':
-      return `${trigger.distanceNm.toFixed(1)} NM from arming point`;
+      return `after ${formatDuration(trigger.delay_s)}`;
   }
 }
 
+/** `engine N` when the failure is indexed, empty string otherwise — appended to a label. */
+export function engineSuffix(engineIndex: number | null | undefined): string {
+  return engineIndex == null ? '' : ` — engine ${INTEGER.format(engineIndex)}`;
+}
+
+const ALTITUDE_TRIGGER_TYPES: readonly FailureTriggerType[] = ['altitude_above', 'altitude_below'];
+
 /**
  * The live reading shown beside the editor's threshold input, e.g. `now: 2,340 ft`.
- * Only altitude and IAS have a meaningful "now" before arming; `null` means show
- * nothing. Without telemetry the honest answer is stated, not blank.
+ * Only altitude and speed triggers have a meaningful "now" before arming; `null` means
+ * show nothing. Without telemetry the honest answer is stated, not blank.
  */
-export function editorNow(type: TriggerType, frame: AircraftState | null): string | null {
-  if (type === 'delay' || type === 'distance') {
+export function editorNow(type: FailureTriggerType, frame: AircraftState | null): string | null {
+  if (type === 'delay') {
     return null;
   }
   if (frame === null) {
     return 'no telemetry';
   }
-  return type === 'altitude'
+  return ALTITUDE_TRIGGER_TYPES.includes(type)
     ? `now: ${INTEGER.format(Math.round(frame.altitude_ft))} ft`
     : `now: ${INTEGER.format(Math.round(frame.ias_kt))} kt`;
 }
@@ -68,29 +75,14 @@ export function armedLive(
   const trigger = armed.trigger;
   if (trigger.type === 'delay') {
     // Clamped to the full delay so a stale clock can never show more time than armed.
-    const remaining = Math.min(
-      trigger.delayS,
-      trigger.delayS - (nowMs - armed.armedAt) / 1000,
-    );
+    const armedAtMs = new Date(armed.armed_at).getTime();
+    const remaining = Math.min(trigger.delay_s, trigger.delay_s - (nowMs - armedAtMs) / 1000);
     return `${formatDuration(remaining)} left`;
   }
   if (frame === null) {
     return 'no telemetry';
   }
-  switch (trigger.type) {
-    case 'altitude':
-      return `now: ${INTEGER.format(Math.round(frame.altitude_ft))} ft`;
-    case 'ias':
-      return `now: ${INTEGER.format(Math.round(frame.ias_kt))} kt`;
-    case 'distance': {
-      if (armed.armedPosition === null) {
-        return 'no arming point';
-      }
-      const flown = distanceNm(armed.armedPosition, {
-        lat: frame.latitude,
-        lon: frame.longitude,
-      });
-      return `now: ${flown.toFixed(1)} NM`;
-    }
-  }
+  return ALTITUDE_TRIGGER_TYPES.includes(trigger.type)
+    ? `now: ${INTEGER.format(Math.round(frame.altitude_ft))} ft`
+    : `now: ${INTEGER.format(Math.round(frame.ias_kt))} kt`;
 }

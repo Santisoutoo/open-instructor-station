@@ -1,84 +1,35 @@
 /**
- * Trigger defaults and evaluation — pure functions, no store, no timers.
+ * Trigger defaults — pure, no store, no timers.
  *
- * The evaluation runs in the panel's tick hook against the demo telemetry feed; at
- * backend integration the server's trigger evaluator (feature-spec §2) takes over and
- * this file dies with the rest of the mock.
+ * Evaluation itself is no longer client-side: the server's `FailureScheduler` and its
+ * watcher task (`server/failure_routes.py`) evaluate armed triggers against live
+ * telemetry, and the panel simply polls `/status` to see what fired. This file keeps
+ * only what the editor needs — the five trigger types and what each opens with.
  */
 
-import type { AircraftState } from '../../api/models';
-import type { ArmedFailure, FailureTrigger, LatLon, TriggerType } from './types.mock';
+import type { FailureTrigger, FailureTriggerType } from '../../api/models';
 
-/** Editor tab order. */
-export const TRIGGER_TYPES: readonly TriggerType[] = [
-  'altitude',
-  'ias',
+/** Editor tab order — the five-arm union from `core/failures.py` (D6). */
+export const TRIGGER_TYPES: readonly FailureTriggerType[] = [
+  'altitude_above',
+  'altitude_below',
+  'speed_above',
+  'speed_below',
   'delay',
-  'distance',
 ];
 
 /** What the editor opens with when a type is picked. Static, so drafts are predictable. */
-export function defaultTrigger(type: TriggerType): FailureTrigger {
+export function defaultTrigger(type: FailureTriggerType): FailureTrigger {
   switch (type) {
-    case 'altitude':
-      return { type: 'altitude', altitudeFt: 3000, sense: 'climbing' };
-    case 'ias':
-      return { type: 'ias', iasKt: 100, sense: 'above' };
+    case 'altitude_above':
+      return { type: 'altitude_above', altitude_ft: 3000 };
+    case 'altitude_below':
+      return { type: 'altitude_below', altitude_ft: 3000 };
+    case 'speed_above':
+      return { type: 'speed_above', ias_kt: 100 };
+    case 'speed_below':
+      return { type: 'speed_below', ias_kt: 100 };
     case 'delay':
-      return { type: 'delay', delayS: 60 };
-    case 'distance':
-      return { type: 'distance', distanceNm: 2 };
-  }
-}
-
-/** Flat-earth distance — fine at trigger scale (<20 NM), same shortcut as the demo feed. */
-export function distanceNm(a: LatLon, b: LatLon): number {
-  const midLatRad = (((a.lat + b.lat) / 2) * Math.PI) / 180;
-  const dy = (b.lat - a.lat) * 60;
-  const dx = (b.lon - a.lon) * 60 * Math.cos(midLatRad);
-  return Math.hypot(dx, dy);
-}
-
-/**
- * Should this armed failure fire, given the latest telemetry frame and the clock?
- *
- * Honest about missing data: without a frame only the delay trigger can be judged, so
- * everything else stays armed rather than firing blind. The altitude senses gate on the
- * vertical speed sign — "at 3,000 ft climbing" must not fire on a descent through the
- * same level, nor while parked at the threshold altitude.
- */
-export function triggerFired(
-  armed: ArmedFailure,
-  frame: AircraftState | null,
-  nowMs: number,
-): boolean {
-  const trigger = armed.trigger;
-  switch (trigger.type) {
-    case 'delay':
-      return nowMs - armed.armedAt >= trigger.delayS * 1000;
-    case 'altitude':
-      if (frame === null) {
-        return false;
-      }
-      return trigger.sense === 'climbing'
-        ? frame.altitude_ft >= trigger.altitudeFt && frame.vertical_speed_fpm > 0
-        : frame.altitude_ft <= trigger.altitudeFt && frame.vertical_speed_fpm < 0;
-    case 'ias':
-      if (frame === null) {
-        return false;
-      }
-      return trigger.sense === 'above'
-        ? frame.ias_kt >= trigger.iasKt
-        : frame.ias_kt <= trigger.iasKt;
-    case 'distance':
-      if (frame === null || armed.armedPosition === null) {
-        return false;
-      }
-      return (
-        distanceNm(armed.armedPosition, {
-          lat: frame.latitude,
-          lon: frame.longitude,
-        }) >= trigger.distanceNm
-      );
+      return { type: 'delay', delay_s: 60 };
   }
 }

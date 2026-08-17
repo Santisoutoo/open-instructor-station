@@ -183,6 +183,48 @@ export type FuelPayloadPreview = components['schemas']['FuelPayloadPreview'];
 /** What actually happened. `state` is the read-back — the honest verdict. */
 export type FuelPayloadApplyResult = components['schemas']['FuelPayloadApplyResult'];
 
+// ---------------------------------------------------------------------------
+// Failures Manager
+// ---------------------------------------------------------------------------
+
+/** `GET /api/failures/catalogue` — the catalogue merged with the adapter's support manifest. */
+export type FailureCatalogueResponse = components['schemas']['FailureCatalogueResponse'];
+
+/** One catalogue entry, resolved against the active adapter — `supported` gates the row. */
+export type FailureCatalogueEntry = components['schemas']['FailureCatalogueEntry'];
+
+/** The closed set of dotted failure ids (`engine.fire`, `instruments.pitot`, …). */
+export type FailureId = FailureCatalogueEntry['failure_id'];
+
+export type FailureCategory = FailureCatalogueEntry['category'];
+
+/** `GET /api/failures/status` — active failures (sim truth) plus armed ones (the scheduler). */
+export type FailuresStatus = components['schemas']['FailuresStatus'];
+
+/** One failure the simulator reports as failed right now. */
+export type ActiveFailure = components['schemas']['ActiveFailure'];
+
+/** One failure waiting on its trigger, with its server-assigned id. */
+export type ArmedFailure = components['schemas']['ArmedFailure'];
+
+/** The five-arm trigger union (D6): altitude/speed above-or-below, plus delay. */
+export type FailureTrigger = components['schemas']['ArmFailureRequest']['trigger'];
+
+export type FailureTriggerType = FailureTrigger['type'];
+
+export type AltitudeAboveTrigger = components['schemas']['AltitudeAboveTrigger'];
+export type AltitudeBelowTrigger = components['schemas']['AltitudeBelowTrigger'];
+export type SpeedAboveTrigger = components['schemas']['SpeedAboveTrigger'];
+export type SpeedBelowTrigger = components['schemas']['SpeedBelowTrigger'];
+export type DelayTrigger = components['schemas']['DelayTrigger'];
+
+/** The body of `POST /api/failures/inject` and `.../clear` — a failure id plus its engine index. */
+export type InjectFailureRequest = components['schemas']['InjectFailureRequest'];
+export type ClearFailureRequest = components['schemas']['ClearFailureRequest'];
+
+/** The body of `POST /api/failures/arm`. */
+export type ArmFailureRequest = components['schemas']['ArmFailureRequest'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',

@@ -4,13 +4,14 @@ import { armDraftClosed, armDraftTriggerChanged, armDraftTypeChanged } from './f
 import { editorNow } from './format';
 import { TRIGGER_TYPES } from './triggers';
 import type { ArmDraft } from './failuresSlice';
-import type { FailureTrigger, TriggerType } from './types.mock';
+import type { FailureTrigger, FailureTriggerType } from '../../api/models';
 
-const TYPE_LABELS: Readonly<Record<TriggerType, string>> = {
-  altitude: 'At altitude',
-  ias: 'At IAS',
+const TYPE_LABELS: Readonly<Record<FailureTriggerType, string>> = {
+  altitude_above: 'At or above altitude',
+  altitude_below: 'At or below altitude',
+  speed_above: 'At or above IAS',
+  speed_below: 'At or below IAS',
   delay: 'After delay',
-  distance: 'At distance',
 };
 
 interface TriggerEditorProps {
@@ -19,8 +20,9 @@ interface TriggerEditorProps {
 
 /**
  * The inline arm editor a row expands into — never a modal. One segmented row of
- * trigger types, the threshold with the live "now:" reading beside it, and the one
- * solid-accent primary of the panel: Arm failure.
+ * trigger types, the threshold with the live "now:" reading beside it (D7's honesty
+ * affordance — a condition that would fire immediately is visible before Arm is
+ * tapped), and the one solid-accent primary of the panel: Arm failure.
  */
 export function TriggerEditor({ draft }: TriggerEditorProps) {
   const dispatch = useAppDispatch();
@@ -44,9 +46,9 @@ export function TriggerEditor({ draft }: TriggerEditorProps) {
 
   const arm = async () => {
     await armFailure({
-      failureId: draft.failureId,
+      failure_id: draft.failureId,
+      engine_index: draft.engineIndex,
       trigger,
-      position: frame === null ? null : { lat: frame.latitude, lon: frame.longitude },
     });
     dispatch(armDraftClosed());
   };
@@ -72,75 +74,38 @@ export function TriggerEditor({ draft }: TriggerEditorProps) {
       </div>
 
       <div className="failures-editor__fields">
-        {trigger.type === 'altitude' && (
-          <>
-            <label className="failures-editor__field">
-              <span className="failures-editor__field-label">Altitude (ft)</span>
-              <input
-                type="number"
-                className="failures-editor__input"
-                value={trigger.altitudeFt}
-                min={0}
-                step={100}
-                onChange={(event) => {
-                  numeric(event.target.value, (altitudeFt) => ({
-                    ...trigger,
-                    altitudeFt,
-                  }));
-                }}
-              />
-            </label>
-            <label className="failures-editor__field">
-              <span className="failures-editor__field-label">While</span>
-              <select
-                className="failures-editor__select"
-                value={trigger.sense}
-                onChange={(event) => {
-                  change({
-                    ...trigger,
-                    sense: event.target.value === 'descending' ? 'descending' : 'climbing',
-                  });
-                }}
-              >
-                <option value="climbing">Climbing</option>
-                <option value="descending">Descending</option>
-              </select>
-            </label>
-          </>
+        {(trigger.type === 'altitude_above' || trigger.type === 'altitude_below') && (
+          <label className="failures-editor__field">
+            <span className="failures-editor__field-label">Altitude (ft MSL)</span>
+            <input
+              type="number"
+              className="failures-editor__input"
+              value={trigger.altitude_ft}
+              min={-2000}
+              max={100_000}
+              step={100}
+              onChange={(event) => {
+                numeric(event.target.value, (altitude_ft) => ({ ...trigger, altitude_ft }));
+              }}
+            />
+          </label>
         )}
 
-        {trigger.type === 'ias' && (
-          <>
-            <label className="failures-editor__field">
-              <span className="failures-editor__field-label">IAS (kt)</span>
-              <input
-                type="number"
-                className="failures-editor__input"
-                value={trigger.iasKt}
-                min={0}
-                step={5}
-                onChange={(event) => {
-                  numeric(event.target.value, (iasKt) => ({ ...trigger, iasKt }));
-                }}
-              />
-            </label>
-            <label className="failures-editor__field">
-              <span className="failures-editor__field-label">Fires</span>
-              <select
-                className="failures-editor__select"
-                value={trigger.sense}
-                onChange={(event) => {
-                  change({
-                    ...trigger,
-                    sense: event.target.value === 'below' ? 'below' : 'above',
-                  });
-                }}
-              >
-                <option value="above">At or above</option>
-                <option value="below">At or below</option>
-              </select>
-            </label>
-          </>
+        {(trigger.type === 'speed_above' || trigger.type === 'speed_below') && (
+          <label className="failures-editor__field">
+            <span className="failures-editor__field-label">IAS (kt)</span>
+            <input
+              type="number"
+              className="failures-editor__input"
+              value={trigger.ias_kt}
+              min={0}
+              max={500}
+              step={5}
+              onChange={(event) => {
+                numeric(event.target.value, (ias_kt) => ({ ...trigger, ias_kt }));
+              }}
+            />
+          </label>
         )}
 
         {trigger.type === 'delay' && (
@@ -149,27 +114,12 @@ export function TriggerEditor({ draft }: TriggerEditorProps) {
             <input
               type="number"
               className="failures-editor__input"
-              value={trigger.delayS}
+              value={trigger.delay_s}
               min={1}
+              max={86_400}
               step={5}
               onChange={(event) => {
-                numeric(event.target.value, (delayS) => ({ ...trigger, delayS }));
-              }}
-            />
-          </label>
-        )}
-
-        {trigger.type === 'distance' && (
-          <label className="failures-editor__field">
-            <span className="failures-editor__field-label">Distance (NM)</span>
-            <input
-              type="number"
-              className="failures-editor__input"
-              value={trigger.distanceNm}
-              min={0.5}
-              step={0.5}
-              onChange={(event) => {
-                numeric(event.target.value, (distanceNm) => ({ ...trigger, distanceNm }));
+                numeric(event.target.value, (delay_s) => ({ ...trigger, delay_s }));
               }}
             />
           </label>
@@ -177,12 +127,6 @@ export function TriggerEditor({ draft }: TriggerEditorProps) {
 
         {now !== null && <span className="failures-editor__now">{now}</span>}
       </div>
-
-      {trigger.type === 'distance' && (
-        <p className="failures-editor__hint">
-          Measured from where the aircraft is at the moment of arming.
-        </p>
-      )}
 
       <div className="failures-editor__actions">
         <button
