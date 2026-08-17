@@ -101,7 +101,18 @@ from core.local_frame import (
     origin_separation_m,
     world_to_local,
 )
-from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
+from core.models import (
+    MAX_FUEL_TANKS,
+    MAX_PAYLOAD_STATIONS,
+    AircraftSetup,
+    AircraftState,
+    AirframeInfo,
+    GeoPosition,
+    Loadout,
+    LoadoutState,
+    PayloadStation,
+    TankFuel,
+)
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.weather.models import WeatherSetup, WeatherState
 
@@ -152,6 +163,26 @@ DATAREFS: dict[str, str] = {
     # One value fanned out to every engine — the write path for
     # AircraftSetup.throttle_ratio.
     "throttle_ratio": "sim/cockpit2/engine/actuators/throttle_ratio_all",
+    # --- Fuel & payload (mass-and-balance; docs/designs/fuel-payload.md §6) --
+    # High confidence (§6.2): core flight-model weight datarefs present on
+    # every aircraft, not an aircraft-specific quirk like the failure
+    # catalogue's `rel_*` family. Read/written as whole float arrays, sliced
+    # in Python against `_resolve_known_slot_count` — see that function's
+    # docstring for why the slot count itself is a lower-confidence guess.
+    # Deliberately absent from this mapping (§6.2, unresolved by design,
+    # `spikes/fuel_payload_datarefs.py` is where this gets settled):
+    #   * tank/station capacities (candidate `acf_tank_rat[]` or a direct
+    #     capacity array) and tank/station moment arms — no known public
+    #     dataref, "verify in spike"/"expect table-only" (§11.1).
+    #   * `sim/flightmodel/weight/m_fixed` — a candidate single-scalar
+    #     payload fallback for an aircraft reporting zero configured
+    #     stations. Not wired in: the design itself flags that using it
+    #     *alongside* `m_stations` double-counts mass, and which case that is
+    #     is exactly what is unverified.
+    #   * a usable structured CG readback — "not attempted from the live
+    #     sim" (§6.2); CG is computed in `core/`, never read (§6.3).
+    "fuel_tank_kg": "sim/flightmodel/weight/m_fuel",
+    "payload_station_kg": "sim/flightmodel/weight/m_stations",
     # --- Autopilot ---------------------------------------------------------
     # The master switch and the flight director are ONE dataref in X-Plane:
     # 0 = off, 1 = flight director only, 2 = servos engaged. See
@@ -187,6 +218,15 @@ DATAREFS: dict[str, str] = {
 OPTIONAL_DATAREFS: dict[str, str] = {
     "acf_icao": "sim/aircraft/view/acf_ICAO",  # byte array, e.g. b"C172"
     "acf_vso": "sim/aircraft/overflow/acf_Vso",  # KIAS, landing configuration
+    # Candidate tank-count dataref named in docs/designs/fuel-payload.md §6.2's
+    # prose (not its confidence table) — "low confidence, verify in spike".
+    # Optional rather than required: a build that lacks it, or a name that
+    # turns out wrong, degrades to "use the whole array X-Plane returned" (see
+    # `_resolve_known_slot_count`) instead of failing connect() for a
+    # capability this adapter does not even offer yet (can_set_fuel_payload
+    # stays False). No equivalent station-count candidate is named anywhere in
+    # the design, so none is guessed here either.
+    "acf_num_tanks": "sim/aircraft/weight/acf_num_tanks",
 }
 
 #: Commands this adapter activates, keyed by short internal name.
@@ -214,6 +254,10 @@ _CAPABILITIES = Capabilities(
     can_set_weather=False,
     can_inject_failures=False,
     can_spawn_traffic=False,
+    # The dataref mapping (get_loadout, _write_loadout) is implemented and
+    # unit-tested against a stubbed transport, but has never run against a
+    # live X-Plane. Stays False until `pytest -m sim` passes and the flag can
+    # flip in the same PR (docs/designs/fuel-payload.md §6.4, §9.4).
     can_set_fuel_payload=False,
     can_control_camera=False,
     can_pushback=False,
@@ -350,6 +394,38 @@ def _extract_text(data: bytes) -> str | None:
     if not all(character.isprintable() for character in text):
         return None
     return text.strip() or None
+
+
+def _resolve_known_slot_count(candidate: Any, array_length: int, max_allowed: int) -> int:
+    """How many of a fuel/payload array's slots this adapter treats as real.
+
+    ``m_fuel``/``m_stations`` are fixed-size X-Plane arrays, and most
+    aircraft do not use every slot. Which slots are "real" for the loaded
+    airframe would ideally come from a tank/station count dataref, but
+    ``docs/designs/fuel-payload.md`` §6.2 rates that "low confidence, verify
+    in spike" and names only a tank-count candidate, not a station-count one
+    — so this never invents a count. ``candidate`` is that optional reading
+    (``None`` when the build lacks the dataref, or the caller has no
+    candidate to offer, e.g. for stations); whenever it is missing or does
+    not look like a sane slot count, the *whole* array X-Plane reported is
+    used instead — an honest "we don't know which are real, so report
+    everything the sim reports" fallback, not a guess.
+
+    ``max_allowed`` guards :class:`core.models.TankFuel`/
+    :class:`core.models.PayloadStation`'s own ``tank_index``/
+    ``station_index`` bounds (``MAX_FUEL_TANKS``/``MAX_PAYLOAD_STATIONS``):
+    whatever X-Plane's real array size turns out to be, this adapter must
+    never construct a model those bounds reject.
+    """
+    count = array_length
+    if candidate is not None:
+        try:
+            parsed = int(candidate)
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is not None and 0 < parsed <= array_length:
+            count = parsed
+    return min(count, max_allowed)
 
 
 class XPlaneNotReachable(RuntimeError):
@@ -538,6 +614,22 @@ class XPlaneSimAdapter:
         not decode or is out of range degrades the same way: this read informs
         a *default* (the approach category of issue #82), and a wrong guess
         made loudly downstream beats a connection refused here.
+
+        **Deliberately does not populate ``mass_limits``.** ``acf_m_empty``/
+        ``acf_m_max`` (docs/designs/fuel-payload.md §6.2, "medium/high
+        confidence, read-only") would supply exactly two of
+        :class:`~core.models.AirframeMassLimits`'s fields
+        (``empty_weight_kg``/``max_takeoff_weight_kg``); the CG arm, fuel/
+        station capacities and arms, and the CG envelope have no known
+        dataref at all (§6.2, §11.1 — "verify in spike" / "not attempted").
+        ``AirframeMassLimits`` is all-or-nothing by design (D5): reporting a
+        model built from two live numbers and the rest fabricated would be
+        exactly the invented data hard rule 3 forbids, so this method reads
+        neither dataref and leaves ``mass_limits`` at its default ``None`` —
+        ``core.fuel_payload.limits.resolve_mass_limits`` (the sibling backend
+        track's fallback table, §6.2/D6) is expected to be the primary path,
+        not a fallback, until the low-confidence datarefs are confirmed. A
+        live-partial-plus-table merge is flagged, not built, at §11.4.
         """
         raw_icao, raw_vso = await asyncio.gather(
             self._read_optional("acf_icao"),
@@ -555,14 +647,22 @@ class XPlaneSimAdapter:
 
     # -- Weather, Failures, Fuel & Payload ---------------------------------
     #
-    # Refusing stubs (docs/designs/weather-manager.md D16,
-    # docs/designs/failures-manager.md D11/§5, docs/designs/fuel-payload.md
-    # D15): can_set_weather/can_inject_failures/can_set_fuel_payload all stay
-    # False on this adapter. get_failure_support() and get_active_failures()
-    # are the two capability-free reads (failures-manager.md §4: "no is an
-    # answer, never an exception") and degrade honestly instead of raising;
-    # every other method here raises immediately. Real dataref mapping is
-    # each manager's own later adapter track — no dataref name appears below.
+    # Weather and Failures are still refusing stubs (docs/designs/
+    # weather-manager.md D16, docs/designs/failures-manager.md D11/§5):
+    # can_set_weather/can_inject_failures stay False, and every method below
+    # for them raises immediately except the two capability-free reads,
+    # get_failure_support()/get_active_failures() (failures-manager.md §4:
+    # "no is an answer, never an exception"), which degrade honestly instead.
+    #
+    # Fuel & Payload's dataref mapping (docs/designs/fuel-payload.md §6) IS
+    # implemented below — get_loadout() and apply_setup()'s loadout branch
+    # (in _write_configuration/_write_loadout) do the real reads and writes —
+    # but can_set_fuel_payload stays False (§6.4: the flag only flips once
+    # `pytest -m sim` has passed against a live simulator, which has not
+    # happened yet). Both methods still check the capability flag themselves,
+    # the same guard FakeSimAdapter.get_loadout()/apply_setup() use, so they
+    # keep raising CapabilityNotSupported until that flip — flipping it later
+    # is then a one-line change, not a code change.
 
     async def get_weather(self) -> WeatherState:
         raise CapabilityNotSupported(self.name, "can_set_weather")
@@ -595,7 +695,46 @@ class XPlaneSimAdapter:
         return ()
 
     async def get_loadout(self) -> LoadoutState:
-        raise CapabilityNotSupported(self.name, "can_set_fuel_payload")
+        """Read the current fuel and payload from ``m_fuel``/``m_stations``.
+
+        Both arrays are read whole (the Web API returns the full fixed-size
+        array on a plain read) and sliced in Python against
+        :func:`_resolve_known_slot_count` — see that function for why the
+        slice length itself is not fully trusted. Every slot in the resulting
+        range becomes a :class:`~core.models.TankFuel`/
+        :class:`~core.models.PayloadStation`, ``kind``/``label`` left at their
+        defaults: X-Plane's arrays are bare masses at bare positions, and this
+        adapter has no per-aircraft mapping to a "Pilot"/"Rear seats" label
+        (§6.2's ``PayloadStation`` docstring).
+
+        Raises:
+            CapabilityNotSupported: always, until ``can_set_fuel_payload`` is
+                flipped ``True`` (§6.4) — the mapping above is implemented and
+                unit-tested against a stubbed transport, but has never been
+                run against a live simulator.
+        """
+        if not self.capabilities.can_set_fuel_payload:
+            raise CapabilityNotSupported(self.name, "can_set_fuel_payload")
+
+        raw_fuel, raw_stations, raw_tank_count = await asyncio.gather(
+            self._read("fuel_tank_kg"),
+            self._read("payload_station_kg"),
+            self._read_optional("acf_num_tanks"),
+        )
+        tank_count = _resolve_known_slot_count(raw_tank_count, len(raw_fuel), MAX_FUEL_TANKS)
+        # No station-count candidate is named anywhere in the design (see
+        # OPTIONAL_DATAREFS's comment) — always the whole array, clamped.
+        station_count = _resolve_known_slot_count(None, len(raw_stations), MAX_PAYLOAD_STATIONS)
+        return LoadoutState(
+            tanks=[
+                TankFuel(tank_index=index, fuel_kg=max(0.0, float(raw_fuel[index])))
+                for index in range(tank_count)
+            ],
+            stations=[
+                PayloadStation(station_index=index, weight_kg=max(0.0, float(raw_stations[index])))
+                for index in range(station_count)
+            ],
+        )
 
     async def _read_optional(self, key: str) -> Any | None:
         """Read one optional dataref, or ``None`` when this build lacks it."""
@@ -1035,15 +1174,19 @@ class XPlaneSimAdapter:
             setup: The configuration to apply. ``None`` fields are skipped.
 
         Raises:
-            CapabilityNotSupported: for fields belonging to a capability this
-                adapter does not declare (mass, fuel and loadout).
+            CapabilityNotSupported: for ``gross_weight_kg``/``fuel_kg``/
+                ``loadout`` while this adapter does not declare
+                ``can_set_fuel_payload`` (§6.4 — the mapping exists, the flag
+                is not yet flipped). The whole call is refused, never
+                half-applied, matching :class:`~adapters.fake.FakeSimAdapter`'s
+                precedent for the same field group.
         """
-        if (
+        if not self.capabilities.can_set_fuel_payload and (
             setup.gross_weight_kg is not None
             or setup.fuel_kg is not None
             or setup.loadout is not None
         ):
-            raise CapabilityNotSupported("xplane", "can_set_fuel_payload")
+            raise CapabilityNotSupported(self.name, "can_set_fuel_payload")
 
         await self._write_configuration(setup)
         await self._write_autopilot(setup)
@@ -1094,6 +1237,73 @@ class XPlaneSimAdapter:
 
         for key, value in writes:
             await self._write(key, value)
+
+        if setup.loadout is not None:
+            await self._write_loadout(setup.loadout)
+
+    async def _write_loadout(self, loadout: Loadout) -> None:
+        """Write fuel and payload — indexed array writes, no freeze (D11/§6.1).
+
+        Mass is an input the flight model reads each frame, not flight-model
+        state a running integration re-derives and fights (unlike attitude —
+        see the module docstring and §6.1), so this belongs beside the other
+        configuration writes above rather than inside
+        :meth:`frozen_flight_model`.
+
+        ``tanks``/``stations`` replace the known set **wholesale** (D10, same
+        as the Weather Manager's wind/cloud layers): a slot named in the
+        provided list gets its stated mass; every other slot this adapter
+        currently treats as real gets zeroed, so a two-tank write followed by
+        a one-tank write does not leave the first tank's fuel stranded from
+        the previous call. ``None`` leaves that half of the loadout alone
+        entirely — no read, no write.
+
+        **Open question for the live-validation pass** (not resolved here):
+        ``m_fuel``/``m_stations`` are fixed-size X-Plane arrays, so "wholesale
+        replace" can only zero *known* slots, never shrink or grow the array
+        itself. :func:`get_loadout` reports a slot count derived from the
+        array/candidate-count dataref, which is constant across calls — it
+        does **not** shrink to omit a slot this method just zeroed. Whether
+        ``tests/adapters/test_contract.py::test_loadout_replaces_tanks_and_stations_wholesale``
+        (parametrised over this adapter under ``-m sim``, skipped for now
+        because ``can_set_fuel_payload`` is ``False``) needs
+        :func:`get_loadout` to instead treat a zero-mass slot as "not
+        reported" is exactly the kind of thing only a live run can settle —
+        flagged rather than guessed.
+        """
+        if loadout.tanks is not None:
+            await self._write_tank_masses(loadout.tanks)
+        if loadout.stations is not None:
+            await self._write_station_masses(loadout.stations)
+
+    async def _write_tank_masses(self, tanks: list[TankFuel]) -> None:
+        """Write ``tanks`` to ``m_fuel``, zeroing every other known tank slot."""
+        raw_fuel, raw_tank_count = await asyncio.gather(
+            self._read("fuel_tank_kg"),
+            self._read_optional("acf_num_tanks"),
+        )
+        tank_count = _resolve_known_slot_count(raw_tank_count, len(raw_fuel), MAX_FUEL_TANKS)
+        fuel_by_index = {tank.tank_index: tank.fuel_kg for tank in tanks}
+        # The union covers a caller naming an index this adapter did not
+        # consider "known" (e.g. a build whose count dataref undercounts);
+        # anything at or past the array X-Plane actually reported cannot be
+        # written and is skipped rather than sent out of bounds.
+        for index in sorted(set(range(tank_count)) | set(fuel_by_index)):
+            if index >= len(raw_fuel):
+                continue
+            await self._write("fuel_tank_kg", fuel_by_index.get(index, 0.0), index=index)
+
+    async def _write_station_masses(self, stations: list[PayloadStation]) -> None:
+        """Write ``stations`` to ``m_stations``, zeroing every other known station slot."""
+        raw_stations = await self._read("payload_station_kg")
+        # No station-count candidate is named in the design (OPTIONAL_DATAREFS's
+        # comment) — always the whole array, clamped.
+        station_count = _resolve_known_slot_count(None, len(raw_stations), MAX_PAYLOAD_STATIONS)
+        weight_by_index = {station.station_index: station.weight_kg for station in stations}
+        for index in sorted(set(range(station_count)) | set(weight_by_index)):
+            if index >= len(raw_stations):
+                continue
+            await self._write("payload_station_kg", weight_by_index.get(index, 0.0), index=index)
 
     async def _write_autopilot(self, setup: AircraftSetup) -> None:
         """Write the autopilot half of a setup. No freeze required.
