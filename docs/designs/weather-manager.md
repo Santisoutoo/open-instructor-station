@@ -187,16 +187,18 @@ class WindLayer(BaseModel):
 
     altitude_ft: float = Field(ge=0.0, description="Layer altitude, feet MSL.")
     direction_deg: float = Field(
-        ge=0.0, le=360.0,
+        ge=0.0,
+        le=360.0,
         description="Direction the wind blows FROM, TRUE degrees (METAR convention, "
-                    "and what the simulator's dataref expects). ATIS/tower winds are "
-                    "magnetic; converting for display is the UI's business, not this model's.",
+        "and what the simulator's dataref expects). ATIS/tower winds are "
+        "magnetic; converting for display is the UI's business, not this model's.",
     )
     speed_kt: float = Field(ge=0.0, description="Sustained wind speed, knots.")
     gust_increase_kt: float = Field(
-        default=0.0, ge=0.0,
+        default=0.0,
+        ge=0.0,
         description="Peak gust above the sustained speed, knots. 20 kt gusting 30 is "
-                    "speed_kt=20, gust_increase_kt=10.",
+        "speed_kt=20, gust_increase_kt=10.",
     )
     turbulence_ratio: float = Field(
         default=0.0, ge=0.0, le=1.0, description="0 = smooth, 1 = severe."
@@ -211,7 +213,8 @@ class CloudLayer(BaseModel):
     base_ft: float = Field(description="Cloud base, feet MSL.")
     tops_ft: float = Field(description="Cloud tops, feet MSL. Must exceed base_ft (validator).")
     coverage_ratio: float = Field(
-        ge=0.0, le=1.0,
+        ge=0.0,
+        le=1.0,
         description="Sky cover 0–1. Octas are display: FEW≈0.2, SCT≈0.44, BKN≈0.75, OVC=1.0.",
     )
     cloud_type: CloudType = Field(default="cumulus")
@@ -229,16 +232,27 @@ class WeatherState(BaseModel):
 
     wind_layers: list[WindLayer] = Field(description="Ascending by altitude. May be empty (calm).")
     cloud_layers: list[CloudLayer] = Field(description="Ascending by base. May be empty (clear).")
-    visibility_m: float = Field(ge=0.0, description="Surface visibility in METRES (CAT minima "
-                                "are metres; the adapter converts to the sim's unit).")
+    visibility_m: float = Field(
+        ge=0.0,
+        description="Surface visibility in METRES (CAT minima "
+        "are metres; the adapter converts to the sim's unit).",
+    )
     qnh_hpa: float = Field(ge=900.0, le=1100.0, description="Sea-level pressure, hectopascals.")
     temperature_c: float = Field(ge=-60.0, le=60.0, description="Sea-level temperature, Celsius.")
-    dewpoint_c: float = Field(ge=-60.0, le=60.0, description="Sea-level dewpoint, Celsius. "
-                              "Never above temperature_c (validator clamps on read, refuses on "
-                              "write). This is the feature spec's 'humidity' (D11).")
-    precipitation_ratio: float = Field(ge=0.0, le=1.0, description="0 = none, 1 = torrential. "
-                                       "Falls as snow when the temperature says so — the phase "
-                                       "is the simulator's decision, not a second field.")
+    dewpoint_c: float = Field(
+        ge=-60.0,
+        le=60.0,
+        description="Sea-level dewpoint, Celsius. "
+        "Never above temperature_c (validator clamps on read, refuses on "
+        "write). This is the feature spec's 'humidity' (D11).",
+    )
+    precipitation_ratio: float = Field(
+        ge=0.0,
+        le=1.0,
+        description="0 = none, 1 = torrential. "
+        "Falls as snow when the temperature says so — the phase "
+        "is the simulator's decision, not a second field.",
+    )
     runway_contamination: RunwayContamination = Field(description="Surface state for friction.")
 
 
@@ -275,14 +289,20 @@ WeatherPresetId = Literal[
 
 class PresetWindLayer(BaseModel):
     """A preset's wind stratum: altitude AGL, direction absolute or runway-relative."""
+
     model_config = ConfigDict(frozen=True)
 
     altitude_agl_ft: float = Field(ge=0.0, description="Above the chosen field's elevation.")
-    direction_deg: float | None = Field(default=None, description="TRUE degrees, absolute. "
-                                        "Exactly one of this and offset is set (validator).")
-    offset_from_runway_deg: float | None = Field(default=None, ge=-180.0, le=180.0,
-                                                 description="Added to the runway's true "
-                                                 "bearing; +90 = wind from the right.")
+    direction_deg: float | None = Field(
+        default=None,
+        description="TRUE degrees, absolute. Exactly one of this and offset is set (validator).",
+    )
+    offset_from_runway_deg: float | None = Field(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Added to the runway's true bearing; +90 = wind from the right.",
+    )
     speed_kt: float = Field(ge=0.0)
     gust_increase_kt: float = Field(default=0.0, ge=0.0)
     turbulence_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
@@ -290,29 +310,31 @@ class PresetWindLayer(BaseModel):
 
 class PresetCloudLayer(BaseModel):
     """A preset's cloud stratum, heights above the field."""
+
     model_config = ConfigDict(frozen=True)
 
     base_agl_ft: float
-    tops_agl_ft: float          # > base_agl_ft (validator)
+    tops_agl_ft: float  # > base_agl_ft (validator)
     coverage_ratio: float = Field(ge=0.0, le=1.0)
     cloud_type: CloudType
 
 
 class WeatherPreset(BaseModel):
     """One named preset. Pure data — resolution is core.weather.presets.resolve_preset."""
+
     model_config = ConfigDict(frozen=True)
 
     id: WeatherPresetId
-    label: str                                  # "CAT II", "Crosswind", …
-    description: str                            # one sentence for the tile
+    label: str  # "CAT II", "Crosswind", …
+    description: str  # one sentence for the tile
     wind_layers: tuple[PresetWindLayer, ...] | None = None
     cloud_layers: tuple[PresetCloudLayer, ...] | None = None
-    setup: WeatherSetup = WeatherSetup()        # the absolute scalar part
+    setup: WeatherSetup = WeatherSetup()  # the absolute scalar part
 
     @property
-    def requires_runway(self) -> bool: ...      # any wind layer with an offset
+    def requires_runway(self) -> bool: ...  # any wind layer with an offset
     @property
-    def requires_airport(self) -> bool: ...     # any AGL content (wind or cloud layers)
+    def requires_airport(self) -> bool: ...  # any AGL content (wind or cloud layers)
 ```
 
 Why AGL inside presets and MSL on the wire: a preset is authored once for every airport on
@@ -331,15 +353,15 @@ this exact model):
 class WeatherRequest(BaseModel):
     """One weather instruction: a preset, an explicit setup, or a preset with overrides."""
 
-    model_config = ConfigDict(frozen=True, extra="forbid")   # a typo'd field in a scenario
-                                                             # YAML must fail loudly at load
-                                                             # time — the position models
-                                                             # dropped this and regretted it
+    model_config = ConfigDict(frozen=True, extra="forbid")  # a typo'd field in a scenario
+    # YAML must fail loudly at load
+    # time — the position models
+    # dropped this and regretted it
 
     preset: WeatherPresetId | None = None
     airport_icao: str | None = Field(default=None, min_length=2, max_length=7)
     runway_ident: str | None = Field(default=None, min_length=1, max_length=3)
-    setup: WeatherSetup | None = None    # the whole instruction, or the overlay over the preset
+    setup: WeatherSetup | None = None  # the whole instruction, or the overlay over the preset
 
     # model_validator: at least one of preset / setup.
 ```
@@ -349,13 +371,13 @@ In `server/weather_routes.py` (HTTP furniture only):
 ```python
 class WeatherPreview(BaseModel):
     request: WeatherRequest
-    setup: WeatherSetup            # resolved + merged: exactly what apply would write
-    notes: tuple[str, ...] = ()    # provenance sentences, rendered verbatim by the UI
+    setup: WeatherSetup  # resolved + merged: exactly what apply would write
+    notes: tuple[str, ...] = ()  # provenance sentences, rendered verbatim by the UI
 
 
 class WeatherApplyResult(BaseModel):
-    applied: WeatherSetup          # what was written
-    state: WeatherState            # the read-back — the honest verdict
+    applied: WeatherSetup  # what was written
+    state: WeatherState  # the read-back — the honest verdict
     notes: tuple[str, ...] = ()
 
 
@@ -370,7 +392,7 @@ class WeatherPresetInfo(BaseModel):
 class WeatherManifest(BaseModel):
     adapter: str
     supported: bool
-    reason: str | None             # "The 'msfs' adapter does not declare can_set_weather."
+    reason: str | None  # "The 'msfs' adapter does not declare can_set_weather."
     presets: list[WeatherPresetInfo]
 ```
 
@@ -458,6 +480,7 @@ async def get_weather(self) -> WeatherState:
     """
     ...
 
+
 async def set_weather(self, setup: WeatherSetup) -> None:
     """Apply every field of ``setup`` that is not None, leaving the rest untouched.
 
@@ -510,14 +533,28 @@ real test name, and `test_every_capability_is_covered` enforces it):
 ```python
 CAPABILITY_COVERAGE["can_set_weather"] = "test_set_weather_round_trips"
 
-WEATHER_READBACK_TOLERANCE = {   # per-adapter, same pattern as POSITION_TOLERANCE_M
-    "fake":   {"dir_deg": 0.1, "speed_kt": 0.1, "vis_ratio": 0.001, "qnh_hpa": 0.1,
-               "temp_c": 0.1, "base_ft": 1.0, "coverage": 0.01},
-    "xplane": {"dir_deg": 5.0, "speed_kt": 2.0, "vis_ratio": 0.10,  "qnh_hpa": 1.0,
-               "temp_c": 1.0, "base_ft": 250.0, "coverage": 0.15},
+WEATHER_READBACK_TOLERANCE = {  # per-adapter, same pattern as POSITION_TOLERANCE_M
+    "fake": {
+        "dir_deg": 0.1,
+        "speed_kt": 0.1,
+        "vis_ratio": 0.001,
+        "qnh_hpa": 0.1,
+        "temp_c": 0.1,
+        "base_ft": 1.0,
+        "coverage": 0.01,
+    },
+    "xplane": {
+        "dir_deg": 5.0,
+        "speed_kt": 2.0,
+        "vis_ratio": 0.10,
+        "qnh_hpa": 1.0,
+        "temp_c": 1.0,
+        "base_ft": 250.0,
+        "coverage": 0.15,
+    },
 }
-WEATHER_HOLD_S = {"fake": 0.2, "xplane": 90.0}   # see §10.5 — the xplane number must
-                                                 # outlast the sim's own update cycle
+WEATHER_HOLD_S = {"fake": 0.2, "xplane": 90.0}  # see §10.5 — the xplane number must
+# outlast the sim's own update cycle
 ```
 
 New cases, all skipping (never failing) on an adapter without the flag, exactly the house
@@ -556,7 +593,8 @@ Scenario Generator will need arrives importable from `core/` (D6).
 ```python
 # core/weather/presets.py
 
-WEATHER_PRESETS: Mapping[WeatherPresetId, WeatherPreset]   # §4, data
+WEATHER_PRESETS: Mapping[WeatherPresetId, WeatherPreset]  # §4, data
+
 
 def resolve_preset(
     preset: WeatherPreset,
@@ -572,6 +610,7 @@ def resolve_preset(
     passes numbers it looked up in navdata; core never sees the provider.
     """
 
+
 def merge_setup(base: WeatherSetup, overlay: WeatherSetup) -> WeatherSetup:
     """Overlay the set fields of ``overlay`` onto ``base`` and RE-VALIDATE.
 
@@ -580,6 +619,7 @@ def merge_setup(base: WeatherSetup, overlay: WeatherSetup) -> WeatherSetup:
     adapter) is a lesson, not a tradition. Layer lists follow D3: an overlay
     list replaces the base list.
     """
+
 
 def resolve_request(
     request: WeatherRequest,

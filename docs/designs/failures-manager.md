@@ -157,48 +157,73 @@ field in a scenario YAML fails loudly at load time instead of silently arming th
 
 ```python
 FailureCategory = Literal[
-    "engine", "fuel", "electrical", "hydraulics",
-    "instruments", "avionics", "flight_controls", "gear", "airframe",
+    "engine",
+    "fuel",
+    "electrical",
+    "hydraulics",
+    "instruments",
+    "avionics",
+    "flight_controls",
+    "gear",
+    "airframe",
 ]
 
 FailureId = Literal[
     # -- engine (indexed) --
-    "engine.failure", "engine.fire", "engine.partial_power",
+    "engine.failure",
+    "engine.fire",
+    "engine.partial_power",
     # -- fuel --
     "fuel.leak",
     # -- electrical --
-    "electrical.system", "electrical.generator",
+    "electrical.system",
+    "electrical.generator",
     # -- hydraulics --
     "hydraulics.system",
     # -- instruments --
-    "instruments.pitot", "instruments.static", "instruments.vacuum",
-    "instruments.airspeed", "instruments.attitude", "instruments.altimeter",
-    "instruments.directional_gyro", "instruments.turn_coordinator", "instruments.vsi",
+    "instruments.pitot",
+    "instruments.static",
+    "instruments.vacuum",
+    "instruments.airspeed",
+    "instruments.attitude",
+    "instruments.altimeter",
+    "instruments.directional_gyro",
+    "instruments.turn_coordinator",
+    "instruments.vsi",
     # -- avionics --
-    "avionics.com1", "avionics.com2", "avionics.nav1", "avionics.nav2",
-    "avionics.gps", "avionics.transponder",
+    "avionics.com1",
+    "avionics.com2",
+    "avionics.nav1",
+    "avionics.nav2",
+    "avionics.gps",
+    "avionics.transponder",
     # -- flight controls --
-    "flight_controls.flaps", "flight_controls.spoilers",
+    "flight_controls.flaps",
+    "flight_controls.spoilers",
     # -- gear & brakes --
-    "gear.stuck", "gear.brakes",
+    "gear.stuck",
+    "gear.brakes",
     # -- airframe --
-    "airframe.pressurisation", "airframe.smoke",
-    "airframe.bird_strike", "airframe.lightning_strike",
+    "airframe.pressurisation",
+    "airframe.smoke",
+    "airframe.bird_strike",
+    "airframe.lightning_strike",
 ]
 
 
 class FailureSpec(BaseModel):
     """One catalogue entry. Sim-agnostic; knows no dataref."""
+
     model_config = ConfigDict(frozen=True)
 
     failure_id: FailureId
-    label: str          # "Engine fire" — short, for the row
+    label: str  # "Engine fire" — short, for the row
     category: FailureCategory
     takes_engine_index: bool = False
-    description: str    # one sentence for the UI hint, e.g. what "stuck" means
+    description: str  # one sentence for the UI hint, e.g. what "stuck" means
 
 
-FAILURE_CATALOGUE: tuple[FailureSpec, ...]   # in a fixed display order, grouped by category
+FAILURE_CATALOGUE: tuple[FailureSpec, ...]  # in a fixed display order, grouped by category
 CATALOGUE_BY_ID: Mapping[FailureId, FailureSpec]
 FAILURE_IDS: tuple[FailureId, ...] = get_args(FailureId)  # the CONTROL_IDS pattern
 ```
@@ -250,19 +275,21 @@ converts to its own 0-based suffix.
 ```python
 class FailureSupport(BaseModel):
     """One catalogue entry resolved against one adapter."""
+
     model_config = ConfigDict(frozen=True)
 
     failure_id: FailureId
     supported: bool
-    best_effort: bool = False   # supported, but delivery is not guaranteed (D4, §5.4)
-    reason: str | None = None   # why unsupported; None when supported
+    best_effort: bool = False  # supported, but delivery is not guaranteed (D4, §5.4)
+    reason: str | None = None  # why unsupported; None when supported
 
 
 class FailureSupportManifest(BaseModel):
     """What the adapter answers from get_failure_support()."""
+
     model_config = ConfigDict(frozen=True)
 
-    caveat: str | None = None   # one adapter-level sentence, e.g. the study-aircraft warning
+    caveat: str | None = None  # one adapter-level sentence, e.g. the study-aircraft warning
     entries: tuple[FailureSupport, ...]  # exactly one per FAILURE_IDS, in catalogue order
 ```
 
@@ -284,7 +311,7 @@ class FailureCatalogueEntry(BaseModel):
 class FailureCatalogueResponse(BaseModel):
     adapter: str
     caveat: str | None
-    failures: list[FailureCatalogueEntry]   # catalogue order
+    failures: list[FailureCatalogueEntry]  # catalogue order
 ```
 
 ### 3.3 Triggers
@@ -292,6 +319,7 @@ class FailureCatalogueResponse(BaseModel):
 ```python
 class AltitudeAboveTrigger(BaseModel):
     """Fires when altitude_ft >= threshold. Inclusive, MSL (D7, D8)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["altitude_above"]
     altitude_ft: float = Field(ge=-2000.0, le=100_000.0, description="Feet MSL, inclusive.")
@@ -299,6 +327,7 @@ class AltitudeAboveTrigger(BaseModel):
 
 class AltitudeBelowTrigger(BaseModel):
     """Fires when altitude_ft <= threshold. Inclusive, MSL."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["altitude_below"]
     altitude_ft: float = Field(ge=-2000.0, le=100_000.0, description="Feet MSL, inclusive.")
@@ -307,6 +336,7 @@ class AltitudeBelowTrigger(BaseModel):
 class SpeedAboveTrigger(BaseModel):
     """Fires when ias_kt >= threshold. Inclusive. This is the V1-cut trigger:
     armed on the ground before the roll, it fires as the aircraft accelerates through V1."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["speed_above"]
     ias_kt: float = Field(ge=0.0, le=500.0, description="Knots indicated, inclusive.")
@@ -321,14 +351,18 @@ class SpeedBelowTrigger(BaseModel):
 class DelayTrigger(BaseModel):
     """Fires delay_s seconds of wall-clock time after arming. Wall clock, not sim
     time: the station cannot see sim time, and saying so beats pretending (§10.3)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["delay"]
     delay_s: float = Field(gt=0.0, le=86_400.0, description="Seconds after arming.")
 
 
 FailureTrigger = Annotated[
-    AltitudeAboveTrigger | AltitudeBelowTrigger
-    | SpeedAboveTrigger | SpeedBelowTrigger | DelayTrigger,
+    AltitudeAboveTrigger
+    | AltitudeBelowTrigger
+    | SpeedAboveTrigger
+    | SpeedBelowTrigger
+    | DelayTrigger,
     Field(discriminator="type"),
 ]
 ```
@@ -346,11 +380,13 @@ class FailureRef(BaseModel):
     The validator is the reason these models live in core/: the Scenario
     Generator gets identical validation parsing YAML, with no HTTP anywhere.
     """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     failure_id: FailureId
-    engine_index: int | None = Field(default=None, ge=1, le=8,
-                                     description="1-based. Required iff the entry is indexed.")
+    engine_index: int | None = Field(
+        default=None, ge=1, le=8, description="1-based. Required iff the entry is indexed."
+    )
 
     @model_validator(mode="after")
     def _index_matches_catalogue(self) -> "FailureRef":
@@ -372,6 +408,7 @@ class ClearFailureRequest(FailureRef):
 
 class ArmFailureRequest(FailureRef):
     """POST /api/failures/arm."""
+
     trigger: FailureTrigger
 
 
@@ -381,6 +418,7 @@ class ActiveFailure(FailureRef):
 
 class ArmedFailure(FailureRef):
     """One armed failure, as listed and as returned by /arm."""
+
     armed_id: str = Field(description="Server-assigned opaque id (uuid4 hex).")
     trigger: FailureTrigger
     armed_at: datetime = Field(description="UTC wall clock, for the panel's countdown display.")
@@ -391,8 +429,8 @@ class ArmedFailure(FailureRef):
 
 
 class FailuresStatus(BaseModel):
-    active: list[ActiveFailure]   # from adapter.get_active_failures() — the sim's truth (D10)
-    armed: list[ArmedFailure]     # from the server's scheduler
+    active: list[ActiveFailure]  # from adapter.get_active_failures() — the sim's truth (D10)
+    armed: list[ArmedFailure]  # from the server's scheduler
 ```
 
 ---
@@ -414,18 +452,22 @@ async def get_failure_support(self) -> FailureSupportManifest:
     an adapter without can_inject_failures returns every entry unsupported with
     that stated reason — "no" is an answer, never an exception."""
 
+
 async def inject_failure(self, failure: FailureRef) -> None:
     """Fail the referenced system immediately. Idempotent: injecting an
     already-failed system changes nothing. Requires can_inject_failures;
     an unsupported failure_id raises CapabilityNotSupported."""
 
+
 async def clear_failure(self, failure: FailureRef) -> None:
     """Repair the referenced system. Idempotent; clearing a working system is a
     no-op. Requires can_inject_failures."""
 
+
 async def clear_all_failures(self) -> None:
     """Repair every failure this adapter can see. Idempotent.
     Requires can_inject_failures."""
+
 
 async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
     """Read back which supported failures are failed *right now*, from the
