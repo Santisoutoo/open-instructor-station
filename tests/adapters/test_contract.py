@@ -22,6 +22,7 @@ a simulator — unlike the Fake — is a single, shared, persistent thing:
 The history behind those rules is in ``docs/designs/live-contract-suite.md``.
 """
 
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -29,13 +30,28 @@ import pytest
 from pydantic import ValidationError
 
 from adapters.fake import FakeSimAdapter
+from core.failures import FAILURE_IDS, ActiveFailure, FailureRef
 from core.geodesy import (
     METRES_PER_NAUTICAL_MILE,
     distance_and_bearing,
     point_at_distance_and_bearing,
 )
-from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LightsSetup
+from core.models import (
+    AircraftSetup,
+    AircraftState,
+    AirframeInfo,
+    AirframeMassLimits,
+    CgEnvelope,
+    CgEnvelopePoint,
+    GeoPosition,
+    LightsSetup,
+    Loadout,
+    LoadoutState,
+    PayloadStation,
+    TankFuel,
+)
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
+from core.weather.models import CloudLayer, WeatherSetup, WeatherState, WindLayer
 
 # --------------------------------------------------------------------------
 # Adapter parametrisation
@@ -124,6 +140,41 @@ COMMANDED_THROTTLE_RATIO = 0.3
 #: reload.
 GROUND_CLEARANCE_FT = 1500.0
 
+#: Per-adapter read-back tolerance for weather round-trips
+#: (docs/designs/weather-manager.md §5.3). ``vis_ratio``/``coverage`` are
+#: fractional; the tests turn them into an absolute tolerance against the
+#: value under test.
+WEATHER_READBACK_TOLERANCE: dict[str, dict[str, float]] = {
+    "fake": {
+        "dir_deg": 0.1,
+        "speed_kt": 0.1,
+        "vis_ratio": 0.001,
+        "qnh_hpa": 0.1,
+        "temp_c": 0.1,
+        "base_ft": 1.0,
+        "coverage": 0.01,
+    },
+    "xplane": {
+        "dir_deg": 5.0,
+        "speed_kt": 2.0,
+        "vis_ratio": 0.10,
+        "qnh_hpa": 1.0,
+        "temp_c": 1.0,
+        "base_ft": 250.0,
+        "coverage": 0.15,
+    },
+}
+
+#: How long a written weather value must hold before the read-back is
+#: trusted. The ``xplane`` number must outlast the simulator's own
+#: real-weather update cycle — roadmap Phase 2 exit criterion 3
+#: (docs/designs/weather-manager.md §5.3 case 4, §11.5).
+WEATHER_HOLD_S = {"fake": 0.2, "xplane": 90.0}
+
+#: A live simulator's fuel-mass write/read round trip is not exact to the
+#: gram; the Fake's is (docs/designs/fuel-payload.md §5.3).
+LOADOUT_KG_TOLERANCE = {"fake": 0.01, "xplane": 1.0}
+
 #: Which test pins each capability. ``PENDING`` marks a flag whose manager
 #: arrives in a later phase: the contract is not written yet, and that is a
 #: deliberate, visible decision rather than an oversight.
@@ -132,11 +183,11 @@ PENDING = "PENDING - contract arrives with the manager that implements it"
 CAPABILITY_COVERAGE: dict[str, str] = {
     "can_set_position": "test_set_position_moves_the_aircraft",
     "can_set_aircraft_state": "test_apply_setup_applies_only_the_provided_fields",
-    "can_set_weather": PENDING,
-    "can_inject_failures": PENDING,
+    "can_set_weather": "test_set_weather_round_trips",
+    "can_inject_failures": "test_injected_failure_is_reported_active",
     "can_spawn_traffic": PENDING,
     "can_control_autopilot": "test_apply_setup_writes_the_autopilot",
-    "can_set_fuel_payload": PENDING,
+    "can_set_fuel_payload": "test_set_loadout_round_trips",
     "can_control_camera": PENDING,
     "can_pushback": PENDING,
 }
@@ -150,7 +201,10 @@ CAPABILITY_COVERAGE: dict[str, str] = {
 #: ``AircraftSetup`` under a new flag gets both halves of the contract for free.
 CAPABILITY_GATED_SETUPS: dict[str, AircraftSetup] = {
     "can_control_autopilot": AircraftSetup(autopilot_master=True),
-    "can_set_fuel_payload": AircraftSetup(gross_weight_kg=60_000.0),
+    "can_set_fuel_payload": AircraftSetup(
+        gross_weight_kg=60_000.0,
+        loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=100.0)]),
+    ),
 }
 
 
@@ -781,6 +835,300 @@ async def test_apply_setup_leaves_the_autopilot_alone_when_asked_for_nothing(
 
 
 # --------------------------------------------------------------------------
+# can_set_weather
+# --------------------------------------------------------------------------
+
+#: A full, distinctive setup — every scalar and every layer field is a value
+#: that could not be confused with a default, per weather-manager.md §5.3
+#: case 1.
+_DISTINCTIVE_WEATHER = WeatherSetup(
+    wind_layers=[
+        WindLayer(altitude_ft=0.0, direction_deg=200.0, speed_kt=18.0, gust_increase_kt=6.0),
+        WindLayer(altitude_ft=5000.0, direction_deg=230.0, speed_kt=30.0, turbulence_ratio=0.3),
+    ],
+    cloud_layers=[
+        CloudLayer(base_ft=1800.0, tops_ft=4500.0, coverage_ratio=0.75, cloud_type="stratus")
+    ],
+    visibility_m=5000.0,
+    qnh_hpa=1002.0,
+    temperature_c=22.0,
+    dewpoint_c=18.0,
+    precipitation_ratio=0.4,
+    runway_contamination="wet",
+)
+
+
+def _vis_tolerance_m(adapter_name: str, value_m: float) -> float:
+    """Turn the fractional ``vis_ratio`` tolerance into an absolute one."""
+    return WEATHER_READBACK_TOLERANCE[adapter_name]["vis_ratio"] * value_m + 1.0
+
+
+async def test_set_weather_round_trips(adapter: SimAdapter) -> None:
+    """Write a full, distinctive setup; read it back within tolerance.
+
+    The flag's coverage entry (weather-manager.md §5.3 case 1).
+    """
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    tol = WEATHER_READBACK_TOLERANCE[adapter.name]
+    await adapter.set_weather(_DISTINCTIVE_WEATHER)
+    state = await adapter.get_weather()
+
+    assert len(state.wind_layers) == 2
+    assert state.wind_layers[0].direction_deg == pytest.approx(200.0, abs=tol["dir_deg"])
+    assert state.wind_layers[0].speed_kt == pytest.approx(18.0, abs=tol["speed_kt"])
+    assert len(state.cloud_layers) == 1
+    assert state.cloud_layers[0].base_ft == pytest.approx(1800.0, abs=tol["base_ft"])
+    assert state.cloud_layers[0].coverage_ratio == pytest.approx(0.75, abs=tol["coverage"])
+    assert state.qnh_hpa == pytest.approx(1002.0, abs=tol["qnh_hpa"])
+    assert state.temperature_c == pytest.approx(22.0, abs=tol["temp_c"])
+    assert state.runway_contamination == "wet"
+
+
+async def test_set_weather_applies_only_the_provided_fields(adapter: SimAdapter) -> None:
+    """The ``None``-means-untouched half of D2."""
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    tol = WEATHER_READBACK_TOLERANCE[adapter.name]
+    await adapter.set_weather(_DISTINCTIVE_WEATHER)
+    await adapter.set_weather(WeatherSetup(visibility_m=2_000.0))
+    state = await adapter.get_weather()
+
+    assert state.visibility_m == pytest.approx(2_000.0, abs=_vis_tolerance_m(adapter.name, 2_000.0))
+    assert state.qnh_hpa == pytest.approx(1002.0, abs=tol["qnh_hpa"])
+    assert state.temperature_c == pytest.approx(22.0, abs=tol["temp_c"])
+
+
+async def test_set_weather_replaces_layer_lists_wholesale(adapter: SimAdapter) -> None:
+    """D3: a provided list replaces the whole set; ``[]`` clears it."""
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    two_layers = WeatherSetup(
+        cloud_layers=[
+            CloudLayer(base_ft=1000.0, tops_ft=3000.0, coverage_ratio=0.5),
+            CloudLayer(base_ft=8000.0, tops_ft=12_000.0, coverage_ratio=1.0),
+        ]
+    )
+    await adapter.set_weather(two_layers)
+    state = await adapter.get_weather()
+    assert len(state.cloud_layers) == 2
+
+    one_layer = WeatherSetup(
+        cloud_layers=[CloudLayer(base_ft=1000.0, tops_ft=3000.0, coverage_ratio=0.5)]
+    )
+    await adapter.set_weather(one_layer)
+    state = await adapter.get_weather()
+    assert len(state.cloud_layers) == 1
+
+    await adapter.set_weather(WeatherSetup(cloud_layers=[]))
+    state = await adapter.get_weather()
+    assert state.cloud_layers == []
+
+
+async def test_set_weather_holds_across_the_sims_update_cycle(adapter: SimAdapter) -> None:
+    """Roadmap Phase 2 exit criterion 3.
+
+    A written value must still be there after the simulator's own update
+    cycle has had a chance to destroy it — the whole reason X-Plane's
+    real-weather mode must be forced into manual before anything is written
+    (weather-manager.md §7.1). Nearly free against the Fake; against a live
+    X-Plane this run starts from whatever weather mode the user left it in.
+    """
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    await adapter.set_weather(WeatherSetup(visibility_m=1234.0))
+    await asyncio.sleep(WEATHER_HOLD_S[adapter.name])
+    state = await adapter.get_weather()
+    assert state.visibility_m == pytest.approx(1234.0, abs=_vis_tolerance_m(adapter.name, 1234.0))
+
+
+async def test_get_weather_returns_a_valid_state(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    state = await adapter.get_weather()
+    assert isinstance(state, WeatherState)
+    altitudes = [layer.altitude_ft for layer in state.wind_layers]
+    assert altitudes == sorted(altitudes)
+    bases = [layer.base_ft for layer in state.cloud_layers]
+    assert bases == sorted(bases)
+    assert state.dewpoint_c <= state.temperature_c
+    assert 0.0 <= state.precipitation_ratio <= 1.0
+
+
+# --------------------------------------------------------------------------
+# can_inject_failures
+# --------------------------------------------------------------------------
+
+
+def _active_keys(active: tuple[ActiveFailure, ...]) -> set[tuple[str, int | None]]:
+    """(failure_id, engine_index) pairs — sidesteps pydantic's exact-class
+    equality (an ``ActiveFailure`` never compares equal to a ``FailureRef``,
+    even with identical fields)."""
+    return {(item.failure_id, item.engine_index) for item in active}
+
+
+async def test_failure_support_covers_the_whole_catalogue(adapter: SimAdapter) -> None:
+    """Capability-free: every adapter answers, for every id, supported or not."""
+    manifest = await adapter.get_failure_support()
+    assert [entry.failure_id for entry in manifest.entries] == list(FAILURE_IDS)
+    for entry in manifest.entries:
+        if not entry.supported:
+            assert entry.reason
+
+
+async def test_injected_failure_is_reported_active(adapter: SimAdapter) -> None:
+    """The flag's coverage entry.
+
+    The read-back is the assertion, not the absence of an exception — the
+    same lesson as issue #39: a write is not delivered until something reads
+    it back at the other end.
+    """
+    if not adapter.capabilities.can_inject_failures:
+        pytest.skip(f"{adapter.name} does not declare can_inject_failures")
+
+    ref = FailureRef(failure_id="instruments.pitot")
+    try:
+        await adapter.inject_failure(ref)
+        active = await adapter.get_active_failures()
+        assert (ref.failure_id, ref.engine_index) in _active_keys(active)
+    finally:
+        await adapter.clear_failure(ref)
+
+
+async def test_indexed_failure_carries_its_engine_index(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_inject_failures:
+        pytest.skip(f"{adapter.name} does not declare can_inject_failures")
+
+    ref = FailureRef(failure_id="engine.failure", engine_index=2)
+    try:
+        await adapter.inject_failure(ref)
+        keys = _active_keys(await adapter.get_active_failures())
+        assert ("engine.failure", 2) in keys
+        assert ("engine.failure", 1) not in keys
+    finally:
+        await adapter.clear_failure(ref)
+
+
+async def test_clear_failure_repairs_it(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_inject_failures:
+        pytest.skip(f"{adapter.name} does not declare can_inject_failures")
+
+    ref = FailureRef(failure_id="instruments.vacuum")
+    await adapter.inject_failure(ref)
+    await adapter.clear_failure(ref)
+    keys = _active_keys(await adapter.get_active_failures())
+    assert (ref.failure_id, ref.engine_index) not in keys
+
+
+async def test_clear_all_failures_leaves_none_active(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_inject_failures:
+        pytest.skip(f"{adapter.name} does not declare can_inject_failures")
+
+    first = FailureRef(failure_id="engine.fire", engine_index=1)
+    second = FailureRef(failure_id="instruments.static")
+    try:
+        await adapter.inject_failure(first)
+        await adapter.inject_failure(second)
+        await adapter.clear_all_failures()
+        keys = _active_keys(await adapter.get_active_failures())
+        assert (first.failure_id, first.engine_index) not in keys
+        assert (second.failure_id, second.engine_index) not in keys
+    finally:
+        await adapter.clear_all_failures()
+
+
+async def test_inject_is_idempotent(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_inject_failures:
+        pytest.skip(f"{adapter.name} does not declare can_inject_failures")
+
+    ref = FailureRef(failure_id="avionics.com1")
+    try:
+        await adapter.inject_failure(ref)
+        await adapter.inject_failure(ref)
+        active = await adapter.get_active_failures()
+        # Injected twice, present once — inject is a state, not a delta.
+        assert sum(1 for item in active if item.failure_id == ref.failure_id) == 1
+        await adapter.clear_failure(ref)
+        keys = _active_keys(await adapter.get_active_failures())
+        assert (ref.failure_id, ref.engine_index) not in keys
+    finally:
+        await adapter.clear_failure(ref)
+
+
+# --------------------------------------------------------------------------
+# can_set_fuel_payload
+# --------------------------------------------------------------------------
+
+_DISTINCTIVE_LOADOUT = Loadout(
+    tanks=[TankFuel(tank_index=0, fuel_kg=52.0), TankFuel(tank_index=1, fuel_kg=40.0)],
+    stations=[
+        PayloadStation(station_index=0, kind="crew", label="Pilot", weight_kg=85.0),
+        PayloadStation(station_index=1, kind="passenger", label="Rear seats", weight_kg=60.0),
+    ],
+)
+
+
+async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
+    """The flag's coverage entry (fuel-payload.md §5.3 case 1)."""
+    if not adapter.capabilities.can_set_fuel_payload:
+        pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
+
+    tol = LOADOUT_KG_TOLERANCE[adapter.name]
+    await adapter.apply_setup(AircraftSetup(loadout=_DISTINCTIVE_LOADOUT))
+    state = await adapter.get_loadout()
+
+    assert len(state.tanks) == 2
+    assert len(state.stations) == 2
+    by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
+    assert by_tank[0] == pytest.approx(52.0, abs=tol)
+    assert by_tank[1] == pytest.approx(40.0, abs=tol)
+    by_station = {station.station_index: station.weight_kg for station in state.stations}
+    assert by_station[0] == pytest.approx(85.0, abs=tol)
+    assert by_station[1] == pytest.approx(60.0, abs=tol)
+
+
+async def test_loadout_replaces_tanks_and_stations_wholesale(adapter: SimAdapter) -> None:
+    """D10: a provided list replaces the whole set; ``[]`` empties it."""
+    if not adapter.capabilities.can_set_fuel_payload:
+        pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
+
+    two_tanks = Loadout(
+        tanks=[TankFuel(tank_index=0, fuel_kg=10.0), TankFuel(tank_index=1, fuel_kg=10.0)]
+    )
+    await adapter.apply_setup(AircraftSetup(loadout=two_tanks))
+    state = await adapter.get_loadout()
+    assert len(state.tanks) == 2
+
+    one_tank = Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=10.0)])
+    await adapter.apply_setup(AircraftSetup(loadout=one_tank))
+    state = await adapter.get_loadout()
+    assert len(state.tanks) == 1
+
+    await adapter.apply_setup(AircraftSetup(loadout=Loadout(tanks=[])))
+    state = await adapter.get_loadout()
+    assert state.tanks == []
+
+
+async def test_get_loadout_returns_a_valid_state(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_set_fuel_payload:
+        pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
+
+    state = await adapter.get_loadout()
+    assert isinstance(state, LoadoutState)
+    assert all(tank.fuel_kg >= 0.0 for tank in state.tanks)
+    assert all(station.weight_kg >= 0.0 for station in state.stations)
+    tank_indices = [tank.tank_index for tank in state.tanks]
+    assert len(tank_indices) == len(set(tank_indices))
+    station_indices = [station.station_index for station in state.stations]
+    assert len(station_indices) == len(set(station_indices))
+
+
+# --------------------------------------------------------------------------
 # Capability-free reads
 # --------------------------------------------------------------------------
 
@@ -802,6 +1150,10 @@ async def test_get_airframe_returns_a_model(adapter: SimAdapter) -> None:
     if airframe.icao_type is not None:
         assert airframe.icao_type == airframe.icao_type.strip()
         assert airframe.icao_type
+    if airframe.mass_limits is not None:
+        assert isinstance(airframe.mass_limits, AirframeMassLimits)
+        assert airframe.mass_limits.empty_weight_kg > 0.0
+        assert airframe.mass_limits.max_takeoff_weight_kg > 0.0
 
 
 # --------------------------------------------------------------------------
@@ -921,5 +1273,115 @@ async def test_fake_merges_the_autopilot_across_calls() -> None:
         assert applied.target_altitude_ft == pytest.approx(12_000.0)  # overwritten
         assert applied.autopilot_app is True
         assert applied.autopilot_nav is None  # never provided, still unset
+    finally:
+        await sim.disconnect()
+
+
+async def test_get_airframe_reports_mass_limits_when_known() -> None:
+    """A Fake constructed with ``AirframeInfo(mass_limits=...)`` returns it
+    verbatim; the default Fake returns ``None`` (fuel-payload.md §5.3 case 4).
+
+    No live adapter can be handed a specific answer this way (the parametrised
+    ``adapter`` fixture builds a plain, default instance) — that half is
+    covered by the shape assertion in :func:`test_get_airframe_returns_a_model`.
+    """
+    limits = AirframeMassLimits(
+        empty_weight_kg=743.0,
+        empty_cg_arm_in=39.0,
+        max_takeoff_weight_kg=1157.0,
+        max_fuel_kg=152.0,
+        fuel_tank_capacities_kg=(76.0, 76.0),
+        fuel_tank_arms_in=(48.0, 48.0),
+        payload_station_capacities_kg=(85.0, 85.0, 45.0),
+        payload_station_arms_in=(37.0, 73.0, 95.0),
+        cg_envelope=CgEnvelope(
+            points=(
+                CgEnvelopePoint(weight_kg=700.0, fwd_limit_in=34.0, aft_limit_in=41.0),
+                CgEnvelopePoint(weight_kg=1157.0, fwd_limit_in=35.5, aft_limit_in=40.0),
+            )
+        ),
+    )
+    sim = FakeSimAdapter(airframe=AirframeInfo(icao_type="C172", mass_limits=limits))
+    await sim.connect()
+    try:
+        airframe = await sim.get_airframe()
+        assert airframe.mass_limits == limits
+
+        unknown = await FakeSimAdapter().get_airframe()
+        assert unknown.mass_limits is None
+    finally:
+        await sim.disconnect()
+
+
+# --------------------------------------------------------------------------
+# Fake-only: capability refusal for the Phase 2 methods
+# --------------------------------------------------------------------------
+#
+# The parametrised ``adapter`` fixture cannot exercise these: FakeSimAdapter
+# declares every capability (test_fake_adapter_declares_every_capability), so
+# a skip-guarded case against it would never actually run — exactly the
+# "green run that hid something" this file's own docstring warns against. A
+# restricted subclass, overriding only ``capabilities``, is the shape the
+# existing _NoWriteAdapter/NoPositionAdapter precedent already established
+# for this in ``tests/server/test_app.py``/``tests/server/test_position_routes.py``.
+
+
+async def test_weather_methods_refuse_without_the_capability() -> None:
+    class NoWeatherAdapter(FakeSimAdapter):
+        @property
+        def capabilities(self) -> Capabilities:
+            return super().capabilities.model_copy(update={"can_set_weather": False})
+
+    sim = NoWeatherAdapter()
+    await sim.connect()
+    try:
+        with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+            await sim.get_weather()
+        with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+            await sim.set_weather(WeatherSetup(visibility_m=1000.0))
+    finally:
+        await sim.disconnect()
+
+
+async def test_failure_methods_refuse_without_the_capability() -> None:
+    class NoFailuresAdapter(FakeSimAdapter):
+        @property
+        def capabilities(self) -> Capabilities:
+            return super().capabilities.model_copy(update={"can_inject_failures": False})
+
+    sim = NoFailuresAdapter()
+    await sim.connect()
+    try:
+        ref = FailureRef(failure_id="instruments.pitot")
+        with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
+            await sim.inject_failure(ref)
+        with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
+            await sim.clear_failure(ref)
+        with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
+            await sim.clear_all_failures()
+
+        manifest = await sim.get_failure_support()
+        assert all(not entry.supported for entry in manifest.entries)
+        assert all(entry.reason for entry in manifest.entries)
+        assert await sim.get_active_failures() == ()
+    finally:
+        await sim.disconnect()
+
+
+async def test_loadout_methods_refuse_without_the_capability() -> None:
+    class NoFuelPayloadAdapter(FakeSimAdapter):
+        @property
+        def capabilities(self) -> Capabilities:
+            return super().capabilities.model_copy(update={"can_set_fuel_payload": False})
+
+    sim = NoFuelPayloadAdapter()
+    await sim.connect()
+    try:
+        with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
+            await sim.get_loadout()
+        with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
+            await sim.apply_setup(
+                AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
+            )
     finally:
         await sim.disconnect()
