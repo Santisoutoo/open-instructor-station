@@ -131,6 +131,46 @@ export type RunwayPlacementName =
 export type ApproachCategory =
   components['schemas']['RunwayPlacementRequest']['category'];
 
+// ---------------------------------------------------------------------------
+// Weather Manager
+// ---------------------------------------------------------------------------
+
+/** One wind stratum. Direction is TRUE degrees the wind blows FROM, altitude MSL. */
+export type WindLayer = components['schemas']['WindLayer'];
+
+/** One cloud stratum. Base and tops are MSL; coverage is a 0-1 ratio, not octas. */
+export type CloudLayer = components['schemas']['CloudLayer'];
+
+/** The closed set of cloud types the adapter can render. */
+export type CloudType = CloudLayer['cloud_type'];
+
+/** The commanded weather, fully populated — `GET /api/weather`. */
+export type WeatherState = components['schemas']['WeatherState'];
+
+/** Surface state for friction, shared by {@link WeatherState} and {@link WeatherSetup}. */
+export type RunwayContamination = WeatherState['runway_contamination'];
+
+/** The sparse write model: `null`/absent means "leave that aspect untouched". */
+export type WeatherSetup = components['schemas']['WeatherSetup'];
+
+/** The closed set of preset ids the manifest and the request both use. */
+export type WeatherPresetId = components['schemas']['WeatherPresetInfo']['id'];
+
+/** One catalogue entry, as `GET /api/weather/manifest` publishes it. */
+export type WeatherPresetInfo = components['schemas']['WeatherPresetInfo'];
+
+/** `GET /api/weather/manifest` — supported-or-not with a reason, plus the preset catalogue. */
+export type WeatherManifest = components['schemas']['WeatherManifest'];
+
+/** One weather instruction: a preset, an explicit setup, or a preset with overrides. */
+export type WeatherRequest = components['schemas']['WeatherRequest'];
+
+/** What `POST /api/weather/apply` would write, resolved without touching the simulator. */
+export type WeatherPreview = components['schemas']['WeatherPreview'];
+
+/** What `POST /api/weather/apply` returns: the echo of the write plus the read-back state. */
+export type WeatherApplyResult = components['schemas']['WeatherApplyResult'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',

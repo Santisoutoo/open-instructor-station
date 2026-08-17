@@ -1,22 +1,24 @@
 /**
  * Editor for the up-to-three wind layers of the staged weather.
  *
- * Receives the **resolved** layers (preset + overrides, crosswind already aimed at
- * the runway) and reports every change as a whole new array — the slice stores it
- * as one sparse override, so an edited wind wins over the preset in a single move.
+ * Receives the **resolved** layers (current weather with the staged setup's fields replacing
+ * it) and reports every change as a whole new array — the slice stores it as one sparse
+ * override, so an edited wind wins over the preset in a single move (weather-manager.md D3:
+ * a layer list REPLACES the whole set, no per-layer merge).
  */
 
 import { NumberField } from './NumberField';
-import type { WindLayer } from './types.mock';
+import type { WindLayer } from '../../api/models';
 
 /** X-Plane models wind as three indexed layers at most (feature-spec §3). */
 const MAX_LAYERS = 3;
 
 const NEW_LAYER: WindLayer = {
-  base_ft_msl: 5000,
+  altitude_ft: 5000,
   direction_deg: 270,
   speed_kt: 15,
-  gust_kt: 0,
+  gust_increase_kt: 0,
+  turbulence_ratio: 0,
 };
 
 interface WindLayerEditorProps {
@@ -38,14 +40,14 @@ export function WindLayerEditor({ layers, disabled, onChange }: WindLayerEditorP
         <div className="weather-row" key={index}>
           <NumberField
             label="Base"
-            unit="ft"
-            value={layer.base_ft_msl}
+            unit="ft MSL"
+            value={layer.altitude_ft}
             min={0}
             max={40000}
             step={500}
             disabled={disabled}
             onChange={(value) => {
-              patch(index, { base_ft_msl: value });
+              patch(index, { altitude_ft: value });
             }}
           />
           <NumberField
@@ -73,15 +75,27 @@ export function WindLayerEditor({ layers, disabled, onChange }: WindLayerEditorP
             }}
           />
           <NumberField
-            label="Gust"
+            label="Gust +"
             unit="kt"
-            value={layer.gust_kt}
+            value={layer.gust_increase_kt}
             min={0}
-            max={99}
+            max={60}
             step={1}
             disabled={disabled}
             onChange={(value) => {
-              patch(index, { gust_kt: value });
+              patch(index, { gust_increase_kt: value });
+            }}
+          />
+          <NumberField
+            label="Turbulence"
+            unit="%"
+            value={Math.round(layer.turbulence_ratio * 100)}
+            min={0}
+            max={100}
+            step={5}
+            disabled={disabled}
+            onChange={(value) => {
+              patch(index, { turbulence_ratio: value / 100 });
             }}
           />
           <button
