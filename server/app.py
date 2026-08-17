@@ -15,6 +15,7 @@ Surface:
 * ``WS   /ws/state`` — the ~4 Hz live feed.
 * ``/api/navdata/*`` and ``/api/position/*`` — the Position Manager, in
   :mod:`server.navdata_routes` and :mod:`server.position_routes`.
+* ``/api/failures/*`` — the Failures Manager, in :mod:`server.failure_routes`.
 
 The UI (built separately into ``ui/dist``) is served from ``/`` when it exists;
 the server starts perfectly well without it.
@@ -36,7 +37,7 @@ from pydantic import BaseModel, Field
 from core.models import AircraftSetup, AircraftState
 from core.navdata.provider import NavdataUnavailable
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
-from server import navdata_routes, position_routes
+from server import failure_routes, navdata_routes, position_routes
 from server.deps import get_adapter, load_airframe_info
 
 __all__ = [
@@ -372,6 +373,7 @@ def create_app() -> FastAPI:
     # shell. Registered before the UI mount, which claims "/".
     app.include_router(navdata_routes.router)
     app.include_router(position_routes.router)
+    app.include_router(failure_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
 
     _mount_ui(app)
