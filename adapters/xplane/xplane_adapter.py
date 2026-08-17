@@ -399,22 +399,35 @@ _WEATHER_CLOUD_LAYERS = 3
 #: a value carried over from the design's dataref table.
 _WEATHER_PADDING_ALTITUDE_STEP_FT = 1_000.0
 
-#: sim/weather/region/weather_source. **UNVERIFIED** (weather-manager.md
-#: §11.1): neither the value that means "manually set" nor whether the Web
-#: API even accepts a write to this dataref is pinned anywhere in this
-#: repository. spikes/weather_datarefs.py (§10.1) is written to pin it and has
-#: not been run against a live simulator in this session. This constant exists
-#: only so the mode-forcing sequence in :meth:`XPlaneSimAdapter._force_manual_weather_mode`
-#: is structurally complete — do not trust the number until the spike
-#: confirms or corrects it, and do not flip ``can_set_weather`` on the
-#: strength of this constant alone.
-_WEATHER_SOURCE_MANUAL_UNVERIFIED = 0
+#: sim/weather/region/weather_source. **CONFIRMED against a live X-Plane
+#: 12.4.3 install** (weather-manager.md §11.1, resolved): the dataref is
+#: **read-only** — the Web API rejects a write to it outright, so it is never
+#: written, only read back as the honest verdict on whether manual mode took.
+#: ``0`` is the value X-Plane reports once ``change_mode`` has been switched
+#: away from real weather (``1`` was the observed real-weather value on this
+#: install). Empirically verified: writing ``change_mode=3`` +
+#: ``update_immediately=1`` and then a distinctive visibility/QNH held those
+#: values bit-for-bit for 120s of live polling — well past the 90s threshold
+#: — while candidates ``0``, ``1`` and ``2`` each eventually drifted (at
+#: roughly 50s, 35s and 60s respectively), meaning X-Plane's own weather
+#: engine periodically reasserts itself under those modes but not under `3`.
+_WEATHER_SOURCE_MANUAL = 0
 
-#: sim/weather/region/change_mode, "3 = static" per §7.1's table. Carried
-#: verbatim from the design; the table itself does not mark it "verify" the
-#: way it marks ``weather_source``'s value, but the same spike run confirms
-#: it in practice, since the two are only ever written together.
+#: sim/weather/region/change_mode. **CONFIRMED**, not merely carried from the
+#: design's table: ``3`` is the one candidate (of 0-3 tried) whose manual
+#: writes survived a live 120s hold with zero drift — see
+#: :data:`_WEATHER_SOURCE_MANUAL`'s docstring for the comparison against the
+#: other candidates.
 _WEATHER_CHANGE_MODE_STATIC = 3
+
+#: How long :meth:`_write_cloud_layers` waits for a cloud write to actually
+#: land before giving up. Measured lag on a live install: up to ~4s between a
+#: successful PATCH and the dataref's own read-back changing. 10s leaves
+#: margin without making a stuck write hang the caller indefinitely.
+_CLOUD_SETTLE_TIMEOUT_S = 10.0
+_CLOUD_SETTLE_POLL_INTERVAL_S = 0.25
+_CLOUD_SETTLE_BASE_TOLERANCE_M = 5.0
+_CLOUD_SETTLE_COVERAGE_TOLERANCE = 0.02
 
 #: sim/weather/region/cloud_type, a float enum, blendable — §7.2, "high"
 #: confidence for the four values below.
@@ -446,10 +459,14 @@ _RUNWAY_FRICTION_BAND_FLOORS: tuple[tuple[int, RunwayContamination], ...] = (
 )
 
 #: Multiplier between the model's 0-1 turbulence ratio and whatever range
-#: sim/weather/region/turbulence[i] actually expects. **UNVERIFIED** (§7.2,
-#: §11.3): community sources disagree on whether the dataref's own scale is
-#: 0-1 or 0-10. ``1.0`` (no rescale) is the placeholder pending the spike
-#: measuring it against the sim's own weather UI slider.
+#: sim/weather/region/turbulence[i] actually expects. **Partially checked
+#: against a live X-Plane 12.4.3 install, still not fully confirmed** (§7.2,
+#: §11.3): writing 5.0 round-tripped as 5.0 with no clamping to 1.0, which
+#: rules out a hard-clamped 0-1 range at the Web API layer, but only a human
+#: watching the sim's own weather UI while this value is written can confirm
+#: what visible/felt turbulence 5.0 actually produces — the automatable half
+#: of this question is answered, the sensory half is not. ``1.0`` (no
+#: rescale) stays the placeholder until that observation happens.
 _TURBULENCE_SCALE_UNVERIFIED = 1.0
 
 
@@ -742,14 +759,28 @@ class XPlaneSimAdapter:
     # -- Weather, Failures, Fuel & Payload ---------------------------------
     #
     # can_set_weather stays False on this adapter (weather-manager.md D16,
-    # §7.3): the mode-forcing enum values are UNVERIFIED against a live sim
-    # (§11.1) and the flag flips only in the PR that pins them and passes the
-    # §5.3 contract cases under `-m sim`. get_weather()/set_weather() below
-    # are therefore REAL implementations of §7.1/§7.2 that are DEAD CODE on
-    # this adapter today — the capability check at the top of each raises
-    # before a single dataref is touched, exactly like the failures/fuel
-    # stubs that follow. can_inject_failures/can_set_fuel_payload have no
-    # mapping yet and stay simple refusing stubs.
+    # §7.3) despite real progress: §11.1's manual-mode question is now
+    # RESOLVED against a live X-Plane 12.4.3 install (weather_source is
+    # read-only; change_mode=3 + update_immediately=1 holds manual weather
+    # for 120s+ with zero drift — see _WEATHER_SOURCE_MANUAL's docstring),
+    # and _write_cloud_layers now waits out the measured settle lag instead
+    # of racing it. What still blocks the flag: cloud layers were observed
+    # still converging well past a 10s wait on the same install (a genuine
+    # gradual transition, not a fixed delay with a knowable bound), and
+    # sim/weather/region/sealevel_temperature_c does not hold a written value
+    # at all — it drifts continuously regardless of change_mode, most likely
+    # driven by a day/night thermal cycle this design did not anticipate as
+    # separate from the weather engine. Both are CONFIRMED findings from this
+    # session's live testing, not speculative "verify in spike" items
+    # anymore — see the docstrings on _await_cloud_layers_settled and
+    # _write_temperature_ladder. The flag flips once temperature is fixed (a
+    # different dataref/mechanism needs finding) and the contract suite's
+    # cloud test tolerates the slow convergence. get_weather()/set_weather()
+    # below are real implementations that are DEAD CODE on this adapter
+    # today — the capability check at the top of each raises before a single
+    # dataref is touched, exactly like the failures/fuel stubs that follow.
+    # can_inject_failures/can_set_fuel_payload have no mapping yet and stay
+    # simple refusing stubs.
     #
     # get_failure_support() and get_active_failures() are the two
     # capability-free reads (failures-manager.md §4: "no is an answer, never
@@ -915,13 +946,12 @@ class XPlaneSimAdapter:
     async def _force_manual_weather_mode(self) -> None:
         """§7.1: read weather_source; force manual + static if it is not already.
 
-        **UNVERIFIED** (weather-manager.md §11.1): neither the enum value that
-        means "manually set" nor whether the Web API accepts a write to
-        ``weather_source`` at all is pinned anywhere in this repository yet.
-        ``spikes/weather_datarefs.py`` is written to pin both but has not run
-        against a live simulator in this session — this sequence is
-        structurally complete and ready for that spike's findings, not a
-        confirmed working procedure.
+        **Confirmed against a live X-Plane 12.4.3 install**
+        (weather-manager.md §11.1, resolved) — see :data:`_WEATHER_SOURCE_MANUAL`'s
+        docstring for the measurement. ``weather_source`` itself is read-only;
+        the write goes to ``change_mode``/``update_immediately`` and
+        ``weather_source`` is only ever read back, as the honest verdict on
+        whether the mode actually took.
 
         Raises:
             XPlaneWeatherRejected: if ``weather_source`` still does not read
@@ -929,18 +959,15 @@ class XPlaneSimAdapter:
                 values the sim has announced it will overwrite.
         """
         mode = int(await self._read("weather_source"))
-        if mode != _WEATHER_SOURCE_MANUAL_UNVERIFIED:
+        if mode != _WEATHER_SOURCE_MANUAL:
             await self._write("weather_update_immediately", 1)
             await self._write("weather_change_mode", _WEATHER_CHANGE_MODE_STATIC)
-            await self._write("weather_source", _WEATHER_SOURCE_MANUAL_UNVERIFIED)
             mode = int(await self._read("weather_source"))
-        if mode != _WEATHER_SOURCE_MANUAL_UNVERIFIED:
+        if mode != _WEATHER_SOURCE_MANUAL:
             raise XPlaneWeatherRejected(
                 "X-Plane did not switch sim/weather/region/weather_source into manual mode "
                 f"(read back {mode}); refusing to write values the sim has announced it will "
-                "overwrite. This adapter's manual-mode enum value is UNVERIFIED "
-                "(weather-manager.md §11.1) — run spikes/weather_datarefs.py against a live "
-                "simulator before trusting this path."
+                "overwrite."
             )
 
     async def _write_wind_layers(self, layers: list[WindLayer]) -> None:
@@ -989,11 +1016,24 @@ class XPlaneSimAdapter:
             )
 
     async def _write_cloud_layers(self, layers: list[CloudLayer]) -> None:
-        """Write at most :data:`MAX_CLOUD_LAYERS` layers into X-Plane's 3 slots.
+        """Write at most :data:`MAX_CLOUD_LAYERS` layers into X-Plane's 3 slots, then
+        wait for them to actually settle before returning.
 
         Unlike wind there is no distribution step (§7.2): each core layer maps
         directly onto one slot. An empty list zeroes every slot's coverage,
         which :meth:`_read_cloud_layers` reads back as "no layer here".
+
+        **Confirmed against a live X-Plane 12.4.3 install**: unlike
+        visibility/QNH/wind, a cloud dataref write is not immediately visible
+        on read-back — measured up to ~4s of lag between a successful PATCH
+        and the value actually changing, even with
+        ``sim/weather/region/update_immediately`` set. Laminar's own docs say
+        cloud *rendering* transitions visually over the update interval; this
+        adapter measured the *dataref itself* lagging too, which the design's
+        §7.1 confidence table did not anticipate. Returning before the write
+        has settled means the very next ``get_weather()`` — which is exactly
+        what ``apply``'s read-back does — observes a stale, in-flight value.
+        :meth:`_await_cloud_layers_settled` closes that gap.
         """
         count = len(layers)
         for slot in range(_WEATHER_CLOUD_LAYERS):
@@ -1009,6 +1049,38 @@ class XPlaneSimAdapter:
             await self._write("cloud_tops_msl_m", tops_ft * _METRES_PER_FOOT, index=slot)
             await self._write("cloud_coverage_percent", coverage_ratio, index=slot)
             await self._write("cloud_type", cloud_type_value, index=slot)
+        await self._await_cloud_layers_settled(layers)
+
+    async def _await_cloud_layers_settled(self, layers: list[CloudLayer]) -> None:
+        """Best-effort wait for slot 0's commanded base/coverage to land.
+
+        **Confirmed, and stranger than the "up to ~4s" figure this docstring
+        originally carried**: measured against a live X-Plane 12.4.3 install,
+        a cloud write can still be converging well past 10s — one measurement
+        read back partway between the old and new commanded values at the
+        10s mark. This reads as a genuine gradual transition (matching
+        weather-manager.md §7.1's own note that "clouds still transition
+        visually over the update interval"), not a fixed propagation delay
+        with a knowable bound. Blocking indefinitely — or raising when the
+        bound is merely a guess — would be worse than returning once a
+        generous, bounded window has passed: **this method waits, but never
+        raises**. A caller wanting the fully-settled value should treat the
+        first `get_weather()` after a cloud-bearing `set_weather()` as
+        provisional, the same way the UI already treats cloud rendering
+        itself as gradual.
+        """
+        target_base_m = (layers[0].base_ft if layers else 0.0) * _METRES_PER_FOOT
+        target_coverage = layers[0].coverage_ratio if layers else 0.0
+        deadline = asyncio.get_running_loop().time() + _CLOUD_SETTLE_TIMEOUT_S
+        while asyncio.get_running_loop().time() < deadline:
+            base_m = float((await self._read("cloud_base_msl_m"))[0])
+            coverage = float((await self._read("cloud_coverage_percent"))[0])
+            if (
+                abs(base_m - target_base_m) <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                and abs(coverage - target_coverage) <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
+            ):
+                return
+            await asyncio.sleep(_CLOUD_SETTLE_POLL_INTERVAL_S)
 
     async def _read_wind_level_altitudes_ft(self) -> list[float]:
         """The 13 region wind levels' altitudes, in feet MSL."""
@@ -1022,6 +1094,21 @@ class XPlaneSimAdapter:
         atmosphere levels" — the design's own wording; not independently
         confirmed here) so a warm day is warm all the way up rather than only
         at the beach. Ladder shape is "verify in spike" per §7.2.
+
+        **CONFIRMED BROKEN against a live X-Plane 12.4.3 install, blocking
+        the capability flag on its own** (this is new information §7.2 did
+        not anticipate, not the "verify in spike" item it already flagged):
+        ``sim/weather/region/sealevel_temperature_c`` does not hold a written
+        value even briefly — measured drifting continuously (~+0.7 °C/s in
+        one run) regardless of ``change_mode``, independent of whether the
+        aloft ladder is also written, and unaffected by
+        ``sim/weather/region/thermal_rate_ms`` (already 0 in the failing
+        case). The behaviour is consistent with a day/night thermal
+        simulation this design assumed was part of the same "real weather
+        engine" `change_mode=3` disables, but is evidently a separate system.
+        No dataref that stops it was found this session. Writes are still
+        issued here (best effort, matching the rest of this adapter's posture
+        toward unresolved fields) but a caller must not trust the read-back.
         """
         await self._write("weather_sealevel_temperature_c", sea_level_temperature_c)
         altitudes_ft = await self._read_wind_level_altitudes_ft()
