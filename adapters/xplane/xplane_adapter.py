@@ -86,6 +86,13 @@ from typing import TYPE_CHECKING, Any
 import httpx
 
 from core.atmosphere import isa_deviation_c, tas_from_ias, temperature_from_deviation_c
+from core.failures import (
+    FAILURE_CATALOGUE,
+    ActiveFailure,
+    FailureRef,
+    FailureSupport,
+    FailureSupportManifest,
+)
 from core.geodesy import METRES_PER_NAUTICAL_MILE, distance_and_bearing
 from core.local_frame import (
     LocalCoordinates,
@@ -94,8 +101,9 @@ from core.local_frame import (
     origin_separation_m,
     world_to_local,
 )
-from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
+from core.weather.models import WeatherSetup, WeatherState
 
 __all__ = ["COMMANDS", "DATAREFS", "DEFAULT_BASE_URL", "OPTIONAL_DATAREFS", "XPlaneSimAdapter"]
 
@@ -545,6 +553,50 @@ class XPlaneSimAdapter:
                 vso = candidate
         return AirframeInfo(icao_type=_decode_dataref_text(raw_icao), vso_kias=vso)
 
+    # -- Weather, Failures, Fuel & Payload ---------------------------------
+    #
+    # Refusing stubs (docs/designs/weather-manager.md D16,
+    # docs/designs/failures-manager.md D11/§5, docs/designs/fuel-payload.md
+    # D15): can_set_weather/can_inject_failures/can_set_fuel_payload all stay
+    # False on this adapter. get_failure_support() and get_active_failures()
+    # are the two capability-free reads (failures-manager.md §4: "no is an
+    # answer, never an exception") and degrade honestly instead of raising;
+    # every other method here raises immediately. Real dataref mapping is
+    # each manager's own later adapter track — no dataref name appears below.
+
+    async def get_weather(self) -> WeatherState:
+        raise CapabilityNotSupported(self.name, "can_set_weather")
+
+    async def set_weather(self, setup: WeatherSetup) -> None:
+        raise CapabilityNotSupported(self.name, "can_set_weather")
+
+    async def get_failure_support(self) -> FailureSupportManifest:
+        """Every catalogue entry, unsupported — this adapter has no failure mapping yet."""
+        reason = f"{self.name!r} does not declare can_inject_failures."
+        return FailureSupportManifest(
+            caveat=None,
+            entries=tuple(
+                FailureSupport(failure_id=spec.failure_id, supported=False, reason=reason)
+                for spec in FAILURE_CATALOGUE
+            ),
+        )
+
+    async def inject_failure(self, failure: FailureRef) -> None:
+        raise CapabilityNotSupported(self.name, "can_inject_failures")
+
+    async def clear_failure(self, failure: FailureRef) -> None:
+        raise CapabilityNotSupported(self.name, "can_inject_failures")
+
+    async def clear_all_failures(self) -> None:
+        raise CapabilityNotSupported(self.name, "can_inject_failures")
+
+    async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
+        """No failures can be seen through this adapter yet."""
+        return ()
+
+    async def get_loadout(self) -> LoadoutState:
+        raise CapabilityNotSupported(self.name, "can_set_fuel_payload")
+
     async def _read_optional(self, key: str) -> Any | None:
         """Read one optional dataref, or ``None`` when this build lacks it."""
         if key not in self._ids:
@@ -984,9 +1036,13 @@ class XPlaneSimAdapter:
 
         Raises:
             CapabilityNotSupported: for fields belonging to a capability this
-                adapter does not declare (mass and fuel).
+                adapter does not declare (mass, fuel and loadout).
         """
-        if setup.gross_weight_kg is not None or setup.fuel_kg is not None:
+        if (
+            setup.gross_weight_kg is not None
+            or setup.fuel_kg is not None
+            or setup.loadout is not None
+        ):
             raise CapabilityNotSupported("xplane", "can_set_fuel_payload")
 
         await self._write_configuration(setup)

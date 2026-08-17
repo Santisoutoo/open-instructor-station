@@ -62,6 +62,7 @@ packages = [
     "core",
     "core.navdata",
     "core.navdata.xplane_native",
+    "core.weather",
     "adapters",
     "adapters.fake",
     "adapters.xplane",

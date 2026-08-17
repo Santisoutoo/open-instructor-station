@@ -19,7 +19,9 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition
+from core.failures import ActiveFailure, FailureRef, FailureSupportManifest
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
+from core.weather.models import WeatherSetup, WeatherState
 
 __all__ = [
     "Capabilities",
@@ -177,7 +179,84 @@ class SimAdapter(Protocol):
         rather than silently ignore it or half-apply the setup:
 
         * the autopilot block — :attr:`Capabilities.can_control_autopilot`;
-        * ``gross_weight_kg`` / ``fuel_kg`` — :attr:`Capabilities.can_set_fuel_payload`.
+        * ``gross_weight_kg`` / ``fuel_kg`` / ``loadout`` —
+          :attr:`Capabilities.can_set_fuel_payload`. When ``loadout`` and the
+          scalar fields are both set, ``loadout`` is authoritative and the
+          scalars are applied only when it is absent.
+        """
+        ...
+
+    async def get_weather(self) -> WeatherState:
+        """Read the commanded weather.
+
+        Requires Capabilities.can_set_weather — one flag gates the pair. Weather is
+        the one surface where the read has no consumer without the write: the panel
+        that displays it is the panel that edits it, and an adapter that cannot
+        control weather has no tab to feed. Splitting a can_read_weather off is a
+        one-line change the day the MSFS adapter proves it can read but not write;
+        it is deliberately not made on speculation.
+        """
+        ...
+
+    async def set_weather(self, setup: WeatherSetup) -> None:
+        """Apply every field of ``setup`` that is not None, leaving the rest untouched.
+
+        List fields replace wholesale: a provided list is the new complete set of
+        layers, [] commands calm/clear, None leaves the layers alone.
+
+        The adapter is responsible for making the write STICK: a simulator whose
+        own weather engine would overwrite manual values (X-Plane 12 real weather)
+        must be forced into manual mode first, and the mode verified, inside this
+        call — once per call, not per field. An adapter that cannot secure the
+        mode raises rather than writing values it knows will be destroyed.
+
+        Requires Capabilities.can_set_weather.
+        """
+        ...
+
+    async def get_failure_support(self) -> FailureSupportManifest:
+        """Which catalogue entries this adapter can inject, one entry per FAILURE_IDS,
+        in catalogue order. A capability-free read (same posture as get_airframe):
+        an adapter without can_inject_failures returns every entry unsupported with
+        that stated reason — "no" is an answer, never an exception.
+        """
+        ...
+
+    async def inject_failure(self, failure: FailureRef) -> None:
+        """Fail the referenced system immediately. Idempotent: injecting an
+        already-failed system changes nothing. Requires can_inject_failures;
+        an unsupported failure_id raises CapabilityNotSupported.
+        """
+        ...
+
+    async def clear_failure(self, failure: FailureRef) -> None:
+        """Repair the referenced system. Idempotent; clearing a working system is a
+        no-op. Requires can_inject_failures.
+        """
+        ...
+
+    async def clear_all_failures(self) -> None:
+        """Repair every failure this adapter can see. Idempotent.
+        Requires can_inject_failures.
+        """
+        ...
+
+    async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
+        """Read back which supported failures are failed *right now*, from the
+        simulator itself — never from a ledger of what was asked for (a
+        teleport's fix_all_systems repairs everything behind the ledger's back).
+        A capability-free read: an adapter that cannot see failures returns ().
+        """
+        ...
+
+    async def get_loadout(self) -> LoadoutState:
+        """Read the current fuel and payload.
+
+        Requires Capabilities.can_set_fuel_payload — one flag gates the pair,
+        exactly the reasoning of get_weather()/set_weather(): fuel burns
+        continuously and AircraftSetupResult does not carry configuration, so the
+        panel that displays the loadout is the panel that edits it, and an
+        adapter that cannot control fuel/payload has no tab to feed.
         """
         ...
 

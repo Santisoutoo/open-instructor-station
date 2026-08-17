@@ -9,7 +9,10 @@ import pytest
 
 from adapters.xplane import DATAREFS, XPlaneSimAdapter
 from adapters.xplane.xplane_adapter import DEFAULT_BASE_URL, XPlaneNotReachable
-from core.sim_adapter import Capabilities, SimAdapter
+from core.failures import FAILURE_IDS, FailureRef
+from core.models import AircraftSetup, Loadout, TankFuel
+from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
+from core.weather.models import WeatherSetup
 
 
 def test_constructs_without_a_simulator() -> None:
@@ -63,3 +66,39 @@ async def test_disconnect_on_a_fresh_adapter_is_harmless() -> None:
     adapter = XPlaneSimAdapter()
     await adapter.disconnect()
     assert adapter.is_connected is False
+
+
+async def test_phase_2_methods_refuse_without_their_capabilities() -> None:
+    """The Phase 2 shared-foundation stubs (weather-manager.md D16,
+    failures-manager.md D11/§5, fuel-payload.md D15): every flag stays
+    ``False`` on this adapter, and the six gated methods raise immediately,
+    with no socket touched (no ``connect()`` call in this test).
+    """
+    adapter = XPlaneSimAdapter()
+    with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+        await adapter.get_weather()
+    with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+        await adapter.set_weather(WeatherSetup(visibility_m=1000.0))
+    with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
+        await adapter.inject_failure(FailureRef(failure_id="instruments.pitot"))
+    with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
+        await adapter.clear_failure(FailureRef(failure_id="instruments.pitot"))
+    with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
+        await adapter.clear_all_failures()
+    with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
+        await adapter.get_loadout()
+    with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
+        await adapter.apply_setup(
+            AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
+        )
+
+
+async def test_phase_2_capability_free_reads_degrade_instead_of_raising() -> None:
+    """``get_failure_support``/``get_active_failures`` are capability-free
+    reads (failures-manager.md §4): "no" is an answer, never an exception.
+    """
+    adapter = XPlaneSimAdapter()
+    manifest = await adapter.get_failure_support()
+    assert [entry.failure_id for entry in manifest.entries] == list(FAILURE_IDS)
+    assert all(not entry.supported and entry.reason for entry in manifest.entries)
+    assert await adapter.get_active_failures() == ()
