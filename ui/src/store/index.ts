@@ -8,6 +8,7 @@ import fuelPayloadReducer from '../features/fuel-payload/fuelPayloadSlice';
 import landingReducer from '../features/landing/landingSlice';
 import mapReducer from '../features/map/mapSlice';
 import positionReducer from '../features/position/positionSlice';
+import profilesReducer from '../features/profiles/profilesSlice';
 import scenariosReducer from '../features/scenarios/scenariosSlice';
 import telemetryReducer from '../features/telemetry/telemetrySlice';
 import trafficReducer from '../features/traffic/trafficSlice';
@@ -30,6 +31,7 @@ const reducerMap = {
   failures: failuresReducer,
   fuelPayload: fuelPayloadReducer,
   scenarios: scenariosReducer,
+  profiles: profilesReducer,
   map: mapReducer,
   landing: landingReducer,
   traffic: trafficReducer,

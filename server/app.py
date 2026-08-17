@@ -21,6 +21,7 @@ Surface:
 * ``/api/failures/*`` — the Failures Manager, in :mod:`server.failure_routes`.
 * ``/api/scenarios/*`` — the Flight Scenario Generator, in
   :mod:`server.scenario_routes`.
+* ``/api/profiles/*`` — Training Profiles, in :mod:`server.profile_routes`.
 
 The UI (built separately into ``ui/dist``) is served from ``/`` when it exists;
 the server starts perfectly well without it.
@@ -47,6 +48,7 @@ from server import (
     fuel_payload_routes,
     navdata_routes,
     position_routes,
+    profile_routes,
     scenario_routes,
     weather_routes,
 )
@@ -389,6 +391,7 @@ def create_app() -> FastAPI:
     app.include_router(fuel_payload_routes.router)
     app.include_router(failure_routes.router)
     app.include_router(scenario_routes.router)
+    app.include_router(profile_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
 
     _mount_ui(app)

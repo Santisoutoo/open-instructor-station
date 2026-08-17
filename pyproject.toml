@@ -16,6 +16,9 @@ dependencies = [
     "websockets>=13.0",
     "geographiclib>=2.0",
     "pyyaml>=6.0",
+    # Required by FastAPI's `UploadFile`/`File(...)` — the Training Profiles
+    # import endpoint is the first multipart upload in this codebase.
+    "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]
@@ -65,6 +68,7 @@ packages = [
     "core.weather",
     "core.fuel_payload",
     "core.scenarios",
+    "core.profiles",
     "adapters",
     "adapters.fake",
     "adapters.xplane",
@@ -82,6 +86,11 @@ exclude = ["ui", ".venv", "build", "dist"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH"]
 ignore = ["ANN401"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's own idiom for a required multipart upload is `File(...)` as the
+# parameter default; B008 exists to catch mutable-default bugs, not this.
+extend-immutable-calls = ["fastapi.File"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN"]

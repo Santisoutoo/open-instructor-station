@@ -850,6 +850,125 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Profiles
+         * @description Every saved profile, summarised, newest ``updated_at`` first.
+         */
+        get: operations["list_profiles_api_profiles_get"];
+        put?: never;
+        /**
+         * Create Profile
+         * @description Save a new profile. The server assigns ``profile_id`` and timestamps.
+         */
+        post: operations["create_profile_api_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile
+         * @description One profile, in full.
+         */
+        get: operations["get_profile_api_profiles__profile_id__get"];
+        /**
+         * Replace Profile
+         * @description Replace name/description/author/scenario of an existing profile. Never creates (D13).
+         */
+        put: operations["replace_profile_api_profiles__profile_id__put"];
+        post?: never;
+        /**
+         * Delete Profile
+         * @description Remove a profile. 404 with 'may already be deleted' when it is already gone.
+         */
+        delete: operations["delete_profile_api_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Profile Route
+         * @description Run the embedded scenario, each component attempted independently (D8).
+         *
+         *     Almost always 200 — only an unknown ``profile_id`` is a 404. Partial
+         *     application is reported in the body, never as a 4xx/5xx.
+         */
+        post: operations["apply_profile_route_api_profiles__profile_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Profile
+         * @description Upload a ``.json`` file exported from this or another instance.
+         *
+         *     Always assigns a fresh ``profile_id`` (D7): any embedded id or timestamps
+         *     in the upload are ignored. 422 on malformed or non-validating content, no
+         *     partial import.
+         */
+        post: operations["import_profile_api_profiles_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Profile
+         * @description Download the profile as a ``.json`` file (``Content-Disposition: attachment``).
+         */
+        get: operations["export_profile_api_profiles__profile_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1421,6 +1540,11 @@ export interface components {
              */
             last_error?: string | null;
         };
+        /** Body_import_profile_api_profiles_import_post */
+        Body_import_profile_api_profiles_import_post: {
+            /** File */
+            file: string;
+        };
         /**
          * Capabilities
          * @description What a given adapter supports, as declared by the adapter itself.
@@ -1622,6 +1746,25 @@ export interface components {
             caveat: string | null;
             /** Failures */
             failures: components["schemas"]["FailureCatalogueEntry"][];
+        };
+        /**
+         * FailureRef
+         * @description A failure instance: the id plus its engine index when the entry takes one.
+         *
+         *     The validator is the reason this model lives in ``core/``: the Scenario
+         *     Generator gets identical validation parsing YAML, with no HTTP anywhere.
+         */
+        FailureRef: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
         };
         /**
          * FailuresStatus
@@ -2651,6 +2794,98 @@ export interface components {
             /** Positionable Leg Count */
             positionable_leg_count: number;
         };
+        /** ProfileApplyResult */
+        ProfileApplyResult: {
+            /** Profile Id */
+            profile_id: string;
+            position: components["schemas"]["ProfilePositionOutcome"];
+            weather: components["schemas"]["ProfileWeatherOutcome"];
+            /** Failures */
+            failures: components["schemas"]["ProfileFailureOutcome"][];
+            /** Degraded */
+            degraded: boolean;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** ProfileFailureOutcome */
+        ProfileFailureOutcome: {
+            ref: components["schemas"]["FailureRef"];
+            /** Applied */
+            applied: boolean;
+            /**
+             * Armed
+             * @default false
+             */
+            armed: boolean;
+            /** Armed Id */
+            armed_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ProfilePositionOutcome
+         * @description The position + aircraft-state step's outcome.
+         *
+         *     **Deviation from the original design draft, and a consequence of
+         *     embedding ``ScenarioDocument`` (see the design's as-built addendum):**
+         *     ``attempted`` did not exist in the design's own sketch of this model,
+         *     because its ``ProfileScenario.placement`` was a required field — always
+         *     present. ``ScenarioDocument.position`` is optional (a profile may carry
+         *     only weather, or only failures), so this mirrors
+         *     :class:`ProfileWeatherOutcome`'s own ``attempted`` flag rather than
+         *     assuming position is always attempted.
+         */
+        ProfilePositionOutcome: {
+            /** Attempted */
+            attempted: boolean;
+            /** Applied */
+            applied: boolean;
+            result?: components["schemas"]["PlacementResult"] | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ProfileSummary
+         * @description One row of ``GET /api/profiles``. Cheap: no navdata lookup, no adapter read.
+         */
+        ProfileSummary: {
+            /** Profile Id */
+            profile_id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Author */
+            author: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Airport Icao
+             * @description Best-effort teaser straight off the embedded scenario's placement, when it has one and that placement names an airport. None for a coordinate placement, a profile with no position block, or a hold with no airport stated — and never a navdata lookup.
+             */
+            airport_icao?: string | null;
+        };
+        /** ProfileWeatherOutcome */
+        ProfileWeatherOutcome: {
+            /** Attempted */
+            attempted: boolean;
+            /** Applied */
+            applied: boolean;
+            result?: components["schemas"]["WeatherApplyResult"] | null;
+            /** Reason */
+            reason?: string | null;
+        };
         /**
          * Runway
          * @description A single runway end, as read from the user's own navdata.
@@ -3049,6 +3284,69 @@ export interface components {
              * @description Fuel mass in this tank, kilograms.
              */
             fuel_kg: number;
+        };
+        /**
+         * TrainingProfile
+         * @description A saved scenario with a name and metadata (feature spec §14, verbatim).
+         *
+         *     ``extra="ignore"`` deliberately (D9): this document is written and read
+         *     only by this application, across versions that may add fields over time.
+         */
+        TrainingProfile: {
+            /**
+             * Format Version
+             * @description Storage schema tag.
+             * @default 1
+             */
+            format_version: number;
+            /**
+             * Profile Id
+             * @description Server-assigned uuid4 hex. Also the filename stem (<id>.json).
+             */
+            profile_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Author */
+            author?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description UTC, set once at creation.
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description UTC, set on every save/replace/import.
+             */
+            updated_at: string;
+            scenario: components["schemas"]["ScenarioDocument"];
+        };
+        /**
+         * TrainingProfileCreate
+         * @description ``POST /api/profiles`` and ``PUT /api/profiles/{id}`` body.
+         *
+         *     Everything the instructor supplies; the server fills ``profile_id``,
+         *     ``created_at``, ``updated_at``. ``extra="forbid"``: a hand-edited body
+         *     that misspells a field should fail loudly, the same typo-catching
+         *     convention ``weather-manager.md``/``failures-manager.md`` established.
+         */
+        TrainingProfileCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Author */
+            author?: string | null;
+            scenario: components["schemas"]["ScenarioDocument"];
         };
         /** ValidationError */
         ValidationError: {
@@ -4432,6 +4730,249 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ScenarioRunStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_profiles_api_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileSummary"][];
+                };
+            };
+        };
+    };
+    create_profile_api_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_api_profiles__profile_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_profile_api_profiles__profile_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_profile_api_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_profile_route_api_profiles__profile_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileApplyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_profile_api_profiles_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_profile_api_profiles_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_profile_api_profiles__profile_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

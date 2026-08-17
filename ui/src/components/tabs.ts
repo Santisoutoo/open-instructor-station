@@ -67,6 +67,14 @@ export const TABS: readonly TabDefinition[] = [
       })),
   },
   {
+    id: 'profiles',
+    label: 'Profiles',
+    load: () =>
+      import('../features/profiles/ProfilesPanel').then((m) => ({
+        default: m.ProfilesPanel,
+      })),
+  },
+  {
     id: 'map',
     label: 'Map',
     keepMounted: true,
