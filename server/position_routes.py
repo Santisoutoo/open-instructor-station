@@ -26,7 +26,7 @@ first bug exactly.
 from __future__ import annotations
 
 import math
-from typing import Annotated, Literal
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
@@ -58,8 +58,18 @@ from core.geodesy import (
     waypoint_placement,
 )
 from core.models import AircraftSetup, AircraftState, GeoPosition, Runway
-from core.navdata.models import Hold, Procedure, ProcedureKind, ProcedureLeg, Waypoint
+from core.navdata.models import Hold, Procedure, ProcedureLeg, Waypoint
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
+from core.placements import (
+    CoordinatePlacementRequest,
+    HoldPlacementRequest,
+    ParkingPlacementRequest,
+    PlacementRequest,
+    ProcedureLegPlacementRequest,
+    RunwayPlacementRequest,
+    RunwayThresholdPlacementRequest,
+    WaypointPlacementRequest,
+)
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
 from server.deps import get_adapter, get_airframe_info, get_navdata
 
@@ -67,12 +77,20 @@ __all__ = [
     "CAPABILITY_UNAVAILABLE_STATUS",
     "UNPOSITIONABLE_STATUS",
     "ApplyPlacementRequest",
+    "CoordinatePlacementRequest",
+    "HoldPlacementRequest",
+    "ParkingPlacementRequest",
     "PlacementPreview",
     "PlacementRequest",
     "PlacementResult",
     "PlacementSchematic",
+    "ProcedureLegPlacementRequest",
+    "RunwayPlacementRequest",
+    "RunwayThresholdPlacementRequest",
     "SchematicPoint",
     "SpeedProvenance",
+    "WaypointPlacementRequest",
+    "execute_placement",
     "router",
 ]
 
@@ -111,108 +129,6 @@ GROUND_TOLERANCE_FT = 100.0
 GROUND_REFERENCE_RADIUS_NM = 50.0
 
 router = APIRouter(prefix="/api/position", tags=["position"])
-
-
-# ---------------------------------------------------------------------------
-# The request union
-# ---------------------------------------------------------------------------
-
-
-class RunwayPlacementRequest(BaseModel):
-    """A final or a circuit leg, relative to one runway end.
-
-    **One request for both**, because ``core.geodesy.resolve_runway_placement``
-    is one function for both. Splitting finals from circuit legs here would
-    invent a taxonomy the geometry does not have.
-    """
-
-    type: Literal["runway"]
-    airport_icao: str = Field(min_length=2, max_length=7)
-    runway_ident: str = Field(min_length=1)
-    placement: RunwayPlacement
-    glideslope_deg: float | None = Field(default=None, gt=0.0, le=10.0)
-    pattern_altitude_ft: float | None = None
-    pattern_width_nm: float | None = Field(default=None, gt=0.0)
-    leg_distance_nm: float | None = Field(default=None, gt=0.0)
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-class ParkingPlacementRequest(BaseModel):
-    """A gate, stand, tie-down or hangar position.
-
-    Gates and stands are one request because ``apt.dat`` publishes one record
-    type with a ``kind`` field — see ``ParkingStand``.
-    """
-
-    type: Literal["parking"]
-    airport_icao: str = Field(min_length=2, max_length=7)
-    stand_name: str = Field(min_length=1)
-
-
-class CoordinatePlacementRequest(BaseModel):
-    """An arbitrary latitude/longitude/altitude."""
-
-    type: Literal["coordinate"]
-    position: GeoPosition
-    heading_deg: float | None = None
-    #: Resolves to stationary. A bare coordinate is as likely a parking spot as
-    #: a cruise level, so a caller putting the aircraft **airborne** must say so
-    #: or it arrives below stall speed — and the preview's notes say so too.
-    ias_kt: float | None = Field(default=None, ge=0.0)
-
-
-class WaypointPlacementRequest(BaseModel):
-    """Over a named fix, at a chosen altitude."""
-
-    type: Literal["waypoint"]
-    ident: str = Field(min_length=1)
-    region_code: str | None = None
-    terminal_airport: str | None = None
-    altitude_ft: float
-    heading_deg: float | None = None
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-class ProcedureLegPlacementRequest(BaseModel):
-    """On one leg of a published SID, STAR or approach."""
-
-    type: Literal["procedure_leg"]
-    airport_icao: str = Field(min_length=2, max_length=7)
-    kind: ProcedureKind
-    ident: str = Field(min_length=1)
-    transition: str | None = None
-    sequence: int = Field(description="The leg's own sequence number: 10, 20, 30 …")
-    #: ``None`` takes the leg's published altitude constraint.
-    altitude_ft: float | None = None
-    #: ``None`` takes the leg's published speed constraint, then the category.
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-class HoldPlacementRequest(BaseModel):
-    """In a published holding pattern, over its fix, established inbound."""
-
-    type: Literal["hold"]
-    fix_ident: str = Field(min_length=1)
-    region_code: str | None = None
-    airport_icao: str | None = None
-    #: ``None`` takes the hold's published minimum altitude.
-    altitude_ft: float | None = None
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-PlacementRequest = Annotated[
-    RunwayPlacementRequest
-    | ParkingPlacementRequest
-    | CoordinatePlacementRequest
-    | WaypointPlacementRequest
-    | ProcedureLegPlacementRequest
-    | HoldPlacementRequest,
-    Field(discriminator="type"),
-]
 
 
 # ---------------------------------------------------------------------------
@@ -492,6 +408,17 @@ def _resolve_placement(
             notes.append(category_note)
         schematic = _runway_schematic(runway, placement, request.placement, glideslope_deg)
         return placement, schematic, notes
+
+    if isinstance(request, RunwayThresholdPlacementRequest):
+        runway = _runway(provider, request.airport_icao, request.runway_ident)
+        placement = coordinate_placement(
+            runway.threshold, runway.true_bearing_deg, ias_kt=GROUND_IAS_KT
+        )
+        notes.append(
+            f"On the centreline at {runway.ident}'s threshold, facing "
+            f"{runway.true_bearing_deg:.0f}° true. 0 kt — lined up for a takeoff brief."
+        )
+        return placement, PlacementSchematic(), notes
 
     if isinstance(request, ParkingPlacementRequest):
         stands = provider.get_parking(request.airport_icao)
@@ -998,10 +925,21 @@ def preview_placement(request: PlacementRequest) -> PlacementPreview:
     )
 
 
-@router.post("/apply", response_model=PlacementResult)
-async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
-    """Place the aircraft. Setup first, then the teleport — see the module docstring."""
-    adapter = get_adapter()
+async def execute_placement(
+    request: ApplyPlacementRequest,
+    *,
+    adapter: SimAdapter,
+    navdata: NavdataProvider,
+) -> PlacementResult:
+    """Place the aircraft. Setup first, then the teleport — see the module docstring.
+
+    Factored out of ``POST /api/position/apply`` so the Scenario Generator's
+    engine reuses this exact state-before-teleport sequencing (#37, #39)
+    instead of re-deriving it — a plain function taking its adapter and
+    navdata explicitly, rather than reaching for the request-scoped
+    dependencies itself, is what makes it callable from a background task
+    with no HTTP request behind it.
+    """
     _require_capability(adapter, "can_set_position", "reposition the aircraft")
 
     # Off the event loop, on purpose. This route has to be ``async def`` because
@@ -1011,9 +949,7 @@ async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
     # serves ``/ws/state``, so the telemetry feed the instructor is watching
     # freezes during the one operation where the aircraft is moving. Do not
     # "optimise" this hop away.
-    placement, _schematic, _notes = await run_in_threadpool(
-        _resolve, request.placement, get_navdata()
-    )
+    placement, _schematic, _notes = await run_in_threadpool(_resolve, request.placement, navdata)
     setup = _merge_setup(placement.to_setup(), request.setup)
     # An edited altitude or heading has to move the PLACEMENT, because
     # set_position writes both and runs last — an edit left in the setup alone is
@@ -1052,3 +988,9 @@ async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
         applied=setup,
         state=await adapter.get_aircraft_state(),
     )
+
+
+@router.post("/apply", response_model=PlacementResult)
+async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
+    """Place the aircraft. Setup first, then the teleport — see the module docstring."""
+    return await execute_placement(request, adapter=get_adapter(), navdata=get_navdata())

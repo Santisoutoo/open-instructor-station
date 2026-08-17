@@ -58,6 +58,7 @@ __all__ = [
     "FAILURE_EVAL_INTERVAL_S",
     "FailureCatalogueEntry",
     "FailureCatalogueResponse",
+    "arm_failure",
     "reset_failures",
     "router",
 ]
@@ -308,14 +309,23 @@ async def inject_failure(request: InjectFailureRequest) -> FailuresStatus:
     return await _current_status(adapter)
 
 
-@router.post("/arm", response_model=ArmedFailure)
-async def arm_failure(request: ArmFailureRequest) -> ArmedFailure:
-    """Register one armed failure with a trigger. Not idempotent — arming twice arms two."""
-    adapter = get_adapter()
+async def arm_failure(request: ArmFailureRequest, *, adapter: SimAdapter) -> ArmedFailure:
+    """Register one armed failure with a trigger. Not idempotent — arming twice arms two.
+
+    Factored out of ``POST /api/failures/arm`` so the Scenario Generator arms
+    into the SAME scheduler/watcher instance rather than running a second one
+    (D8, ``docs/designs/scenario-generator.md`` §5.3/§6.2). Starts the watcher
+    task lazily, exactly as the route already did.
+    """
     await _require_failure_support(adapter, request)
     armed = _scheduler.arm(request, now_monotonic=time.monotonic(), armed_at=datetime.now(UTC))
     _ensure_watcher_running()
     return armed
+
+
+@router.post("/arm", response_model=ArmedFailure)
+async def arm_failure_route(request: ArmFailureRequest) -> ArmedFailure:
+    return await arm_failure(request, adapter=get_adapter())
 
 
 @router.delete("/armed/{armed_id}", response_model=FailuresStatus)
