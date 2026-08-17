@@ -1,40 +1,41 @@
 /**
  * The Failures Manager panel: the active/armed strip on top, the searchable
- * catalogue accordion below, and the armed-trigger evaluator ticking against the
- * telemetry feed while anything is armed.
+ * catalogue accordion below.
  *
- * Search text, open group and the arm draft are client state (the slice); the
- * catalogue and the board are server state (RTK Query). Failing, arming and clearing
- * go through mutations that persist into the board cache, exactly as they will once
- * the server owns the board.
+ * Search text, open category and the arm draft are client state (the slice); the
+ * catalogue and the board are server state (RTK Query). `getFailuresStatus` is polled
+ * every `STATUS_POLL_MS` while the tab is open and the gate lets it through — the
+ * server's watcher task (`server/failure_routes.py`) is what actually evaluates armed
+ * triggers and injects what fires, so the panel only ever needs to ask "what changed?".
  */
 
+import { useGetCapabilitiesQuery } from '../../api/instructorApi';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { ActiveStrip } from './ActiveStrip';
 import { FailureCatalogue } from './FailureCatalogue';
-import {
-  useGetFailureBoardQuery,
-  useGetFailureCatalogueQuery,
-  useGetFailuresManifestQuery,
-} from './failuresApi';
+import { useGetFailuresCatalogueQuery, useGetFailuresStatusQuery } from './failuresApi';
 import { searchChanged } from './failuresSlice';
 import { failuresGate } from './gate';
-import { useArmedTriggers } from './useArmedTriggers';
 import './failures.css';
 
-const EMPTY_BOARD = { active: [], armed: [] };
+const EMPTY_STATUS = { active: [], armed: [] };
+
+/** How often `/status` is re-read while the tab is mounted and the gate is open. */
+const STATUS_POLL_MS = 2000;
 
 export function FailuresPanel() {
   const dispatch = useAppDispatch();
   const searchText = useAppSelector((state) => state.failures.searchText);
 
-  const manifestQuery = useGetFailuresManifestQuery();
-  const gate = failuresGate(manifestQuery.data, manifestQuery.isError);
+  const capabilitiesQuery = useGetCapabilitiesQuery();
+  const gate = failuresGate(capabilitiesQuery.data, capabilitiesQuery.isError);
 
-  const catalogueQuery = useGetFailureCatalogueQuery();
-  const { data: board } = useGetFailureBoardQuery();
-
-  useArmedTriggers(gate.open && (board?.armed.length ?? 0) > 0);
+  const catalogueQuery = useGetFailuresCatalogueQuery();
+  const { data: status } = useGetFailuresStatusQuery(undefined, {
+    skip: !gate.open,
+    pollingInterval: STATUS_POLL_MS,
+    skipPollingIfUnfocused: true,
+  });
 
   return (
     <section className="panel failures-panel" aria-labelledby="failures-heading">
@@ -44,9 +45,13 @@ export function FailuresPanel() {
 
       {gate.open && (
         <>
+          {catalogueQuery.data?.caveat != null && (
+            <p className="failures-caveat">{catalogueQuery.data.caveat}</p>
+          )}
+
           <ActiveStrip
-            board={board ?? EMPTY_BOARD}
-            catalogue={catalogueQuery.data ?? []}
+            status={status ?? EMPTY_STATUS}
+            catalogue={catalogueQuery.data?.failures ?? []}
           />
 
           <input
@@ -68,8 +73,8 @@ export function FailuresPanel() {
           )}
           {catalogueQuery.data !== undefined && (
             <FailureCatalogue
-              catalogue={catalogueQuery.data}
-              board={board ?? EMPTY_BOARD}
+              catalogue={catalogueQuery.data.failures}
+              status={status ?? EMPTY_STATUS}
             />
           )}
         </>
