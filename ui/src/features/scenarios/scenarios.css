@@ -1,0 +1,219 @@
+/*
+ * Scenarios panel. Custom properties only — both themes are a value swap away
+ * (see index.css). One solid-accent primary per view: the selected card's Run button.
+ */
+
+/* ------------------------------------------------------------------ grid */
+
+.scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 0.75rem;
+}
+
+/* ------------------------------------------------------------------ card */
+
+.scenarios-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.scenarios-card--available:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+/* Selection is the amber border — the accent's only other placement here. */
+.scenarios-card--selected,
+.scenarios-card--selected.scenarios-card--available:hover {
+  border-color: var(--accent);
+}
+
+/* Dimmed and inert, but present: the reason is part of the card, never a tooltip. */
+.scenarios-card--unavailable {
+  opacity: 0.55;
+}
+
+/* The whole body is the select target — comfortably past 44 px in every layout. */
+.scenarios-card__body {
+  display: grid;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.75rem 0.9rem;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.scenarios-card__body:disabled {
+  cursor: not-allowed;
+}
+
+.scenarios-card__body:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.scenarios-card__name {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.3;
+}
+
+.scenarios-card__nature {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.scenarios-card__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+/* Neutral chips: raised ground, dim text, no colour coding. */
+.scenarios-card__chip {
+  padding: 0.1rem 0.5rem;
+  background: var(--bg-raised);
+  border-radius: 999px;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.scenarios-card__reason {
+  margin: 0;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+/* The one solid amber primary in the view. */
+.scenarios-card__run {
+  min-height: 44px;
+  margin: 0.25rem 0.9rem 0.75rem;
+  padding: 0 0.9rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--on-accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.scenarios-card__run:hover {
+  background: var(--accent-strong);
+  transition: background-color 80ms ease-out;
+}
+
+.scenarios-card__run:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------- bar */
+
+/* Sticky within the module scrollport so the run stays visible over the grid. */
+.scenarios-bar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  margin-bottom: 1rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.scenarios-bar__name {
+  font-weight: 600;
+}
+
+.scenarios-bar__elapsed {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.scenarios-bar__steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scenarios-bar__step {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.scenarios-bar__step--done {
+  color: var(--text);
+}
+
+/* Dots, not badges: dim while pending, ok-green once done. */
+.scenarios-bar__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  opacity: 0.45;
+}
+
+.scenarios-bar__step--done .scenarios-bar__dot {
+  background: var(--ok);
+  opacity: 1;
+}
+
+.scenarios-bar__armed {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ok);
+}
+
+.scenarios-bar__stop {
+  min-height: 44px;
+  margin-left: auto;
+  padding: 0 0.9rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.scenarios-bar__stop:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.scenarios-bar__stop:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

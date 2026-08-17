@@ -67,10 +67,17 @@ cd ui && npm run lint && npm run typecheck && npm test && npm run build
   `sim-lifecycle` is the safe procedure for a real X-Plane process. Only shut down a simulator you
   started.
 - The former Claude role prompts are preserved in `.codex/agents/` as reference playbooks:
-  `planner`, `implementer`, `tester`, and `sim-validator`. They are not executable Codex agent
-  definitions; use them as task instructions when the role is relevant.
+  `planner`, `implementer`, `tester`, `sim-validator`, `reviewer-python`, and
+  `reviewer-typescript`. They are not executable Codex agent definitions; use them as task
+  instructions when the role is relevant.
 - `.claude/` remains untouched for backward compatibility. `.claude/worktrees/` is runtime state
   and is deliberately not copied.
+- The `xplane-datarefs` MCP server
+  ([Santisoutoo/xplane-dataref-mcp](https://github.com/Santisoutoo/xplane-dataref-mcp)) provides
+  dataref/command search and live read-only dataref access over the X-Plane Web API (:8086). For
+  Codex it is registered as `[mcp_servers.xplane-datarefs]` in `~/.codex/config.toml` (Claude
+  Code reads it from the repo's `.mcp.json`). Developer tooling only — never part of the
+  application, never in CI; dataref writes are still validated with spikes and `pytest -m sim`.
 
 ## X-Plane operational notes
 

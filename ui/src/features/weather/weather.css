@@ -1,0 +1,376 @@
+/*
+ * Weather panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Accent placements in this view: the staged tile's border, the
+ * one solid-amber Apply button, and focus rings. Everything else is neutral.
+ */
+
+.weather-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.weather-panel h2 {
+  margin-bottom: 0;
+}
+
+.weather-panel__blocked {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.weather-panel__flash {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ok);
+}
+
+/* Weather strings (wind groups, cloud groups) run long for the readout tiles. */
+.readout__value--weather {
+  font-size: 0.95rem;
+  overflow-wrap: anywhere;
+}
+
+/* ------------------------------------------------------------------ tiles */
+
+.weather-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem;
+}
+
+/* The whole tile is the target — comfortably past 44 px in every layout. */
+.weather-tile {
+  display: grid;
+  gap: 0.3rem;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.weather-tile:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+/* Staged is the amber border — one of the accent's few placements here. */
+.weather-tile--staged,
+.weather-tile--staged:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+/* Dimmed and inert, but present: the reason is part of the tile, never a tooltip. */
+.weather-tile:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.weather-tile:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.weather-tile__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.weather-tile__desc {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.weather-tile__reason {
+  font-size: 0.75rem;
+  line-height: 1.35;
+  color: var(--warn);
+}
+
+.weather-tile__hint {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* ---------------------------------------------------------------- editors */
+
+.weather-editors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.weather-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.weather-group__title {
+  padding: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+.weather-group__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.weather-layer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.weather-layer + .weather-layer {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.weather-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: flex-end;
+}
+
+.weather-field {
+  display: flex;
+  flex: 1;
+  min-width: 84px;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.weather-field__label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.weather-field__input {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-field__input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.weather-row__remove,
+.weather-group__add {
+  min-height: 44px;
+  padding: 0 0.8rem;
+  color: var(--text-dim);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.weather-group__add {
+  align-self: flex-start;
+  color: var(--text);
+}
+
+.weather-row__remove:not(:disabled):hover,
+.weather-group__add:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.weather-row__remove:focus-visible,
+.weather-group__add:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------- octa chips */
+
+.weather-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  align-items: center;
+}
+
+.weather-chip {
+  min-width: 40px;
+  min-height: 44px;
+  padding: 0;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.weather-chip:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.weather-chip[aria-pressed='true'] {
+  color: var(--text);
+  border-color: var(--text);
+  font-weight: 700;
+}
+
+.weather-chip:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.weather-chiprow__group {
+  margin-left: 0.25rem;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------ staging bar */
+
+/* Sticky within the module scrollport so Apply stays reachable over the editors. */
+.weather-staging {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: center;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.weather-staging__label {
+  margin: 0;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.weather-staging__values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.weather-staging__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.weather-staging__key {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.weather-staging__value {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.weather-staging__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.weather-staging__dismiss {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.weather-staging__dismiss:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.weather-staging__dismiss:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The one solid amber primary in the view. */
+.weather-staging__apply {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--on-accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.weather-staging__apply:not(:disabled):hover {
+  background: var(--accent-strong);
+  transition: background-color 80ms ease-out;
+}
+
+.weather-staging__apply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.weather-staging__apply:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

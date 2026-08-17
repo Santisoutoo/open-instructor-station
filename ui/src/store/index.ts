@@ -3,9 +3,16 @@ import { setupListeners } from '@reduxjs/toolkit/query';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import { instructorApi } from '../api/instructorApi';
 import aircraftReducer from '../features/aircraft/aircraftSlice';
+import failuresReducer from '../features/failures/failuresSlice';
+import landingReducer from '../features/landing/landingSlice';
+import mapReducer from '../features/map/mapSlice';
 import positionReducer from '../features/position/positionSlice';
+import scenariosReducer from '../features/scenarios/scenariosSlice';
 import telemetryReducer from '../features/telemetry/telemetrySlice';
+import trafficReducer from '../features/traffic/trafficSlice';
+import weatherReducer from '../features/weather/weatherSlice';
 import connectionReducer from './connectionSlice';
+import uiReducer from './uiSlice';
 
 /**
  * Passed to `configureStore` as a reducer *map* rather than as the combined reducer:
@@ -14,9 +21,16 @@ import connectionReducer from './connectionSlice';
  */
 const reducerMap = {
   connection: connectionReducer,
+  ui: uiReducer,
   telemetry: telemetryReducer,
   aircraft: aircraftReducer,
   position: positionReducer,
+  weather: weatherReducer,
+  failures: failuresReducer,
+  scenarios: scenariosReducer,
+  map: mapReducer,
+  landing: landingReducer,
+  traffic: trafficReducer,
   [instructorApi.reducerPath]: instructorApi.reducer,
 };
 
