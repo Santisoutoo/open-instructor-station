@@ -1,0 +1,318 @@
+/*
+ * Traffic panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Amber budget in this view: focus rings only. The spawn grid's
+ * primary action is plural (seven equal cards), a sanctioned exception to the
+ * one-solid-amber rule — cards stay neutral with a hover border.
+ */
+
+/* ---------------------------------------------------------- bridge banner */
+
+.traffic-bridge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.6rem;
+  min-height: 44px;
+  margin-bottom: 1rem;
+  padding: 0.35rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.85rem;
+}
+
+/* A dot, not a badge: dim while closed, ok-green once the bridge answers. */
+.traffic-bridge__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.traffic-bridge--open .traffic-bridge__dot {
+  background: var(--ok);
+}
+
+.traffic-bridge__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.traffic-bridge__state {
+  font-weight: 600;
+}
+
+.traffic-bridge--open .traffic-bridge__state {
+  color: var(--ok);
+}
+
+/* Never colour-only: the closed dot is always paired with this sentence. */
+.traffic-bridge__reason {
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+/* -------------------------------------------------------------- spawn grid */
+
+.traffic-spawn {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+
+.traffic-params {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+}
+
+.traffic-stepper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.traffic-stepper-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.traffic-stepper-row {
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.traffic-stepper-button {
+  min-width: 44px;
+  min-height: 44px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 1.15rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-stepper-button:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.traffic-stepper-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.traffic-stepper-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.traffic-stepper-value {
+  align-self: center;
+  min-width: 4.5rem;
+  text-align: center;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+.traffic-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 0.5rem;
+}
+
+/* Neutral cards, hover border; amber appears only on the focus ring. */
+.traffic-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 64px;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.traffic-card:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+/* Last-used marker: a stronger neutral border, deliberately not amber. */
+.traffic-card--last {
+  border-color: var(--text-dim);
+}
+
+.traffic-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.traffic-card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.traffic-card-label {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.traffic-card-desc {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------ active list */
+
+.traffic-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.traffic-active {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.traffic-active-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+/* A real section heading, matching the restyled `.panel h2` — not another micro-label. */
+.traffic-active-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+.traffic-active-count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* The instructor's panic button: biggest control in the list, no confirmation. */
+.traffic-despawn-all {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-despawn-all:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.traffic-despawn-all:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.traffic-despawn-all:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.traffic-list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.traffic-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  min-height: 44px;
+  padding: 0.35rem 0.3rem 0.35rem 0.75rem;
+  background: var(--bg-raised);
+  border-radius: 8px;
+}
+
+.traffic-callsign {
+  min-width: 5.5rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.traffic-kind {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+/* The live readout: mono + tabular so a moving range never jitters the row. */
+.traffic-position {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.traffic-despawn {
+  min-height: 44px;
+  padding: 0 0.8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-despawn:not(:disabled):hover {
+  color: var(--danger);
+  border-color: var(--border);
+  transition:
+    color 80ms ease-out,
+    border-color 80ms ease-out;
+}
+
+.traffic-despawn:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.traffic-despawn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

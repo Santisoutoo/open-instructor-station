@@ -1,28 +1,69 @@
 /*
- * Dark theme, plain CSS, no framework. Sized for an iPad standing next to the simulator:
- * large touch targets, high contrast, tabular numerals so live values do not jitter.
+ * Plain CSS, no framework. Sized for an iPad standing next to the simulator: large touch
+ * targets, high contrast, tabular numerals so live values do not jitter.
+ *
+ * Two themes share one set of custom-property names — feature CSS only ever reads the
+ * variables, never a literal colour, so a theme is nothing but a value swap. Dark is the
+ * default (sim rooms are dim); an inline script in index.html stamps `data-theme` on
+ * <html> before first paint, and uiSync keeps it in step with the store afterwards.
+ *
+ * The dark palette is "night ops": carbon neutrals with a warm drift, so the amber sits
+ * in the same colour family as the ground it lands on — a dim cockpit, not a code editor.
+ * The accent is aviation amber — one accent, few placements (active tab, the one primary
+ * action per panel, focus rings). Everything else is neutral or semantic ok/warn/danger.
+ *
+ * Type is IBM Plex, self-hosted (imported in main.tsx; the station serves over LAN with
+ * no internet, so every glyph ships in the bundle): Plex Sans for UI, Plex Mono for every
+ * live value and identifier.
  */
 
-:root {
-  --bg: #0d1117;
-  --bg-panel: #161b22;
-  --bg-raised: #1c232c;
-  --border: #2b3440;
-  --text: #e6edf3;
-  --text-dim: #8b98a5;
-  --accent: #58a6ff;
-  --ok: #3fb950;
-  --warn: #d29922;
-  --danger: #f85149;
+:root,
+[data-theme='dark'] {
+  --bg: #16140f;
+  --bg-panel: #1d1a14;
+  --bg-raised: #26221a;
+  --border: #3b362b;
+  --text: #ece6d9;
+  --text-dim: #a69d8b;
+  --accent: #e8a33d;
+  --accent-strong: #f2b959;
+  --on-accent: #14100a;
+  --focus: #e8a33d;
+  --ok: #5aaf6d;
+  --warn: #cf9a2e;
+  --danger: #e8705f;
 
   color-scheme: dark;
-  font-family:
-    'Segoe UI',
-    system-ui,
-    -apple-system,
-    'Helvetica Neue',
-    Arial,
-    sans-serif;
+}
+
+/*
+ * Light theme: warm off-white ground so the amber reads as one family with it. The
+ * accent is darkened to hold 4.5:1 on white — it intentionally converges with --warn,
+ * which is acceptable because warn is never colour-only (always paired with wording).
+ */
+[data-theme='light'] {
+  --bg: #f4f2ee;
+  --bg-panel: #ffffff;
+  --bg-raised: #ece9e2;
+  --border: #d5d0c6;
+  --text: #1c2128;
+  --text-dim: #59626e;
+  --accent: #9a6700;
+  --accent-strong: #7a5200;
+  --on-accent: #ffffff;
+  --focus: #9a6700;
+  --ok: #256e3a;
+  --warn: #9a6700;
+  --danger: #b5352a;
+
+  color-scheme: light;
+}
+
+:root {
+  --font-ui: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+
+  font-family: var(--font-ui);
   font-size: 16px;
   line-height: 1.5;
   color: var(--text);
@@ -48,74 +89,289 @@ h2 {
 
 /* ---------------------------------------------------------------- layout */
 
+/*
+ * The shell is a fixed chrome around one scrolling module: header with the module tab
+ * bar on top, persistent status bar at the bottom, optional context drawer on the right.
+ * Full viewport height — the map module wants every pixel, and an instructor station is
+ * an application surface, not a document.
+ */
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
-  /* Wider than the old single-column shell: the Position panel is a dense surface and
-     the runway grid needs the room. */
-  max-width: 1600px;
-  margin: 0 auto;
-  padding: 1rem;
-  gap: 1rem;
+  height: 100dvh;
 }
 
 .app__header {
+  flex: none;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 1.25rem;
+  gap: 0.25rem 1rem;
+  padding: 0.4rem 1rem 0;
   background: var(--bg-panel);
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  border-bottom: 1px solid var(--border);
 }
 
 .app__title h1 {
-  font-size: 1.4rem;
+  font-size: 1rem;
   letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 
-.app__subtitle {
-  margin: 0.15rem 0 0;
-  font-size: 0.85rem;
+.app__header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  padding-bottom: 0.4rem;
+}
+
+.app__body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.app__panelhost {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.app__tabpanel {
+  display: grid;
+  gap: 1rem;
+  align-items: start;
+  max-width: 1600px;
+  margin: 0 auto;
+}
+
+.app__tabpanel[hidden] {
+  display: none;
+}
+
+.app__loading {
+  margin: 0;
   color: var(--text-dim);
 }
 
-/*
- * The workspace/context split: placing the aircraft is the job, telemetry and capabilities
- * are there to confirm it worked. Two thirds / one third on a desk, one column on a tablet
- * held in portrait — the breakpoint is where the runway grid stops fitting beside the
- * readouts rather than a round number.
- */
-.app__main {
-  display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(300px, 1fr);
-  gap: 1rem;
-  align-items: start;
-}
+/* ---------------------------------------------------------------- tab bar */
 
-.app__workspace,
-.app__context {
-  display: grid;
-  gap: 1rem;
-  align-items: start;
+.tabbar {
+  flex: 1;
   min-width: 0;
+  display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
 }
 
+.tabbar__tab {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: transparent;
+  border: none;
+  /* The amber underline on the active tab is one of the accent's few placements. */
+  border-bottom: 2px solid transparent;
+  color: var(--text-dim);
+  font-size: 0.95rem;
+  font-weight: 600;
+  white-space: nowrap;
+  scroll-snap-align: start;
+  cursor: pointer;
+}
+
+.tabbar__tab:hover {
+  color: var(--text);
+  transition: color 80ms ease-out;
+}
+
+.tabbar__tab[aria-selected='true'] {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.tabbar__tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* ----------------------------------------------------------- ghost button */
+
+/* Quiet chrome actions (theme, drawer, demo feed): visible on hover, never loud. */
+.ghost-button {
+  min-height: 44px;
+  padding: 0 0.8rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.ghost-button:hover {
+  color: var(--text);
+  border-color: var(--border);
+  transition:
+    color 80ms ease-out,
+    border-color 80ms ease-out;
+}
+
+.ghost-button[aria-pressed='true'] {
+  color: var(--text);
+  border-color: var(--border);
+  background: var(--bg-raised);
+}
+
+.ghost-button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------- drawer */
+
+.drawer {
+  flex: none;
+  width: 340px;
+  overflow: auto;
+  display: grid;
+  gap: 1rem;
+  align-content: start;
+  padding: 1rem;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+}
+
+/* On a tablet the drawer overlays the module instead of squeezing it. */
 @media (max-width: 1000px) {
-  .app__main {
-    grid-template-columns: minmax(0, 1fr);
+  .drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: min(340px, 85vw);
+    box-shadow: -12px 0 32px rgb(0 0 0 / 0.35);
   }
 }
 
-.app__footer {
-  margin-top: auto;
-  padding-top: 0.5rem;
-  font-size: 0.8rem;
+/* ------------------------------------------------------------- status bar */
+
+.statusbar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 1rem;
+  min-height: 48px;
+  padding: 0.25rem 1rem;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+.statusbar__strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+}
+
+.statusbar__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.statusbar__label {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
   color: var(--text-dim);
-  text-align: center;
+}
+
+.statusbar__value {
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.statusbar__empty {
+  color: var(--text-dim);
+}
+
+.statusbar__right {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-left: auto;
+}
+
+/*
+ * A scenario in progress follows the instructor to every module: an outlined chip with
+ * the run's name. Neutral on purpose — the solid amber chip is reserved for demo data.
+ */
+.statusbar__scenario-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.15rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+.statusbar__scenario-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+/*
+ * Synthetic data must never pass for the simulator: whenever the demo feed is what the
+ * screens are showing, this solid amber chip stays in the status bar.
+ */
+.statusbar__demo-chip {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--on-accent);
+  font-size: 0.75rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.statusbar__link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  white-space: nowrap;
+  color: var(--text-dim);
+}
+
+.statusbar__link-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+  flex: none;
+}
+
+.statusbar__link--connected .statusbar__link-dot {
+  background: var(--ok);
+}
+
+.statusbar__link--error .statusbar__link-dot {
+  background: var(--danger);
 }
 
 /* ---------------------------------------------------------------- panels */
@@ -127,12 +383,17 @@ h2 {
   border-radius: 12px;
 }
 
+/*
+ * Section headings are real headings, not another uppercase micro-label: sentence case,
+ * full text colour, a step above body size. The uppercase-tracked treatment stays
+ * reserved for the small field labels, where it earns its keep.
+ */
 .panel h2 {
   margin-bottom: 1rem;
-  font-size: 0.8rem;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  color: var(--text-dim);
+  font-size: 1.05rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  color: var(--text);
 }
 
 .panel__empty {
@@ -168,12 +429,14 @@ h2 {
   color: var(--text-dim);
 }
 
+/* Instrument-sized: the readout is the thing the instructor glances at from a metre away. */
 .readout__value {
   margin: 0.2rem 0 0;
-  font-size: 1.3rem;
+  font-size: 1.6rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
-  font-family: 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
 }
 
 /* ---------------------------------------------------------- capabilities */
@@ -281,10 +544,11 @@ h2 {
 }
 
 .control__value {
-  font-size: 1.25rem;
+  font-size: 1.4rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
   font-variant-numeric: tabular-nums;
-  font-family: 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
+  font-family: var(--font-mono);
 }
 
 .control__hint {
