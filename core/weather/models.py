@@ -9,10 +9,13 @@ at most :data:`MAX_WIND_LAYERS` / :data:`MAX_CLOUD_LAYERS` entries, sorted
 ascending by altitude/base, no two layers within 100 ft of each other — a
 zero-thickness sandwich is a data error, not a weather.
 
-This module carries only the vocabulary the ``SimAdapter`` contract needs
-(D4 of the shared-foundation plan): the preset catalogue, its resolver and the
-``WeatherRequest`` model are a later, separate track
-(``core/weather/presets.py``) and are not written here.
+The preset catalogue (``core/weather/presets.py::WEATHER_PRESETS``) and its
+resolver are a separate track; the *models* a preset is built from —
+``PresetWindLayer``, ``PresetCloudLayer``, ``WeatherPreset`` — and the request
+model that both the REST layer and the (later) Scenario Generator share,
+``WeatherRequest``, live here (weather-manager.md D6): the request model is
+``core/`` vocabulary, never something stranded in ``server/`` (the Position
+Manager's recorded regret, weather-manager.md §3.4).
 """
 
 from __future__ import annotations
@@ -27,8 +30,12 @@ __all__ = [
     "MAX_WIND_LAYERS",
     "CloudLayer",
     "CloudType",
+    "PresetCloudLayer",
+    "PresetWindLayer",
     "RunwayContamination",
+    "WeatherPreset",
     "WeatherPresetId",
+    "WeatherRequest",
     "WeatherSetup",
     "WeatherState",
     "WindLayer",
@@ -236,4 +243,123 @@ class WeatherSetup(BaseModel):
                 f"dewpoint_c ({self.dewpoint_c}) must not exceed temperature_c "
                 f"({self.temperature_c})."
             )
+        return self
+
+
+class PresetWindLayer(BaseModel):
+    """A preset's wind stratum: altitude AGL, direction absolute or runway-relative.
+
+    Authored once per preset and resolved against a real airport/runway at
+    apply time by ``core.weather.presets.resolve_preset`` — see
+    weather-manager.md §3.3/§4 for why AGL and relative bearings live in the
+    preset layer while ``WindLayer`` itself stays MSL/true.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    altitude_agl_ft: float = Field(ge=0.0, description="Above the chosen field's elevation.")
+    direction_deg: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=360.0,
+        description=(
+            "TRUE degrees, absolute. Exactly one of this and offset_from_runway_deg "
+            "is set (validator)."
+        ),
+    )
+    offset_from_runway_deg: float | None = Field(
+        default=None,
+        ge=-180.0,
+        le=180.0,
+        description="Added to the runway's true bearing; +90 = wind from the right.",
+    )
+    speed_kt: float = Field(ge=0.0)
+    gust_increase_kt: float = Field(default=0.0, ge=0.0)
+    turbulence_ratio: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def _exactly_one_direction_source(self) -> PresetWindLayer:
+        if (self.direction_deg is None) == (self.offset_from_runway_deg is None):
+            raise ValueError("Exactly one of direction_deg and offset_from_runway_deg must be set.")
+        return self
+
+
+class PresetCloudLayer(BaseModel):
+    """A preset's cloud stratum, heights above the field."""
+
+    model_config = ConfigDict(frozen=True)
+
+    base_agl_ft: float = Field(ge=0.0, description="Cloud base, feet above the chosen field.")
+    tops_agl_ft: float = Field(description="Cloud tops, feet AGL. Must exceed base_agl_ft.")
+    coverage_ratio: float = Field(ge=0.0, le=1.0)
+    cloud_type: CloudType
+
+    @model_validator(mode="after")
+    def _tops_above_base(self) -> PresetCloudLayer:
+        if self.tops_agl_ft <= self.base_agl_ft:
+            raise ValueError(
+                f"tops_agl_ft ({self.tops_agl_ft}) must exceed base_agl_ft ({self.base_agl_ft})."
+            )
+        return self
+
+
+class WeatherPreset(BaseModel):
+    """One named preset. Pure data — resolution is ``core.weather.presets.resolve_preset``.
+
+    Presets are partial (weather-manager.md D2): a field left unset here is
+    left untouched by the resolved setup, which is what makes ``cavok`` then
+    ``crosswind`` compose into a clear day with a crosswind.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    id: WeatherPresetId
+    label: str = Field(description='Display name, e.g. "CAT II".')
+    description: str = Field(description="One sentence for the preset tile.")
+    wind_layers: tuple[PresetWindLayer, ...] | None = None
+    cloud_layers: tuple[PresetCloudLayer, ...] | None = None
+    setup: WeatherSetup = WeatherSetup()
+
+    @property
+    def requires_runway(self) -> bool:
+        """True when a wind layer's direction is stated relative to a runway."""
+        if not self.wind_layers:
+            return False
+        return any(layer.offset_from_runway_deg is not None for layer in self.wind_layers)
+
+    @property
+    def requires_airport(self) -> bool:
+        """True when the preset carries any AGL content (wind or cloud layers).
+
+        Checked on actual content, not merely on the field being set: ``cavok``
+        states ``cloud_layers=()`` (clear skies, resolved absolutely, no field
+        elevation needed), and an empty tuple must not trip this the way a
+        populated one does.
+        """
+        return bool(self.wind_layers) or bool(self.cloud_layers)
+
+
+class WeatherRequest(BaseModel):
+    """One weather instruction: a preset, an explicit setup, or a preset with overrides.
+
+    Lives in ``core/`` (D6) so the Scenario Generator's YAML weather block
+    validates against this exact model with no import from ``server/``.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    # A typo'd field in a scenario YAML must fail loudly at load time — the
+    # position models dropped this and regretted it.
+
+    preset: WeatherPresetId | None = None
+    airport_icao: str | None = Field(default=None, min_length=2, max_length=7)
+    runway_ident: str | None = Field(default=None, min_length=1, max_length=3)
+    setup: WeatherSetup | None = Field(
+        default=None,
+        description="The whole instruction when no preset is given, or the overlay over it.",
+    )
+
+    @model_validator(mode="after")
+    def _preset_or_setup(self) -> WeatherRequest:
+        if self.preset is None and self.setup is None:
+            raise ValueError("A weather request must carry a preset, a setup, or both.")
         return self

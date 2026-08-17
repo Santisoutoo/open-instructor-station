@@ -81,6 +81,19 @@ class CapabilityNotSupported(RuntimeError):
         )
 
 
+class WeatherRejected(RuntimeError):
+    """Raised when the simulator refuses to accept or hold a commanded weather write.
+
+    Adapter-agnostic on purpose: the caller (``server/weather_routes.py``) maps
+    this to one HTTP status (502 — the simulator, not the request, is at
+    fault) regardless of which adapter raised it. A concrete adapter defines
+    its own subclass carrying whatever diagnostic detail it has (see
+    ``adapters.xplane.xplane_adapter.XPlaneWeatherRejected``) rather than the
+    router importing an adapter-specific exception type directly, which would
+    break the moment a second adapter needs the same 502.
+    """
+
+
 @runtime_checkable
 class SimAdapter(Protocol):
     """The async interface every simulator adapter implements.
