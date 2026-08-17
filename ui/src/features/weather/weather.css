@@ -190,6 +190,13 @@
   outline-offset: 2px;
 }
 
+/* A `<select>` sharing the number fields' box, with the OS control's own affordances. */
+.weather-field__input--select {
+  font-family: inherit;
+  font-variant-numeric: normal;
+  cursor: pointer;
+}
+
 .weather-row__remove,
 .weather-group__add {
   min-height: 44px;

@@ -1,20 +1,22 @@
 /**
  * The staging bar — the reason the Weather panel is safe to use during a lesson.
  *
- * Staging a preset changes nothing in the simulator. This bar shows the *resolved*
- * values — preset + the instructor's overrides, crosswind already aimed at the
- * runway — and **one** solid-amber button commits them. Errors render here,
+ * Staging a preset changes nothing in the simulator. This bar shows the *resolved* values —
+ * the current weather with the staged preset + the instructor's overrides replacing whatever
+ * they actually touch — and **one** solid-amber button commits them. Errors render here,
  * inline; never a modal over a running lesson.
  */
 
 import {
   formatCloudSummary,
+  formatContamination,
+  formatPrecipitation,
   formatQnh,
   formatTempDew,
   formatVisibility,
   formatWind,
 } from './format';
-import type { WeatherState } from './types.mock';
+import type { WeatherState } from '../../api/models';
 
 interface WeatherStagingBarProps {
   presetLabel: string;
@@ -45,6 +47,8 @@ export function WeatherStagingBar({
       value: formatTempDew(resolved.temperature_c, resolved.dewpoint_c),
     },
     { label: 'cloud', value: formatCloudSummary(resolved) },
+    { label: 'precip', value: formatPrecipitation(resolved.precipitation_ratio) },
+    { label: 'surface', value: formatContamination(resolved.runway_contamination) },
   ];
 
   return (

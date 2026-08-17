@@ -81,6 +81,7 @@ import binascii
 import math
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from itertools import pairwise
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -92,7 +93,13 @@ from adapters.xplane.failure_datarefs import (
     dataref_paths_for,
     iter_dataref_combos,
 )
-from core.atmosphere import isa_deviation_c, tas_from_ias, temperature_from_deviation_c
+from core.atmosphere import (
+    ISA_SEA_LEVEL_PRESSURE_PA,
+    isa_deviation_c,
+    pressure_ratio,
+    tas_from_ias,
+    temperature_from_deviation_c,
+)
 from core.failures import (
     FAILURE_CATALOGUE,
     ActiveFailure,
@@ -121,8 +128,16 @@ from core.models import (
     PayloadStation,
     TankFuel,
 )
-from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
-from core.weather.models import WeatherSetup, WeatherState
+from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter, WeatherRejected
+from core.weather.models import (
+    MAX_WIND_LAYERS,
+    CloudLayer,
+    CloudType,
+    RunwayContamination,
+    WeatherSetup,
+    WeatherState,
+    WindLayer,
+)
 
 __all__ = ["COMMANDS", "DATAREFS", "DEFAULT_BASE_URL", "OPTIONAL_DATAREFS", "XPlaneSimAdapter"]
 
@@ -226,6 +241,54 @@ DATAREFS: dict[str, str] = {
 OPTIONAL_DATAREFS: dict[str, str] = {
     "acf_icao": "sim/aircraft/view/acf_ICAO",  # byte array, e.g. b"C172"
     "acf_vso": "sim/aircraft/overflow/acf_Vso",  # KIAS, landing configuration
+    # --- Weather (X-Plane 12 "region" namespace, weather-manager.md §7) ----
+    # Deliberately OPTIONAL rather than required, unlike the rest of this
+    # module's mapping: repositioning is already live-validated and must not
+    # start refusing to connect() because an unrelated, still-disabled
+    # feature's datarefs (can_set_weather stays False below) happen to be
+    # missing on some build — the same reasoning this dict's own docstring
+    # already states for the airframe reads above. get_weather()/set_weather()
+    # raise CapabilityNotSupported before ever touching these (the capability
+    # flag is checked first), so they are unreachable regardless; the two
+    # places that DO read them unconditionally today are
+    # `_true_airspeed_kt`/`_write_velocity_vector` (issue #42), and both
+    # degrade to the historical still-air/standard-pressure behaviour when a
+    # key here is missing from `self._ids` — see `_qnh_hpa_or_standard` and
+    # `_optional_wind_correction`.
+    #
+    # weather_source/weather_change_mode/weather_update_immediately are
+    # UNVERIFIED beyond their names (§7.1, §11.1): spikes/weather_datarefs.py
+    # is written to pin the enum values and confirm the Web API accepts the
+    # write, but has not run against a live simulator in this session.
+    "weather_source": "sim/weather/region/weather_source",
+    "weather_change_mode": "sim/weather/region/change_mode",
+    "weather_update_immediately": "sim/weather/region/update_immediately",
+    # Wind, 13 levels (§7.2, "high" confidence for the three below).
+    "wind_altitude_msl_m": "sim/weather/region/wind_altitude_msl_m",
+    "wind_direction_degt": "sim/weather/region/wind_direction_degt",
+    "wind_speed_msc": "sim/weather/region/wind_speed_msc",
+    # Gust: mapped onto the shear pair on the strength of X-Plane's XP11
+    # lineage, UNVERIFIED on 12.x (§7.2, §11.2).
+    "wind_shear_speed_msc": "sim/weather/region/shear_speed_msc",
+    "wind_shear_direction_degt": "sim/weather/region/shear_direction_degt",
+    # Turbulence: scale (0-1 or 0-10) UNVERIFIED (§7.2, §11.3).
+    "weather_turbulence": "sim/weather/region/turbulence",
+    # Clouds, 3 slots (§7.2, "high" confidence for the names below).
+    "cloud_base_msl_m": "sim/weather/region/cloud_base_msl_m",
+    "cloud_tops_msl_m": "sim/weather/region/cloud_tops_msl_m",
+    "cloud_coverage_percent": "sim/weather/region/cloud_coverage_percent",
+    "cloud_type": "sim/weather/region/cloud_type",
+    # Scalars (§7.2, "high" confidence).
+    "weather_visibility_sm": "sim/weather/region/visibility_reported_sm",
+    "weather_sealevel_pressure_pas": "sim/weather/region/sealevel_pressure_pas",
+    "weather_sealevel_temperature_c": "sim/weather/region/sealevel_temperature_c",
+    # Aloft ladders, 13 levels sharing the wind altitude grid (§7.2: "13
+    # wind/atmosphere levels"). Temperature ladder shape UNVERIFIED; dewpoint
+    # confidence is "medium".
+    "weather_temperatures_aloft": "sim/weather/region/temperatures_aloft_deg_c",
+    "weather_dewpoint": "sim/weather/region/dewpoint_deg_c",
+    "weather_rain_percent": "sim/weather/region/rain_percent",
+    "weather_runway_friction": "sim/weather/region/runway_friction",
     # Candidate tank-count dataref named in docs/designs/fuel-payload.md §6.2's
     # prose (not its confidence table) — "low confidence, verify in spike".
     # Optional rather than required: a build that lacks it, or a name that
@@ -361,6 +424,129 @@ _LATERAL_MODE_COMMANDS: tuple[tuple[str, str], ...] = (
     ("autopilot_app", "autopilot_approach"),
 )
 
+# --- Weather (weather-manager.md §7) and the issue #42 corrections ---------
+
+_METRES_PER_STATUTE_MILE = 1609.344
+_PASCALS_PER_HPA = 100.0
+_ISA_SEA_LEVEL_PRESSURE_HPA = ISA_SEA_LEVEL_PRESSURE_PA / _PASCALS_PER_HPA
+
+#: Feet of pressure altitude per hectopascal of QNH deviation from standard,
+#: derived from the ISA lapse itself (``core.atmosphere.pressure_ratio``) at
+#: sea level rather than copied from the memorised "about 27 ft/hPa" rule of
+#: thumb, so it tracks the ISA constants exactly if they ever change. Comes
+#: out to ~27.3 ft/hPa. Used by :meth:`XPlaneSimAdapter._true_airspeed_kt`
+#: (issue #42.2 — pressure altitude used to assume standard QNH).
+_PRESSURE_ALTITUDE_FT_PER_HPA: float = _PASCALS_PER_HPA / (
+    ISA_SEA_LEVEL_PRESSURE_PA * (pressure_ratio(0.0) - pressure_ratio(1.0))
+)
+
+#: X-Plane 12's region weather levels, shared by wind and the temperature/
+#: dewpoint ladders (weather-manager.md D10: "13 wind/atmosphere levels").
+_WEATHER_WIND_LEVELS = 13
+
+#: X-Plane's own cloud-layer slot count. Not part of §7.2's confidence table
+#: (which names the datarefs but not their array length); inferred from
+#: X-Plane 12's documented weather API, which exposes exactly three cloud
+#: layers — matching ``core.weather.models.MAX_CLOUD_LAYERS`` exactly. An
+#: implementation assumption, not a table-sourced fact; unlike wind there is
+#: no distribution step for clouds; each core layer maps to one slot 1:1.
+_WEATHER_CLOUD_LAYERS = 3
+
+#: Altitude spacing used to keep the padding levels above the highest given
+#: wind layer strictly ascending (D10), and to give every level a distinct
+#: altitude when a caller commands calm winds ([]). §7.2 states the
+#: *requirement* (ascending, never a phantom shear at a stale altitude)
+#: without prescribing a spacing; this is a plain implementation choice, not
+#: a value carried over from the design's dataref table.
+_WEATHER_PADDING_ALTITUDE_STEP_FT = 1_000.0
+
+#: sim/weather/region/weather_source. **CONFIRMED against a live X-Plane
+#: 12.4.3 install** (weather-manager.md §11.1, resolved): the dataref is
+#: **read-only** — the Web API rejects a write to it outright, so it is never
+#: written, only read back as the honest verdict on whether manual mode took.
+#: ``0`` is the value X-Plane reports once ``change_mode`` has been switched
+#: away from real weather (``1`` was the observed real-weather value on this
+#: install). Empirically verified: writing ``change_mode=3`` +
+#: ``update_immediately=1`` and then a distinctive visibility/QNH held those
+#: values bit-for-bit for 120s of live polling — well past the 90s threshold
+#: — while candidates ``0``, ``1`` and ``2`` each eventually drifted (at
+#: roughly 50s, 35s and 60s respectively), meaning X-Plane's own weather
+#: engine periodically reasserts itself under those modes but not under `3`.
+_WEATHER_SOURCE_MANUAL = 0
+
+#: sim/weather/region/change_mode. **CONFIRMED**, not merely carried from the
+#: design's table: ``3`` is the one candidate (of 0-3 tried) whose manual
+#: writes survived a live 120s hold with zero drift — see
+#: :data:`_WEATHER_SOURCE_MANUAL`'s docstring for the comparison against the
+#: other candidates.
+_WEATHER_CHANGE_MODE_STATIC = 3
+
+#: How long :meth:`_write_cloud_layers` waits for a cloud write to actually
+#: land before giving up. Measured lag on a live install: up to ~4s between a
+#: successful PATCH and the dataref's own read-back changing. 10s leaves
+#: margin without making a stuck write hang the caller indefinitely.
+_CLOUD_SETTLE_TIMEOUT_S = 10.0
+_CLOUD_SETTLE_POLL_INTERVAL_S = 0.25
+_CLOUD_SETTLE_BASE_TOLERANCE_M = 5.0
+_CLOUD_SETTLE_COVERAGE_TOLERANCE = 0.02
+
+#: sim/weather/region/cloud_type, a float enum, blendable — §7.2, "high"
+#: confidence for the four values below.
+_CLOUD_TYPE_TO_XPLANE: dict[CloudType, float] = {
+    "cirrus": 0.0,
+    "stratus": 1.0,
+    "cumulus": 2.0,
+    "cumulonimbus": 3.0,
+}
+_CLOUD_TYPE_FROM_XPLANE: tuple[CloudType, ...] = ("cirrus", "stratus", "cumulus", "cumulonimbus")
+
+#: sim/weather/region/runway_friction, int enum 0-15 per §7.2's table: dry 0,
+#: wet 1-3, puddles 4-6, snow 7-9, ice 10-12 (13-15 left unspecified by the
+#: design; read back as "ice", the nearest defined band).
+_RUNWAY_CONTAMINATION_TO_XPLANE: dict[RunwayContamination, int] = {
+    "dry": 0,
+    "wet": 2,
+    "puddles": 5,
+    "snow": 8,
+    "ice": 11,
+}
+#: Band floors in descending order, so the first floor a value clears is its band.
+_RUNWAY_FRICTION_BAND_FLOORS: tuple[tuple[int, RunwayContamination], ...] = (
+    (10, "ice"),
+    (7, "snow"),
+    (4, "puddles"),
+    (1, "wet"),
+    (0, "dry"),
+)
+
+#: Multiplier between the model's 0-1 turbulence ratio and whatever range
+#: sim/weather/region/turbulence[i] actually expects. **Partially checked
+#: against a live X-Plane 12.4.3 install, still not fully confirmed** (§7.2,
+#: §11.3): writing 5.0 round-tripped as 5.0 with no clamping to 1.0, which
+#: rules out a hard-clamped 0-1 range at the Web API layer, but only a human
+#: watching the sim's own weather UI while this value is written can confirm
+#: what visible/felt turbulence 5.0 actually produces — the automatable half
+#: of this question is answered, the sensory half is not. ``1.0`` (no
+#: rescale) stays the placeholder until that observation happens.
+_TURBULENCE_SCALE_UNVERIFIED = 1.0
+
+
+def _angular_difference(from_deg: float, to_deg: float) -> float:
+    """Shortest signed difference from ``from_deg`` to ``to_deg``, in ``(-180, 180]``.
+
+    Used to interpolate a wind direction across the 000/360 wrap without ever
+    turning "the long way round" (:meth:`XPlaneSimAdapter._wind_at_altitude`).
+    """
+    return (to_deg - from_deg + 180.0) % 360.0 - 180.0
+
+
+def _runway_contamination_from_friction(value: int) -> RunwayContamination:
+    """Invert :data:`_RUNWAY_CONTAMINATION_TO_XPLANE`'s bands on read-back."""
+    for floor, contamination in _RUNWAY_FRICTION_BAND_FLOORS:
+        if value >= floor:
+            return contamination
+    return "dry"
+
 
 def _decode_dataref_text(raw: Any) -> str | None:
     """Turn a byte-array dataref value into text, or ``None`` when it will not.
@@ -451,6 +637,23 @@ class XPlaneNotReachable(RuntimeError):
 
 class XPlaneRepositionFailed(RuntimeError):
     """The aircraft did not arrive where it was told to go."""
+
+
+class XPlaneWeatherRejected(WeatherRejected):
+    """X-Plane refused to hold the commanded weather, or this build does not expose it.
+
+    Two distinct causes share this exception (weather-manager.md §2.2's 502
+    mapping, §7.1 step 4): the sim would not switch — or would not stay in —
+    manual weather mode, so writing values it has announced it will overwrite
+    would be dishonest; or the region weather datarefs this build needs are
+    not in the dataref index at all (they are declared OPTIONAL on this
+    adapter, see :data:`OPTIONAL_DATAREFS`). Either way, ``set_weather``/
+    ``get_weather`` must refuse rather than proceed on a guess.
+
+    Subclasses :class:`core.sim_adapter.WeatherRejected`, the adapter-agnostic
+    type ``server/weather_routes.py`` actually catches — the router never
+    imports this class by name.
+    """
 
 
 class XPlaneSimAdapter:
@@ -708,11 +911,31 @@ class XPlaneSimAdapter:
                 vso = candidate
         return AirframeInfo(icao_type=_decode_dataref_text(raw_icao), vso_kias=vso)
 
-    # -- Weather, Fuel & Payload --------------------------------------------
+    # -- Weather, Failures, Fuel & Payload ------------------------------------
     #
-    # Weather is still a refusing stub for its capability-gated methods
-    # (docs/designs/weather-manager.md D16): can_set_weather stays False.
-    # Failures' capability-gated methods are also refusing stubs
+    # can_set_weather stays False on this adapter (weather-manager.md D16,
+    # §7.3) despite real progress: §11.1's manual-mode question is now
+    # RESOLVED against a live X-Plane 12.4.3 install (weather_source is
+    # read-only; change_mode=3 + update_immediately=1 holds manual weather
+    # for 120s+ with zero drift — see _WEATHER_SOURCE_MANUAL's docstring),
+    # and _write_cloud_layers now waits out the measured settle lag instead
+    # of racing it. What still blocks the flag: cloud layers were observed
+    # still converging well past a 10s wait on the same install (a genuine
+    # gradual transition, not a fixed delay with a knowable bound), and
+    # sim/weather/region/sealevel_temperature_c does not hold a written value
+    # at all — it drifts continuously regardless of change_mode, most likely
+    # driven by a day/night thermal cycle this design did not anticipate as
+    # separate from the weather engine. Both are CONFIRMED findings from this
+    # session's live testing, not speculative "verify in spike" items
+    # anymore — see the docstrings on _await_cloud_layers_settled and
+    # _write_temperature_ladder. The flag flips once temperature is fixed (a
+    # different dataref/mechanism needs finding) and the contract suite's
+    # cloud test tolerates the slow convergence. get_weather()/set_weather()
+    # below are real implementations that are DEAD CODE on this adapter
+    # today — the capability check at the top of each raises before a single
+    # dataref is touched.
+    #
+    # Failures' capability-gated methods are refusing stubs
     # (docs/designs/failures-manager.md D11/§5): can_inject_failures stays
     # False; its two capability-free reads, get_failure_support()/
     # get_active_failures() (failures-manager.md §4: "no is an answer, never
@@ -729,10 +952,503 @@ class XPlaneSimAdapter:
     # is then a one-line change, not a code change.
 
     async def get_weather(self) -> WeatherState:
-        raise CapabilityNotSupported(self.name, "can_set_weather")
+        """Read the commanded weather from the region datarefs (§7.2's closing paragraph).
+
+        Reconstructs the typed ``wind_layers``/``cloud_layers`` lists by
+        collapsing the padded duplicate levels :meth:`_write_wind_layers` left
+        behind back into the layer they came from — adjacent levels with equal
+        direction/speed/gust/turbulence are one layer.
+
+        Dead code while ``can_set_weather`` is ``False`` — see this section's
+        header comment.
+        """
+        if not self.capabilities.can_set_weather:
+            raise CapabilityNotSupported(self.name, "can_set_weather")
+        self._require_weather_datarefs(
+            "wind_altitude_msl_m",
+            "wind_direction_degt",
+            "wind_speed_msc",
+            "wind_shear_speed_msc",
+            "weather_turbulence",
+            "cloud_base_msl_m",
+            "cloud_tops_msl_m",
+            "cloud_coverage_percent",
+            "cloud_type",
+            "weather_visibility_sm",
+            "weather_sealevel_pressure_pas",
+            "weather_sealevel_temperature_c",
+            "weather_dewpoint",
+            "weather_rain_percent",
+            "weather_runway_friction",
+        )
+        wind_layers = await self._read_wind_layers()
+        cloud_layers = await self._read_cloud_layers()
+        (
+            visibility_sm,
+            qnh_pa,
+            temperature_c,
+            dewpoint_raw,
+            rain_percent,
+            friction,
+        ) = await asyncio.gather(
+            self._read("weather_visibility_sm"),
+            self._read("weather_sealevel_pressure_pas"),
+            self._read("weather_sealevel_temperature_c"),
+            self._read("weather_dewpoint"),
+            self._read("weather_rain_percent"),
+            self._read("weather_runway_friction"),
+        )
+        # dewpoint_deg_c is the 13-level ladder (§7.2); the surface entry
+        # (index 0) is the field's answer, same convention as the write side.
+        dewpoint_c = dewpoint_raw[0] if isinstance(dewpoint_raw, list) else dewpoint_raw
+        return WeatherState(
+            wind_layers=wind_layers,
+            cloud_layers=cloud_layers,
+            visibility_m=float(visibility_sm) * _METRES_PER_STATUTE_MILE,
+            qnh_hpa=float(qnh_pa) / _PASCALS_PER_HPA,
+            temperature_c=float(temperature_c),
+            dewpoint_c=float(dewpoint_c),
+            precipitation_ratio=float(rain_percent),
+            runway_contamination=_runway_contamination_from_friction(int(friction)),
+        )
 
     async def set_weather(self, setup: WeatherSetup) -> None:
-        raise CapabilityNotSupported(self.name, "can_set_weather")
+        """Apply every field of ``setup`` that is not ``None`` (§7).
+
+        Forces and verifies manual weather mode once (§7.1), then writes only
+        the fields ``setup`` states, in the order §7.2's table lists them.
+        Every dataref the requested fields need is checked present *before*
+        anything is written, so a build missing one of them fails cleanly
+        rather than leaving the weather half-applied.
+
+        Dead code while ``can_set_weather`` is ``False`` — see this section's
+        header comment.
+        """
+        if not self.capabilities.can_set_weather:
+            raise CapabilityNotSupported(self.name, "can_set_weather")
+
+        required = {"weather_source", "weather_change_mode", "weather_update_immediately"}
+        if setup.wind_layers is not None:
+            required |= {
+                "wind_altitude_msl_m",
+                "wind_direction_degt",
+                "wind_speed_msc",
+                "wind_shear_speed_msc",
+                "wind_shear_direction_degt",
+                "weather_turbulence",
+            }
+        if setup.cloud_layers is not None:
+            required |= {
+                "cloud_base_msl_m",
+                "cloud_tops_msl_m",
+                "cloud_coverage_percent",
+                "cloud_type",
+            }
+        if setup.visibility_m is not None:
+            required.add("weather_visibility_sm")
+        if setup.qnh_hpa is not None:
+            required.add("weather_sealevel_pressure_pas")
+        if setup.temperature_c is not None:
+            required |= {
+                "weather_sealevel_temperature_c",
+                "weather_temperatures_aloft",
+                "wind_altitude_msl_m",
+            }
+        if setup.dewpoint_c is not None:
+            required |= {
+                "weather_dewpoint",
+                "weather_sealevel_temperature_c",
+                "wind_altitude_msl_m",
+            }
+        if setup.precipitation_ratio is not None:
+            required.add("weather_rain_percent")
+        if setup.runway_contamination is not None:
+            required.add("weather_runway_friction")
+        self._require_weather_datarefs(*required)
+
+        await self._force_manual_weather_mode()
+
+        if setup.wind_layers is not None:
+            await self._write_wind_layers(setup.wind_layers)
+        if setup.cloud_layers is not None:
+            await self._write_cloud_layers(setup.cloud_layers)
+        if setup.visibility_m is not None:
+            await self._write(
+                "weather_visibility_sm", setup.visibility_m / _METRES_PER_STATUTE_MILE
+            )
+        if setup.qnh_hpa is not None:
+            await self._write("weather_sealevel_pressure_pas", setup.qnh_hpa * _PASCALS_PER_HPA)
+        if setup.temperature_c is not None:
+            await self._write_temperature_ladder(setup.temperature_c)
+        if setup.dewpoint_c is not None:
+            await self._write_dewpoint_ladder(setup.dewpoint_c)
+        if setup.precipitation_ratio is not None:
+            await self._write("weather_rain_percent", setup.precipitation_ratio)
+        if setup.runway_contamination is not None:
+            await self._write(
+                "weather_runway_friction",
+                _RUNWAY_CONTAMINATION_TO_XPLANE[setup.runway_contamination],
+            )
+
+    def _require_weather_datarefs(self, *keys: str) -> None:
+        """Raise :class:`XPlaneWeatherRejected` naming any of ``keys`` this build lacks.
+
+        These datarefs are declared OPTIONAL (see :data:`OPTIONAL_DATAREFS`),
+        so unlike the required set, ``connect()`` never caught their absence —
+        this is where it is finally checked, at the point something actually
+        needs one of them.
+        """
+        missing = sorted(key for key in keys if key not in self._ids)
+        if missing:
+            raise XPlaneWeatherRejected(
+                "This X-Plane build does not expose the region weather datarefs needed "
+                f"for this call: {', '.join(missing)}. They are declared OPTIONAL on this "
+                "adapter (weather-manager.md §7 — their availability across 12.x builds is "
+                "unverified) precisely so a build lacking them keeps repositioning working; "
+                "weather control simply cannot proceed on this build."
+            )
+
+    async def _force_manual_weather_mode(self) -> None:
+        """§7.1: read weather_source; force manual + static if it is not already.
+
+        **Confirmed against a live X-Plane 12.4.3 install**
+        (weather-manager.md §11.1, resolved) — see :data:`_WEATHER_SOURCE_MANUAL`'s
+        docstring for the measurement. ``weather_source`` itself is read-only;
+        the write goes to ``change_mode``/``update_immediately`` and
+        ``weather_source`` is only ever read back, as the honest verdict on
+        whether the mode actually took.
+
+        Raises:
+            XPlaneWeatherRejected: if ``weather_source`` still does not read
+                back the manual value after the write — never proceed to write
+                values the sim has announced it will overwrite.
+        """
+        mode = int(await self._read("weather_source"))
+        if mode != _WEATHER_SOURCE_MANUAL:
+            await self._write("weather_update_immediately", 1)
+            await self._write("weather_change_mode", _WEATHER_CHANGE_MODE_STATIC)
+            mode = int(await self._read("weather_source"))
+        if mode != _WEATHER_SOURCE_MANUAL:
+            raise XPlaneWeatherRejected(
+                "X-Plane did not switch sim/weather/region/weather_source into manual mode "
+                f"(read back {mode}); refusing to write values the sim has announced it will "
+                "overwrite."
+            )
+
+    async def _write_wind_layers(self, layers: list[WindLayer]) -> None:
+        """Distribute at most :data:`MAX_WIND_LAYERS` layers over the 13 region levels.
+
+        Levels ``0..len(layers)-1`` get the given layers verbatim. Every level
+        above that repeats the highest given layer's direction/speed/gust/
+        turbulence at an ascending altitude above it (D10) — never a phantom
+        shear at whatever stale altitude a previous weather left in that
+        level. An empty list commands calm air, ascending altitude, at every
+        level.
+        """
+        count = len(layers)
+        for level in range(_WEATHER_WIND_LEVELS):
+            if level < count:
+                layer = layers[level]
+                altitude_ft = layer.altitude_ft
+                direction_deg = layer.direction_deg
+                speed_kt = layer.speed_kt
+                gust_kt = layer.gust_increase_kt
+                turbulence_ratio = layer.turbulence_ratio
+            elif count:
+                highest = layers[-1]
+                altitude_ft = highest.altitude_ft + _WEATHER_PADDING_ALTITUDE_STEP_FT * (
+                    level - count + 1
+                )
+                direction_deg = highest.direction_deg
+                speed_kt = highest.speed_kt
+                gust_kt = highest.gust_increase_kt
+                turbulence_ratio = highest.turbulence_ratio
+            else:
+                altitude_ft = _WEATHER_PADDING_ALTITUDE_STEP_FT * level
+                direction_deg = 0.0
+                speed_kt = 0.0
+                gust_kt = 0.0
+                turbulence_ratio = 0.0
+            await self._write("wind_altitude_msl_m", altitude_ft * _METRES_PER_FOOT, index=level)
+            await self._write("wind_direction_degt", direction_deg, index=level)
+            await self._write("wind_speed_msc", speed_kt * _METRES_PER_SECOND_PER_KNOT, index=level)
+            await self._write(
+                "wind_shear_speed_msc", gust_kt * _METRES_PER_SECOND_PER_KNOT, index=level
+            )
+            await self._write("wind_shear_direction_degt", 0.0, index=level)
+            await self._write(
+                "weather_turbulence", turbulence_ratio * _TURBULENCE_SCALE_UNVERIFIED, index=level
+            )
+
+    async def _write_cloud_layers(self, layers: list[CloudLayer]) -> None:
+        """Write at most :data:`MAX_CLOUD_LAYERS` layers into X-Plane's 3 slots, then
+        wait for them to actually settle before returning.
+
+        Unlike wind there is no distribution step (§7.2): each core layer maps
+        directly onto one slot. An empty list zeroes every slot's coverage,
+        which :meth:`_read_cloud_layers` reads back as "no layer here".
+
+        **Confirmed against a live X-Plane 12.4.3 install**: unlike
+        visibility/QNH/wind, a cloud dataref write is not immediately visible
+        on read-back — measured up to ~4s of lag between a successful PATCH
+        and the value actually changing, even with
+        ``sim/weather/region/update_immediately`` set. Laminar's own docs say
+        cloud *rendering* transitions visually over the update interval; this
+        adapter measured the *dataref itself* lagging too, which the design's
+        §7.1 confidence table did not anticipate. Returning before the write
+        has settled means the very next ``get_weather()`` — which is exactly
+        what ``apply``'s read-back does — observes a stale, in-flight value.
+        :meth:`_await_cloud_layers_settled` closes that gap.
+        """
+        count = len(layers)
+        for slot in range(_WEATHER_CLOUD_LAYERS):
+            if slot < count:
+                layer = layers[slot]
+                base_ft, tops_ft = layer.base_ft, layer.tops_ft
+                coverage_ratio = layer.coverage_ratio
+                cloud_type_value = _CLOUD_TYPE_TO_XPLANE[layer.cloud_type]
+            else:
+                base_ft = tops_ft = coverage_ratio = 0.0
+                cloud_type_value = _CLOUD_TYPE_TO_XPLANE["cumulus"]
+            await self._write("cloud_base_msl_m", base_ft * _METRES_PER_FOOT, index=slot)
+            await self._write("cloud_tops_msl_m", tops_ft * _METRES_PER_FOOT, index=slot)
+            await self._write("cloud_coverage_percent", coverage_ratio, index=slot)
+            await self._write("cloud_type", cloud_type_value, index=slot)
+        await self._await_cloud_layers_settled(layers)
+
+    async def _await_cloud_layers_settled(self, layers: list[CloudLayer]) -> None:
+        """Best-effort wait for slot 0's commanded base/coverage to land.
+
+        **Confirmed, and stranger than the "up to ~4s" figure this docstring
+        originally carried**: measured against a live X-Plane 12.4.3 install,
+        a cloud write can still be converging well past 10s — one measurement
+        read back partway between the old and new commanded values at the
+        10s mark. This reads as a genuine gradual transition (matching
+        weather-manager.md §7.1's own note that "clouds still transition
+        visually over the update interval"), not a fixed propagation delay
+        with a knowable bound. Blocking indefinitely — or raising when the
+        bound is merely a guess — would be worse than returning once a
+        generous, bounded window has passed: **this method waits, but never
+        raises**. A caller wanting the fully-settled value should treat the
+        first `get_weather()` after a cloud-bearing `set_weather()` as
+        provisional, the same way the UI already treats cloud rendering
+        itself as gradual.
+        """
+        target_base_m = (layers[0].base_ft if layers else 0.0) * _METRES_PER_FOOT
+        target_coverage = layers[0].coverage_ratio if layers else 0.0
+        deadline = asyncio.get_running_loop().time() + _CLOUD_SETTLE_TIMEOUT_S
+        while asyncio.get_running_loop().time() < deadline:
+            base_m = float((await self._read("cloud_base_msl_m"))[0])
+            coverage = float((await self._read("cloud_coverage_percent"))[0])
+            if (
+                abs(base_m - target_base_m) <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                and abs(coverage - target_coverage) <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
+            ):
+                return
+            await asyncio.sleep(_CLOUD_SETTLE_POLL_INTERVAL_S)
+
+    async def _read_wind_level_altitudes_ft(self) -> list[float]:
+        """The 13 region wind levels' altitudes, in feet MSL."""
+        raw = await self._read("wind_altitude_msl_m")
+        return [float(value) / _METRES_PER_FOOT for value in raw]
+
+    async def _write_temperature_ladder(self, sea_level_temperature_c: float) -> None:
+        """Sea-level temperature, plus the aloft ladder recomputed along the ISA lapse.
+
+        The ladder shares the wind levels' altitude grid (D10: "13 wind/
+        atmosphere levels" — the design's own wording; not independently
+        confirmed here) so a warm day is warm all the way up rather than only
+        at the beach. Ladder shape is "verify in spike" per §7.2.
+
+        **CONFIRMED BROKEN against a live X-Plane 12.4.3 install, blocking
+        the capability flag on its own** (this is new information §7.2 did
+        not anticipate, not the "verify in spike" item it already flagged):
+        ``sim/weather/region/sealevel_temperature_c`` does not hold a written
+        value even briefly — measured drifting continuously (~+0.7 °C/s in
+        one run) regardless of ``change_mode``, independent of whether the
+        aloft ladder is also written, and unaffected by
+        ``sim/weather/region/thermal_rate_ms`` (already 0 in the failing
+        case). The behaviour is consistent with a day/night thermal
+        simulation this design assumed was part of the same "real weather
+        engine" `change_mode=3` disables, but is evidently a separate system.
+        No dataref that stops it was found this session. Writes are still
+        issued here (best effort, matching the rest of this adapter's posture
+        toward unresolved fields) but a caller must not trust the read-back.
+        """
+        await self._write("weather_sealevel_temperature_c", sea_level_temperature_c)
+        altitudes_ft = await self._read_wind_level_altitudes_ft()
+        deviation_c = isa_deviation_c(sea_level_temperature_c, 0.0)
+        for level, altitude_ft in enumerate(altitudes_ft):
+            await self._write(
+                "weather_temperatures_aloft",
+                temperature_from_deviation_c(altitude_ft, deviation_c),
+                index=level,
+            )
+
+    async def _write_dewpoint_ladder(self, sea_level_dewpoint_c: float) -> None:
+        """Surface dewpoint, plus upper levels clamped at or below the temperature ladder.
+
+        §7.2, "medium" confidence: "surface entry from the field, upper
+        entries kept at or below the recomputed temperature ladder" — a
+        dewpoint above the local temperature is not physically representable.
+        """
+        await self._write("weather_dewpoint", sea_level_dewpoint_c, index=0)
+        altitudes_ft = await self._read_wind_level_altitudes_ft()
+        sea_level_temperature_c = float(await self._read("weather_sealevel_temperature_c"))
+        deviation_c = isa_deviation_c(sea_level_temperature_c, 0.0)
+        for level in range(1, len(altitudes_ft)):
+            temperature_c = temperature_from_deviation_c(altitudes_ft[level], deviation_c)
+            await self._write(
+                "weather_dewpoint", min(sea_level_dewpoint_c, temperature_c), index=level
+            )
+
+    async def _read_wind_layers(self) -> list[WindLayer]:
+        """Reconstruct the typed wind layers by collapsing padded duplicate levels.
+
+        :meth:`_write_wind_layers` repeats the highest given layer's values at
+        ascending altitudes above it, so consecutive levels sharing the same
+        direction/speed/gust/turbulence are one commanded layer, not several.
+        """
+        altitudes_m, directions, speeds, shear_speeds, turbulences = await asyncio.gather(
+            self._read("wind_altitude_msl_m"),
+            self._read("wind_direction_degt"),
+            self._read("wind_speed_msc"),
+            self._read("wind_shear_speed_msc"),
+            self._read("weather_turbulence"),
+        )
+        layers: list[WindLayer] = []
+        previous_signature: tuple[float, float, float, float] | None = None
+        for altitude_m, direction_deg, speed_msc, shear_msc, turbulence in zip(
+            altitudes_m, directions, speeds, shear_speeds, turbulences, strict=True
+        ):
+            signature = (
+                round(float(direction_deg), 3),
+                round(float(speed_msc), 3),
+                round(float(shear_msc), 3),
+                round(float(turbulence), 3),
+            )
+            if signature == previous_signature:
+                continue  # a padded duplicate of the previous layer (D10/§7.2)
+            layers.append(
+                WindLayer(
+                    altitude_ft=float(altitude_m) / _METRES_PER_FOOT,
+                    direction_deg=float(direction_deg) % 360.0,
+                    speed_kt=float(speed_msc) / _METRES_PER_SECOND_PER_KNOT,
+                    gust_increase_kt=float(shear_msc) / _METRES_PER_SECOND_PER_KNOT,
+                    turbulence_ratio=float(turbulence) / _TURBULENCE_SCALE_UNVERIFIED,
+                )
+            )
+            previous_signature = signature
+        return layers[:MAX_WIND_LAYERS]
+
+    async def _read_cloud_layers(self) -> list[CloudLayer]:
+        """Reconstruct the typed cloud layers, skipping slots at zero coverage."""
+        bases_m, tops_m, coverages, types = await asyncio.gather(
+            self._read("cloud_base_msl_m"),
+            self._read("cloud_tops_msl_m"),
+            self._read("cloud_coverage_percent"),
+            self._read("cloud_type"),
+        )
+        layers: list[CloudLayer] = []
+        for base_m, top_m, coverage, cloud_type_value in zip(
+            bases_m, tops_m, coverages, types, strict=True
+        ):
+            if float(coverage) <= 0.0:
+                continue  # an empty slot -- §3.2's "[] commands clear skies", read back
+            base_ft = float(base_m) / _METRES_PER_FOOT
+            tops_ft = float(top_m) / _METRES_PER_FOOT
+            if tops_ft <= base_ft:
+                # CloudLayer requires tops_ft > base_ft; a degenerate read (a slot the
+                # sim itself has not populated coherently) is nudged rather than
+                # dropped, since coverage > 0 said this slot is meant to be a layer.
+                tops_ft = base_ft + 1.0
+            type_index = round(float(cloud_type_value))
+            cloud_type = _CLOUD_TYPE_FROM_XPLANE[
+                max(0, min(type_index, len(_CLOUD_TYPE_FROM_XPLANE) - 1))
+            ]
+            layers.append(
+                CloudLayer(
+                    base_ft=base_ft,
+                    tops_ft=tops_ft,
+                    coverage_ratio=min(1.0, float(coverage)),
+                    cloud_type=cloud_type,
+                )
+            )
+        return layers[:_WEATHER_CLOUD_LAYERS]
+
+    async def _qnh_hpa_or_standard(self) -> float:
+        """The commanded QNH, or the ISA standard value on a build missing the dataref.
+
+        Issue #42.2. The fallback reproduces the historical assumption
+        exactly (MSL elevation used as pressure altitude), so a build without
+        the region weather datarefs degrades to the old behaviour rather than
+        failing a placement.
+        """
+        if "weather_sealevel_pressure_pas" not in self._ids:
+            return _ISA_SEA_LEVEL_PRESSURE_HPA
+        return float(await self._read("weather_sealevel_pressure_pas")) / _PASCALS_PER_HPA
+
+    async def _optional_wind_correction(self, altitude_ft: float) -> tuple[float, float]:
+        """Best-effort wind at ``altitude_ft`` for issue #42.1.
+
+        ``(0.0, 0.0)`` — no correction, reproducing the historical still-air
+        assumption — on a build that does not expose the region wind
+        datarefs. This is a read, not a write, so it needs none of
+        ``set_weather``'s manual-mode forcing: whatever wind is currently in
+        effect, real or manual, is what the aircraft is actually flying
+        through, and that observation is what a placement needs.
+        """
+        keys = ("wind_altitude_msl_m", "wind_direction_degt", "wind_speed_msc")
+        if not all(key in self._ids for key in keys):
+            return 0.0, 0.0
+        return await self._wind_at_altitude(altitude_ft)
+
+    async def _wind_at_altitude(self, altitude_ft: float) -> tuple[float, float]:
+        """Interpolate the commanded wind at ``altitude_ft`` from the raw 13 region levels.
+
+        Reads the raw levels directly rather than the reconstructed,
+        collapsed ``WeatherState`` — issue #42 needs the wind exactly where
+        the aircraft is placed, which the collapsed <=3-layer view would have
+        to re-expand to answer anyway.
+
+        Returns:
+            ``(direction_deg, speed_kt)``, linearly interpolated between the
+            two bracketing levels (direction interpolated the short way round
+            the 000/360 wrap), or clamped to the nearest end beyond the
+            ladder.
+        """
+        altitudes_m, directions_deg, speeds_msc = await asyncio.gather(
+            self._read("wind_altitude_msl_m"),
+            self._read("wind_direction_degt"),
+            self._read("wind_speed_msc"),
+        )
+        levels = sorted(
+            zip(
+                (float(value) / _METRES_PER_FOOT for value in altitudes_m),
+                (float(value) for value in directions_deg),
+                (float(value) / _METRES_PER_SECOND_PER_KNOT for value in speeds_msc),
+                strict=True,
+            )
+        )
+        if not levels:
+            return 0.0, 0.0
+        if altitude_ft <= levels[0][0]:
+            return levels[0][1], levels[0][2]
+        if altitude_ft >= levels[-1][0]:
+            return levels[-1][1], levels[-1][2]
+        for (lower_ft, lower_dir, lower_spd), (upper_ft, upper_dir, upper_spd) in pairwise(levels):
+            if lower_ft <= altitude_ft <= upper_ft:
+                fraction = (
+                    0.0
+                    if upper_ft == lower_ft
+                    else (altitude_ft - lower_ft) / (upper_ft - lower_ft)
+                )
+                direction_deg = (
+                    lower_dir + fraction * _angular_difference(lower_dir, upper_dir)
+                ) % 360.0
+                speed_kt = lower_spd + fraction * (upper_spd - lower_spd)
+                return direction_deg, speed_kt
+        return levels[-1][1], levels[-1][2]
 
     async def get_loadout(self) -> LoadoutState:
         """Read the current fuel and payload from ``m_fuel``/``m_stations``.
@@ -933,6 +1649,27 @@ class XPlaneSimAdapter:
             key: A key of :data:`DATAREFS`, not a full dataref path.
         """
         return await self._read(key)
+
+    async def write_dataref(
+        self, key: str, value: float | int | bool, index: int | None = None
+    ) -> None:
+        """Write one dataref by its short :data:`DATAREFS`/:data:`OPTIONAL_DATAREFS` key.
+
+        The write-side twin of :meth:`read_dataref` — a deliberate escape
+        hatch for diagnostics (``spikes/weather_datarefs.py`` is the reason
+        this exists: it needs to try candidate writes to weather datarefs this
+        adapter does not yet expose a typed method for). Application code
+        should use :meth:`set_position`/:meth:`apply_setup`/:meth:`set_weather`
+        instead.
+
+        Args:
+            key: A key of :data:`DATAREFS` or :data:`OPTIONAL_DATAREFS`, not a
+                full dataref path.
+            value: The value to write.
+            index: The array index to write, for indexed datarefs. ``None``
+                writes the whole (scalar) dataref.
+        """
+        await self._write(key, value, index=index)
 
     async def measure_local_frame_origin(self) -> LocalFrameOrigin:
         """Measure the origin of X-Plane's local frame from the aircraft itself.
@@ -1138,7 +1875,9 @@ class XPlaneSimAdapter:
         await self._write("local_x", target.x_m)
         await self._write("local_y", target.y_m)
         await self._write("local_z", target.z_m)
-        await self._write_velocity_vector(heading_deg, tas_kt, vertical_speed_fpm)
+        await self._write_velocity_vector(
+            heading_deg, tas_kt, vertical_speed_fpm, altitude_ft=position.altitude_ft
+        )
         await self._write("psi", heading_deg % 360.0)
 
     async def _settled_local_frame_origin(self, deadline: float) -> LocalFrameOrigin:
@@ -1211,14 +1950,27 @@ class XPlaneSimAdapter:
         applied unchanged at FL100 pushes true airspeed the wrong way. See
         :func:`core.atmosphere.temperature_from_deviation_c`.
 
-        Two approximations survive, both deliberate and both tracked by issue #42:
+        **Issue #42.2 — pressure altitude now uses the real QNH.** The MSL
+        altitude used to be handed to :mod:`core.atmosphere` as though it were
+        the pressure altitude, which assumes standard pressure; a 30 hPa QNH
+        deviation is worth about 1.5 % of true airspeed, against the 16 % the
+        indicated/true split above replaces. It is now corrected via
+        :data:`_PRESSURE_ALTITUDE_FT_PER_HPA` using
+        ``sim/weather/region/sealevel_pressure_pas`` (:meth:`_qnh_hpa_or_standard`),
+        which degrades to the historical standard-pressure assumption on a
+        build that does not expose the region weather datarefs (they are
+        OPTIONAL, see :data:`OPTIONAL_DATAREFS`) rather than failing the
+        placement outright.
 
-        * The MSL altitude is used as the pressure altitude, which assumes
-          standard pressure. A 30 hPa QNH deviation is worth about 1.5 % of true
-          airspeed, against the 16 % this replaces.
-        * The vector built from the result is a *ground* velocity, so it is exact
-          in still air and off by the along-track wind component otherwise.
-          Correcting that needs the wind datarefs.
+        **Issue #42.1 — the along-track wind offset is not corrected here.**
+        The vector this speed feeds into is a *ground* velocity
+        (:meth:`_write_velocity_vector`), so it is exact in still air and off
+        by the along-track wind component otherwise. That correction needs
+        the *target* altitude's wind, which is why it lives in
+        :meth:`_write_velocity_vector` itself (via
+        :meth:`_optional_wind_correction`) rather than here: this method only
+        ever returns a true airspeed, and the wind subtraction has to happen
+        after the heading is known, on the ground-velocity vector.
 
         Args:
             ias_kt: Indicated airspeed in knots.
@@ -1229,23 +1981,33 @@ class XPlaneSimAdapter:
         Returns:
             True airspeed in knots.
         """
-        altitude_m, temperature_c = await asyncio.gather(
+        altitude_m, temperature_c, qnh_hpa = await asyncio.gather(
             self._read("elevation"),
             self._read("temperature_ambient_deg_c"),
+            self._qnh_hpa_or_standard(),
         )
-        observed_ft = float(altitude_m) / _METRES_PER_FOOT
-        deviation_c = isa_deviation_c(float(temperature_c), observed_ft)
-        target_ft = observed_ft if altitude_ft is None else altitude_ft
+        observed_msl_ft = float(altitude_m) / _METRES_PER_FOOT
+        # Constant across the small vertical range a placement covers: QNH
+        # describes the whole local atmosphere, not a function of altitude.
+        qnh_offset_ft = (_ISA_SEA_LEVEL_PRESSURE_HPA - qnh_hpa) * _PRESSURE_ALTITUDE_FT_PER_HPA
+        observed_pressure_altitude_ft = observed_msl_ft + qnh_offset_ft
+        deviation_c = isa_deviation_c(float(temperature_c), observed_pressure_altitude_ft)
+        target_msl_ft = observed_msl_ft if altitude_ft is None else altitude_ft
+        target_pressure_altitude_ft = target_msl_ft + qnh_offset_ft
         return tas_from_ias(
             ias_kt,
-            target_ft,
-            temperature_from_deviation_c(target_ft, deviation_c),
+            target_pressure_altitude_ft,
+            temperature_from_deviation_c(target_pressure_altitude_ft, deviation_c),
         )
 
     async def _write_velocity_vector(
-        self, heading_deg: float, tas_kt: float, vertical_speed_fpm: float | None = None
+        self,
+        heading_deg: float,
+        tas_kt: float,
+        vertical_speed_fpm: float | None = None,
+        altitude_ft: float | None = None,
     ) -> None:
-        """Set the local velocity vector to ``tas_kt`` **true** along ``heading_deg``.
+        """Set the local velocity vector so the aircraft indicates ``tas_kt`` on ``heading_deg``.
 
         Writing zeros instead is what drops a repositioned aircraft out of the
         sky below stall speed, so the caller's speed is always carried over.
@@ -1260,6 +2022,21 @@ class XPlaneSimAdapter:
         projection: at a 3° glide the difference is 0.14 %, noise against the
         wind and pressure effects issue #42 tracks.
 
+        **Issue #42.1 — the vector written here is a ground velocity, and the
+        aircraft's indicated airspeed responds to its velocity through the
+        *air*.** ``local_vx/vy/vz`` used to be exactly the air-relative vector,
+        which is only correct in still air; a headwind component now reads
+        low and a tailwind component reads high on the aircraft's own
+        instruments once the flight model takes over. The commanded wind at
+        ``altitude_ft`` (:meth:`_optional_wind_correction`) is subtracted from
+        the ground vector before it is written, so what is commanded is the
+        air-relative velocity and what is written is ``air velocity - wind
+        velocity`` — the ground velocity that produces it. With a wind FROM
+        ``direction_deg`` at ``speed_kt``, subtracting the vector that points
+        along ``direction_deg`` (rather than adding the one the air mass
+        itself moves along, ``direction_deg + 180``) is the same operation:
+        a headwind reduces the ground speed needed to indicate a given TAS.
+
         This is the mechanical half only. The vector X-Plane consumes is a true
         one; turning the instructor's *indicated* speed into it belongs to
         :meth:`_true_airspeed_kt`, which the caller runs before the aircraft
@@ -1271,13 +2048,31 @@ class XPlaneSimAdapter:
                 rather than flying the aircraft backwards.
             vertical_speed_fpm: Vertical speed in feet per minute, positive up.
                 ``None`` means level.
+            altitude_ft: MSL altitude to look the commanded wind up at.
+                ``None`` skips the wind correction and reproduces the
+                historical still-air behaviour — right when the caller
+                genuinely does not know the target altitude (see
+                ``_write_flight_model_state``'s "stay where you are" case).
+                Also degrades this way on a build that does not expose the
+                region wind datarefs (:data:`OPTIONAL_DATAREFS`).
         """
+        wind_direction_deg, wind_speed_kt = (
+            await self._optional_wind_correction(altitude_ft)
+            if altitude_ft is not None
+            else (0.0, 0.0)
+        )
         speed_ms = max(0.0, tas_kt) * _METRES_PER_SECOND_PER_KNOT
         heading = math.radians(heading_deg % 360.0)
+        wind_heading = math.radians(wind_direction_deg % 360.0)
+        wind_speed_ms = wind_speed_kt * _METRES_PER_SECOND_PER_KNOT
         vertical_ms = (vertical_speed_fpm or 0.0) * _METRES_PER_FOOT / 60.0
-        await self._write("local_vx", speed_ms * math.sin(heading))
+        await self._write(
+            "local_vx", speed_ms * math.sin(heading) - wind_speed_ms * math.sin(wind_heading)
+        )
         await self._write("local_vy", vertical_ms)
-        await self._write("local_vz", -speed_ms * math.cos(heading))
+        await self._write(
+            "local_vz", -speed_ms * math.cos(heading) + wind_speed_ms * math.cos(wind_heading)
+        )
 
     async def clear_crash_state(self) -> None:
         """Repair the aircraft if the sim decided the teleport was an impact.
@@ -1619,7 +2414,13 @@ class XPlaneSimAdapter:
                 heading = setup.heading_deg
                 if heading is None:
                     heading = float(await self._read("psi"))
-                await self._write_velocity_vector(heading, tas_kt, setup.vertical_speed_fpm)
+                # setup.altitude_ft is the same target _true_airspeed_kt resolved
+                # tas_kt for above; None ("stay where you are") skips the issue #42
+                # wind correction rather than re-reading the current elevation —
+                # see _write_velocity_vector's altitude_ft docstring.
+                await self._write_velocity_vector(
+                    heading, tas_kt, setup.vertical_speed_fpm, altitude_ft=setup.altitude_ft
+                )
 
     async def _write_altitude(self, altitude_ft: float) -> None:
         """Move the aircraft vertically, leaving its horizontal position alone."""

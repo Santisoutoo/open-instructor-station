@@ -458,6 +458,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/weather": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weather
+         * @description The commanded weather, read from the adapter.
+         */
+        get: operations["get_weather_api_weather_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/weather/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weather Manifest
+         * @description Supported-or-not with a reason, plus the seven presets and their requirements.
+         */
+        get: operations["get_weather_manifest_api_weather_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/weather/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Weather
+         * @description Resolve a weather request without moving anything. Writes nothing, reads no adapter.
+         */
+        post: operations["preview_weather_api_weather_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/weather/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Weather
+         * @description Resolve, write, read back. See the module docstring for why apply re-resolves.
+         */
+        post: operations["apply_weather_api_weather_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/fuel-payload/manifest": {
         parameters: {
             query?: never;
@@ -1360,6 +1440,33 @@ export interface components {
              * @description 1-based. Required iff the entry is indexed.
              */
             engine_index?: number | null;
+        };
+        /**
+         * CloudLayer
+         * @description One cloud stratum. Base below tops, both MSL.
+         */
+        CloudLayer: {
+            /**
+             * Base Ft
+             * @description Cloud base, feet MSL.
+             */
+            base_ft: number;
+            /**
+             * Tops Ft
+             * @description Cloud tops, feet MSL. Must exceed base_ft.
+             */
+            tops_ft: number;
+            /**
+             * Coverage Ratio
+             * @description Sky cover 0-1. Octas are display: FEW~=0.2, SCT~=0.44, BKN~=0.75, OVC=1.0.
+             */
+            coverage_ratio: number;
+            /**
+             * Cloud Type
+             * @default cumulus
+             * @enum {string}
+             */
+            cloud_type: "cirrus" | "stratus" | "cumulus" | "cumulonimbus";
         };
         /**
          * CoordinatePlacementRequest
@@ -2775,6 +2882,208 @@ export interface components {
             /** Category */
             category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
+        /**
+         * WeatherApplyResult
+         * @description What actually happened.
+         */
+        WeatherApplyResult: {
+            /** @description Exactly the setup that was written. */
+            applied: components["schemas"]["WeatherSetup"];
+            /** @description The read-back — the honest verdict. */
+            state: components["schemas"]["WeatherState"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * WeatherManifest
+         * @description Supported-or-not with a reason, plus the preset catalogue.
+         *
+         *     This manager's ``GET /api/aircraft/controls``: the single place the panel
+         *     learns what it may offer. Always 200 — capability flags are static and the
+         *     preset catalogue is ``core/`` data, so nothing here touches navdata or the
+         *     simulator.
+         */
+        WeatherManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Supported */
+            supported: boolean;
+            /**
+             * Reason
+             * @description Why unsupported. None when supported.
+             */
+            reason?: string | null;
+            /** Presets */
+            presets: components["schemas"]["WeatherPresetInfo"][];
+        };
+        /**
+         * WeatherPresetInfo
+         * @description One catalogue entry, as the manifest publishes it.
+         */
+        WeatherPresetInfo: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "cavok" | "cat_i" | "cat_ii" | "cat_iii" | "storm" | "crosswind" | "mountain_wave";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+            /** Requires Runway */
+            requires_runway: boolean;
+            /** Requires Airport */
+            requires_airport: boolean;
+        };
+        /**
+         * WeatherPreview
+         * @description What ``apply`` *would* write. Computed without touching the simulator.
+         */
+        WeatherPreview: {
+            request: components["schemas"]["WeatherRequest"];
+            /** @description Resolved and merged: exactly what apply would write. */
+            setup: components["schemas"]["WeatherSetup"];
+            /**
+             * Notes
+             * @description Provenance sentences — where each resolved number came from, and which override displaced a preset value. Rendered verbatim by the UI, never re-derived.
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * WeatherRequest
+         * @description One weather instruction: a preset, an explicit setup, or a preset with overrides.
+         *
+         *     Lives in ``core/`` (D6) so the Scenario Generator's YAML weather block
+         *     validates against this exact model with no import from ``server/``.
+         */
+        WeatherRequest: {
+            /** Preset */
+            preset?: ("cavok" | "cat_i" | "cat_ii" | "cat_iii" | "storm" | "crosswind" | "mountain_wave") | null;
+            /** Airport Icao */
+            airport_icao?: string | null;
+            /** Runway Ident */
+            runway_ident?: string | null;
+            /** @description The whole instruction when no preset is given, or the overlay over it. */
+            setup?: components["schemas"]["WeatherSetup"] | null;
+        };
+        /**
+         * WeatherSetup
+         * @description The sparse write model. ``None`` means "leave that aspect untouched".
+         *
+         *     Layer-list semantics (D3): ``None`` = untouched; a list REPLACES the whole
+         *     set of layers; ``[]`` commands calm winds / clear skies. There is no
+         *     per-layer merge. Unlike :class:`WeatherState`, a ``dewpoint_c`` above a
+         *     stated ``temperature_c`` is refused rather than clamped — this is an
+         *     instruction, and a self-contradictory one is a data-entry error.
+         */
+        WeatherSetup: {
+            /** Wind Layers */
+            wind_layers?: components["schemas"]["WindLayer"][] | null;
+            /** Cloud Layers */
+            cloud_layers?: components["schemas"]["CloudLayer"][] | null;
+            /** Visibility M */
+            visibility_m?: number | null;
+            /** Qnh Hpa */
+            qnh_hpa?: number | null;
+            /** Temperature C */
+            temperature_c?: number | null;
+            /** Dewpoint C */
+            dewpoint_c?: number | null;
+            /** Precipitation Ratio */
+            precipitation_ratio?: number | null;
+            /** Runway Contamination */
+            runway_contamination?: ("dry" | "wet" | "puddles" | "snow" | "ice") | null;
+        };
+        /**
+         * WeatherState
+         * @description The commanded weather, fully populated — what ``get_weather()`` returns.
+         *
+         *     Mirrors ``AircraftState``'s "always complete" convention rather than
+         *     ``WeatherSetup``'s "None means untouched" one (weather-manager.md D4).
+         *     ``dewpoint_c`` is clamped to ``temperature_c`` on construction rather than
+         *     refused: a read describes what the simulator reports, and a state must
+         *     always be representable (weather-manager.md §3.2).
+         */
+        WeatherState: {
+            /**
+             * Wind Layers
+             * @description Ascending by altitude. May be empty (calm).
+             */
+            wind_layers: components["schemas"]["WindLayer"][];
+            /**
+             * Cloud Layers
+             * @description Ascending by base. May be empty (clear).
+             */
+            cloud_layers: components["schemas"]["CloudLayer"][];
+            /**
+             * Visibility M
+             * @description Surface visibility in METRES (CAT minima are metres; the adapter converts to the sim's unit).
+             */
+            visibility_m: number;
+            /**
+             * Qnh Hpa
+             * @description Sea-level pressure, hectopascals.
+             */
+            qnh_hpa: number;
+            /**
+             * Temperature C
+             * @description Sea-level temperature, Celsius.
+             */
+            temperature_c: number;
+            /**
+             * Dewpoint C
+             * @description Sea-level dewpoint, Celsius. Never above temperature_c (clamped on construction). This is the feature spec's 'humidity' (D11).
+             */
+            dewpoint_c: number;
+            /**
+             * Precipitation Ratio
+             * @description 0 = none, 1 = torrential. Falls as snow when the temperature says so — the phase is the simulator's decision, not a second field.
+             */
+            precipitation_ratio: number;
+            /**
+             * Runway Contamination
+             * @description Surface state for friction.
+             * @enum {string}
+             */
+            runway_contamination: "dry" | "wet" | "puddles" | "snow" | "ice";
+        };
+        /**
+         * WindLayer
+         * @description One wind stratum. Direction is where the wind blows FROM, true degrees.
+         */
+        WindLayer: {
+            /**
+             * Altitude Ft
+             * @description Layer altitude, feet MSL.
+             */
+            altitude_ft: number;
+            /**
+             * Direction Deg
+             * @description Direction the wind blows FROM, TRUE degrees (METAR convention, and what the simulator's dataref expects). ATIS/tower winds are magnetic; converting for display is the UI's business, not this model's.
+             */
+            direction_deg: number;
+            /**
+             * Speed Kt
+             * @description Sustained wind speed, knots.
+             */
+            speed_kt: number;
+            /**
+             * Gust Increase Kt
+             * @description Peak gust above the sustained speed, knots. 20 kt gusting 30 is speed_kt=20, gust_increase_kt=10.
+             * @default 0
+             */
+            gust_increase_kt: number;
+            /**
+             * Turbulence Ratio
+             * @description 0 = smooth, 1 = severe.
+             * @default 0
+             */
+            turbulence_ratio: number;
+        };
     };
     responses: never;
     parameters: never;
@@ -3375,6 +3684,112 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PlacementResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weather_api_weather_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherState"];
+                };
+            };
+        };
+    };
+    get_weather_manifest_api_weather_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherManifest"];
+                };
+            };
+        };
+    };
+    preview_weather_api_weather_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeatherRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_weather_api_weather_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeatherRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherApplyResult"];
                 };
             };
             /** @description Validation Error */

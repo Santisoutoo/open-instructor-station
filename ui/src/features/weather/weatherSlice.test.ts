@@ -48,6 +48,19 @@ describe('overrideSet', () => {
     state = reducer(state, overrideSet({ field: 'visibility_m', value: null }));
     expect(state.overrides).toEqual({});
   });
+
+  it('stores the new fields the real model added over the mock one', () => {
+    let state = stagedState();
+    state = reducer(
+      state,
+      overrideSet({ field: 'runway_contamination', value: 'wet' }),
+    );
+    state = reducer(state, overrideSet({ field: 'precipitation_ratio', value: 0.4 }));
+    expect(state.overrides).toEqual({
+      runway_contamination: 'wet',
+      precipitation_ratio: 0.4,
+    });
+  });
 });
 
 describe('stagingCleared', () => {

@@ -1,18 +1,19 @@
 /**
- * The preset surface: seven tiles, two-tap flow, no modals.
+ * The preset surface: up to seven tiles, two-tap flow, no modals.
  *
- * The first tap **stages** the preset — the editors and the staging bar appear,
- * nothing changes in the simulator. The second tap on the same tile commits, the
- * same as the staging bar's Apply button. A relative preset whose runway is not
- * known yet is dimmed and disabled but never hidden, and always says why.
+ * The first tap **stages** the preset — the editors and the staging bar appear, nothing
+ * changes in the simulator. The second tap on the same tile commits, the same as the staging
+ * bar's Apply button. A relative preset whose runway (or airport) is not known yet is dimmed
+ * and disabled but never hidden, and always says why.
  */
 
 import { useAppDispatch, useAppSelector } from '../../store';
+import type { WeatherPresetInfo } from '../../api/models';
 import { presetGate } from './gate';
-import { WEATHER_PRESETS } from './mock';
 import { presetStaged } from './weatherSlice';
 
 interface PresetGridProps {
+  presets: readonly WeatherPresetInfo[];
   /** True while the weather gate is closed — every tile disables, none disappears. */
   disabled: boolean;
   selectedIcao: string | null;
@@ -22,6 +23,7 @@ interface PresetGridProps {
 }
 
 export function PresetGrid({
+  presets,
   disabled,
   selectedIcao,
   selectedRunwayIdent,
@@ -33,7 +35,7 @@ export function PresetGrid({
 
   return (
     <div className="weather-grid">
-      {WEATHER_PRESETS.map((preset) => {
+      {presets.map((preset) => {
         const gate = presetGate(preset, selectedIcao, selectedRunwayIdent);
         const isStaged = staged && preset.id === selectedPresetId;
         return (

@@ -1,14 +1,30 @@
 /**
- * The Weather panel end to end against the mock API: the current weather loads
- * through the queryFn's simulated latency, the runway-relative tile is stated
- * rather than hidden, and the two-tap flow plays out — stage, edit surface up,
- * apply, cache updated, staging gone.
+ * The Weather panel end to end against a stubbed API.
+ *
+ * `fetch` is stubbed rather than the RTK Query hooks mocked — the same choice
+ * `features/position/StagingBar.test.tsx` makes, for the same reason: the request the panel
+ * actually sends is what is worth asserting, and mocking the hooks would hide a panel that
+ * asks the wrong endpoint.
+ *
+ * Two behaviours matter most here, both direct consequences of the real backend
+ * (weather-manager.md D2, D7): applying CAVOK must NOT change the wind — the preset never
+ * states one — and every number the staging bar shows must come from the server's own
+ * `preview`/`apply` response, never from a client-side re-implementation of the resolver.
  */
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { setupStore } from '../../store';
+import type {
+  Capabilities,
+  WeatherApplyResult,
+  WeatherManifest,
+  WeatherPreview,
+  WeatherRequest,
+  WeatherState,
+} from '../../api/models';
+import { type RootState, setupStore } from '../../store';
 import { WeatherPanel } from './WeatherPanel';
 
 /** A Position panel state with LEMD 32L picked, for the runway-relative preset. */
@@ -22,7 +38,119 @@ const POSITION_WITH_RUNWAY = {
   recentIcaos: ['LEMD'],
 };
 
-function renderPanel(preloadedState?: Parameters<typeof setupStore>[0]) {
+const CAPABLE: Capabilities = {
+  can_set_position: true,
+  can_set_aircraft_state: true,
+  can_set_weather: true,
+  can_inject_failures: false,
+  can_spawn_traffic: false,
+  can_control_autopilot: false,
+  can_set_fuel_payload: false,
+  can_control_camera: false,
+  can_pushback: false,
+};
+
+const CURRENT: WeatherState = {
+  wind_layers: [
+    { altitude_ft: 0, direction_deg: 270, speed_kt: 5, gust_increase_kt: 0, turbulence_ratio: 0 },
+  ],
+  cloud_layers: [],
+  visibility_m: 10000,
+  qnh_hpa: 1016,
+  temperature_c: 19,
+  dewpoint_c: 7,
+  precipitation_ratio: 0,
+  runway_contamination: 'dry',
+};
+
+const MANIFEST: WeatherManifest = {
+  adapter: 'fake',
+  supported: true,
+  reason: null,
+  presets: [
+    { id: 'cavok', label: 'CAVOK', description: 'Clear skies', requires_runway: false, requires_airport: false },
+    { id: 'cat_i', label: 'CAT I', description: '', requires_runway: false, requires_airport: true },
+    { id: 'cat_ii', label: 'CAT II', description: '', requires_runway: false, requires_airport: true },
+    { id: 'cat_iii', label: 'CAT III', description: '', requires_runway: false, requires_airport: true },
+    { id: 'storm', label: 'Storm', description: '', requires_runway: false, requires_airport: true },
+    { id: 'crosswind', label: 'Crosswind', description: '90° off the runway', requires_runway: true, requires_airport: true },
+    { id: 'mountain_wave', label: 'Mountain Wave', description: '', requires_runway: false, requires_airport: true },
+  ],
+};
+
+/** CAVOK never states wind (core/weather/presets.py) — resolving it leaves wind_layers null. */
+const CAVOK_SETUP = {
+  wind_layers: null,
+  cloud_layers: [],
+  visibility_m: 20000,
+  qnh_hpa: 1013.25,
+  temperature_c: 15,
+  dewpoint_c: 5,
+  precipitation_ratio: 0,
+  runway_contamination: 'dry' as const,
+};
+
+/** What the server would actually have on record after applying it: wind untouched. */
+const AFTER_CAVOK: WeatherState = { ...CAVOK_SETUP, wind_layers: CURRENT.wind_layers };
+
+let calls: { url: string; method: string; body: unknown }[];
+
+function json(payload: unknown, status = 200): Response {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
+function stubApi(
+  options: { capabilities?: Capabilities; current?: WeatherState; applyStatus?: number } = {},
+) {
+  calls = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = input instanceof Request ? input : null;
+      const url = request?.url ?? String(input);
+      const method = request?.method ?? init?.method ?? 'GET';
+      const rawBody = request === null ? init?.body : await request.clone().text();
+      const body =
+        typeof rawBody === 'string' && rawBody !== '' ? (JSON.parse(rawBody) as unknown) : undefined;
+      calls.push({ url, method, body });
+
+      if (url.includes('/capabilities')) {
+        return json(options.capabilities ?? CAPABLE);
+      }
+      if (url.includes('/weather/manifest')) {
+        return json(MANIFEST);
+      }
+      if (url.includes('/weather/preview')) {
+        const preview: WeatherPreview = {
+          request: body as WeatherRequest,
+          setup: CAVOK_SETUP,
+          notes: ['visibility_m=20000 — the \'cavok\' preset states 20000.'],
+        };
+        return json(preview);
+      }
+      if (url.includes('/weather/apply')) {
+        const status = options.applyStatus ?? 200;
+        if (status !== 200) {
+          return json(
+            { detail: "Unavailable — the 'xplane' adapter does not declare can_set_weather." },
+            status,
+          );
+        }
+        const result: WeatherApplyResult = { applied: CAVOK_SETUP, state: AFTER_CAVOK, notes: [] };
+        return json(result);
+      }
+      if (url.includes('/weather')) {
+        return json(options.current ?? CURRENT);
+      }
+      return json({});
+    }),
+  );
+}
+
+function renderPanel(preloadedState?: Partial<RootState>) {
   const store = setupStore(preloadedState);
   render(
     <Provider store={store}>
@@ -33,21 +161,22 @@ function renderPanel(preloadedState?: Parameters<typeof setupStore>[0]) {
 }
 
 afterEach(() => {
-  vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe('WeatherPanel', () => {
-  it('renders the seven tiles, fails closed until the weather loads, then opens', async () => {
+  it('renders nothing clickable until the adapter and the current weather are known', async () => {
+    stubApi();
     renderPanel();
 
-    const cavok = screen.getByRole('button', { name: /CAVOK/ });
-    expect(cavok).toBeDisabled();
-    expect(screen.getByText('Reading the current weather…')).toBeInTheDocument();
+    // Fail closed in the strongest sense: no preset tile exists before the data does.
+    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(screen.getByText(/waiting for the adapter capabilities/i)).toBeInTheDocument();
 
     await waitFor(() => {
-      expect(cavok).toBeEnabled();
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
     });
-    expect(screen.getAllByRole('button', { name: /./ })).toHaveLength(7);
+    expect(screen.getAllByRole('button')).toHaveLength(7);
 
     // The relative preset stays disabled without a runway, with the reason stated.
     expect(screen.getByRole('button', { name: /Crosswind/ })).toBeDisabled();
@@ -59,6 +188,7 @@ describe('WeatherPanel', () => {
   });
 
   it('enables the crosswind tile when Position has an airport and runway', async () => {
+    stubApi();
     renderPanel({ position: POSITION_WITH_RUNWAY });
 
     await waitFor(() => {
@@ -66,39 +196,125 @@ describe('WeatherPanel', () => {
     });
   });
 
-  it('stages on the first tap and applies on Apply weather, updating the readout', async () => {
-    // fireEvent, not user-event: this test fakes timers for the mock latency, and
-    // user-event's own internal waits then deadlock against them (observed even with
-    // toFake restricted and advanceTimers wired — see ScenariosPanel.test.tsx).
-    vi.useFakeTimers({
-      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
-    });
-    const store = renderPanel();
+  it('disables every tile when the adapter does not declare can_set_weather, and says why', async () => {
+    stubApi({ capabilities: { ...CAPABLE, can_set_weather: false } });
+    renderPanel();
 
-    // Let the mock latency elapse so the gate opens. `vi.waitFor` polls in small
-    // increments and advances the fake clock between polls, unlike a single blind
-    // `advanceTimersByTimeAsync` jump — RTK Query's dispatch-then-subscriber-notify
-    // chain can still have a pending microtask hop when a big jump's promise settles,
-    // which showed up as an intermittent "Reading the current weather…" failure.
-    await vi.waitFor(() => {
-      expect(screen.getByText('270° / 5 kt')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(/can_set_weather/)).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: /CAVOK/ })).toBeDisabled();
+  });
+
+  it('stages on the first tap and previews without moving anything', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
     });
 
-    // First tap stages: the editors and the staging bar appear, nothing applies.
-    fireEvent.click(screen.getByRole('button', { name: /CAVOK/ }));
+    await user.click(screen.getByRole('button', { name: /CAVOK/ }));
+
+    expect(await screen.findByText('Staged: CAVOK')).toBeInTheDocument();
     expect(screen.getByText('Tap again to apply')).toBeInTheDocument();
-    expect(screen.getByText('Staged: CAVOK')).toBeInTheDocument();
-    const apply = screen.getByRole('button', { name: 'Apply weather' });
+    expect(calls.some((call) => call.url.includes('/weather/preview'))).toBe(true);
+    expect(calls.some((call) => call.url.includes('/weather/apply'))).toBe(false);
+  });
 
-    // Apply commits; after the mock latency the cache is the applied weather.
-    fireEvent.click(apply);
-    await vi.waitFor(() => {
+  it('sends preset + runway context on preview, never a client-resolved setup', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    renderPanel({ position: POSITION_WITH_RUNWAY });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /CAVOK/ }));
+    await screen.findByText('Staged: CAVOK');
+
+    const preview = calls.find((call) => call.url.includes('/weather/preview'));
+    expect(preview?.body).toEqual({
+      preset: 'cavok',
+      airport_icao: 'LEMD',
+      runway_ident: '32L',
+      setup: null,
+    });
+  });
+
+  it('applies on Apply weather, and the wind stays untouched because CAVOK never states one', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    const store = renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /CAVOK/ }));
+    await screen.findByText('Staged: CAVOK');
+
+    await user.click(screen.getByRole('button', { name: 'Apply weather' }));
+
+    await waitFor(() => {
       expect(store.getState().weather.staged).toBe(false);
     });
-
     expect(screen.queryByRole('button', { name: 'Apply weather' })).toBeNull();
     expect(screen.getByRole('status')).toHaveTextContent('Weather applied.');
-    // The current-weather readout now shows CAVOK's wind, not the fixture day's.
-    expect(screen.getByText('250° / 8 kt')).toBeInTheDocument();
+
+    // QNH moved to CAVOK's own figure...
+    expect(screen.getByText('1013 hPa')).toBeInTheDocument();
+    // ...but the wind — which CAVOK never touches — is exactly what it was before.
+    expect(screen.getByText('270° / 5 kt')).toBeInTheDocument();
+  });
+
+  it('renders an apply failure inline instead of in a modal', async () => {
+    const user = userEvent.setup();
+    stubApi({ applyStatus: 501 });
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+
+    await user.click(screen.getByRole('button', { name: /CAVOK/ }));
+    await screen.findByText('Staged: CAVOK');
+    await user.click(screen.getByRole('button', { name: 'Apply weather' }));
+
+    expect(await screen.findByText(/does not declare can_set_weather/i)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    // Staging survives a failed apply — nothing was cleared.
+    expect(screen.getByText('Staged: CAVOK')).toBeInTheDocument();
+  });
+
+  it('lets the instructor edit the staged cloud coverage on the octa chips', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+    await user.click(screen.getByRole('button', { name: /CAVOK/ }));
+    await screen.findByText('Staged: CAVOK');
+
+    // CAVOK resolves to clear skies, so the editor renders the "no layers" empty state —
+    // adding a layer is how the instructor puts cloud into an otherwise clear day. It
+    // defaults to 4 octas (SCT); picking 8 (OVC) must move the pressed chip, not just add a
+    // second one.
+    await user.click(screen.getByRole('button', { name: 'Add cloud layer' }));
+    const group = screen.getByRole('group', { name: /Layer 1 coverage in octas/i });
+    expect(within(group).getByRole('button', { name: '4' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+
+    await user.click(within(group).getByRole('button', { name: '8' }));
+
+    expect(within(group).getByRole('button', { name: '8' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(group).getByRole('button', { name: '4' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
   });
 });

@@ -659,22 +659,19 @@ The single most common cause of "the weather did not apply", handled once, at th
 `set_weather` call:
 
 ```
-1. mode = read weather_source                      # sim/weather/region/weather_source
-2. if mode is not the manual value:
-       write update_immediately = 1                # changes take effect now, not in ≤60 s
-       write change_mode        = 3 (static)       # stop autonomous evolution
-       write weather_source     = <manual value>
-3. read weather_source back
-4. if it did not stick -> raise XPlaneWeatherRejected (the server maps it to 502)
+1. write update_immediately = 1                    # changes take effect now, not in ≤60 s
+2. write change_mode        = 3 (static)            # stop autonomous evolution
+3. read weather_source back                          # NEVER written -- confirmed read-only
+4. if it did not read 0 -> raise XPlaneWeatherRejected (the server maps it to 502)
    — never write values the sim has announced it will destroy
 5. proceed with the field writes
 ```
 
 | Internal key | Dataref | Type / unit | Confidence |
 |---|---|---|---|
-| `weather_source` | `sim/weather/region/weather_source` | int enum — real weather vs. manually set | **verify in spike**: the exact enum value that means "manual", and whether the Web API accepts the write, are the two facts `spikes/weather_datarefs.py` must pin before W2 starts (§10.1) |
-| `weather_change_mode` | `sim/weather/region/change_mode` | int enum; `3` = static | verify value in spike |
-| `weather_update_immediately` | `sim/weather/region/update_immediately` | int bool; note: Laminar documents cloud changes as excepted — clouds still transition visually over the update interval, but the *dataref read-back* is immediate, so `get_weather` is not affected | high |
+| `weather_source` | `sim/weather/region/weather_source` | int enum — real weather (`1`) vs. manually set (`0`) | **CONFIRMED, live 2026-08-17 against X-Plane 12.4.3**: read-only (`is_writable: false` in the Web API's own dataref index) — never written, only read back as the verdict. See §11.1. |
+| `weather_change_mode` | `sim/weather/region/change_mode` | int enum; `3` = static | **CONFIRMED**: of candidates `0`-`3`, only `3` held a distinctive visibility/QNH for the full 120 s live test with zero drift; `0`/`1`/`2` each eventually drifted (§11.1, §11.5). |
+| `weather_update_immediately` | `sim/weather/region/update_immediately` | int bool; note: Laminar documents cloud changes as excepted — clouds still transition visually over the update interval, but the *dataref read-back* is immediate, so `get_weather` is not affected | **Partially wrong, confirmed live**: the cloud dataref read-back is *not* immediate either — measured converging over several seconds to (in one adversarial case) more than 10 s. See §11.8. |
 
 ### 7.2 The fields
 
@@ -692,8 +689,8 @@ Every write converts from the model's aviation units at the adapter boundary (D1
 | `cloud_layers[i].cloud_type` | `sim/weather/region/cloud_type[i]` | float enum, blendable: cirrus 0, stratus 1, cumulus 2, cumulonimbus 3 | nearest value; read-back rounds | high |
 | `visibility_m` | `sim/weather/region/visibility_reported_sm` | statute miles | ÷1609.344 | high |
 | `qnh_hpa` | `sim/weather/region/sealevel_pressure_pas` | Pascals | ×100 | high |
-| `temperature_c` | `sim/weather/region/sealevel_temperature_c`, plus the aloft ladder `temperatures_aloft_deg_c[13]` recomputed along the ISA lapse from the written sea-level value (via `core/atmosphere.py`) so a warm day is warm all the way up instead of only at the beach | °C | none | high / ladder shape **verify** |
-| `dewpoint_c` | `sim/weather/region/dewpoint_deg_c[i]` — surface entry from the field, upper entries kept at or below the recomputed temperature ladder | °C | none | medium |
+| `temperature_c` | `sim/weather/region/sealevel_temperature_c`, plus the aloft ladder `temperatures_aloft_deg_c[13]` recomputed along the ISA lapse from the written sea-level value (via `core/atmosphere.py`) so a warm day is warm all the way up instead of only at the beach | °C | none | **CONFIRMED BROKEN, live 2026-08-17**: `sealevel_temperature_c` does not hold a written value — measured drifting ~+0.7 °C/s regardless of `change_mode`, unaffected by `thermal_rate_ms=0`. Blocks the capability flag on its own. See §11.9. |
+| `dewpoint_c` | `sim/weather/region/dewpoint_deg_c[i]` — surface entry from the field, upper entries kept at or below the recomputed temperature ladder | °C | none | Inherits §11.9's problem — the clamp is computed from the same drifting sea-level temperature. |
 | `precipitation_ratio` | `sim/weather/region/rain_percent` | 0–1; the sim decides rain vs. snow from temperature | none | high |
 | `runway_contamination` | `sim/weather/region/runway_friction` | int enum 0–15: dry 0, wet 1–3, puddles 4–6, snow 7–9, ice 10–12 | dry→0, wet→2, puddles→5, snow→8, ice→11 (mid-band); read-back maps bands back | high |
 
@@ -892,31 +889,41 @@ manager at all.
 
 ## 11. Open questions and risks
 
-### 11.1 The manual-mode dataref values — the one blocking unknown
+### 11.1 The manual-mode dataref values — RESOLVED, confirmed live 2026-08-17
 
-`sim/weather/region/weather_source` is documented as an enum distinguishing real weather from
-manually-set weather, but **which value means "manual", and whether the Web API accepts the
-write at all**, is not pinned by anything in this repository. This blocks W2 (not W0/W1/W3).
-**Resolution:** `spikes/weather_datarefs.py`, first task of W2 — start X-Plane in real-weather
-mode, enumerate the candidate writes (`weather_source`, `change_mode`, `update_immediately`),
-write a distinctive visibility, and watch for 120 s which combination makes it hold. The spike's
-findings are written into §7.1's table and the adapter comments. Fallback if `weather_source`
-proves read-only over the Web API: determine whether any region write flips the sim to manual
-by itself (some builds behave this way); if nothing forces the mode externally, `set_weather`
-raises `XPlaneWeatherRejected` honestly and the finding escalates to the user — a bridge-plugin
-assist would be a new decision, not something this design smuggles in.
+**`sim/weather/region/weather_source` is read-only.** Confirmed via the Web API's own dataref
+index (`is_writable: false`) against a live X-Plane 12.4.3 install — the fallback path this
+section originally sketched ("if `weather_source` proves read-only, determine whether any region
+write flips the sim to manual by itself") is exactly what happened, and it works cleanly:
+writing `sim/weather/region/change_mode = 3` plus `update_immediately = 1` switches
+`weather_source` from `1` (its value under real weather) to `0`, and a distinctive
+visibility/QNH written immediately after **held bit-for-bit for a 120 s live poll** — well past
+the 90 s threshold §11.5 assumed. Candidates `change_mode = 0`, `1` and `2` were also tried and
+each eventually drifted (at roughly 50 s, 35 s and 60 s respectively), meaning X-Plane's own
+weather engine periodically reasserts itself under those modes but not under `3`. The adapter
+(`adapters/xplane/xplane_adapter.py::_force_manual_weather_mode`) now writes
+`change_mode`/`update_immediately` only and reads `weather_source` back purely as the verdict,
+never as a write target — writing to a read-only dataref would have raised at the HTTP layer.
+
+**`can_set_weather` does not flip yet regardless** — two new, confirmed-not-speculative problems
+surfaced while validating this fix live; see §11.8 and §11.9.
 
 ### 11.2 Gusts: shear datarefs or dedicated?
 
 §7.2 maps `gust_increase_kt` onto `shear_speed_msc[i]` on the strength of X-Plane's lineage
 (XP11 modelled gusts through shear) — unverified on 12.x. Same spike, same session: set a gust
-in the sim's own weather UI, read the region arrays, see where it landed.
+in the sim's own weather UI, read the region arrays, see where it landed. **Still open** — this
+needs a human watching the sim's own UI while a value is written, which this session's live
+access did not include (no one was at the keyboard to operate X-Plane's menus).
 
-### 11.3 Turbulence scale
+### 11.3 Turbulence scale — partially checked, still not fully confirmed
 
 `turbulence[13]` is a float whose full-scale value (1 or 10) differs between community sources.
-Spike: slide the UI to maximum, read the dataref. The core model stays 0–1 regardless; only the
-adapter's multiplier changes.
+**Checked live**: writing `5.0` directly round-tripped as `5.0` with no clamping to `1.0`, which
+rules out a hard 0–1 clamp at the Web API layer — but only a human watching the sim's own weather
+UI while this value is written can confirm what visible/felt turbulence `5.0` actually produces,
+and that observation still did not happen this session (same reason as §11.2). The core model
+stays 0–1 regardless; only the adapter's multiplier changes once this is settled.
 
 ### 11.4 Snow depth and winter surfaces
 
@@ -926,12 +933,12 @@ dataref names (earlier builds hid it in `sim/private/`). Out of scope (§1.2);
 against the user's installed build; if a public dataref exists, it is one added field on
 `WeatherSetup` and one row in §7.2.
 
-### 11.5 How long must the hold test wait?
+### 11.5 How long must the hold test wait? — RESOLVED
 
-`WEATHER_HOLD_S["xplane"] = 90.0` assumes the real-weather engine rewrites within its ~60 s
-update interval. If the spike measures a longer rewrite cadence, the constant moves; if real
-weather rewrites continuously, it shrinks. A number measured once beats a number argued about —
-the spike logs the observed overwrite latency.
+`WEATHER_HOLD_S["xplane"] = 90.0` was correct: `change_mode = 3` held for a live-measured 120 s
+with zero drift, comfortably past the 90 s bar. The three *wrong* candidates give the number its
+justification retroactively — they drifted at 50 s, 35 s and 60 s respectively, so a shorter
+threshold (say 30 s) would have wrongly certified `change_mode = 0` as stable.
 
 ### 11.6 Region scope
 
@@ -947,6 +954,49 @@ engine to design against.
 Risk 2 (real weather overwrites) is this manager's core and is resolved by §7.1 + §5.3 case 4.
 Risk 5 (MSFS subset) is honoured by D16's posture: everything downstream of the flag degrades
 to "disabled with a reason" with zero weather-specific code.
+
+### 11.8 Cloud writes converge slowly — CONFIRMED, new finding, blocks the flag
+
+Not anticipated by §7.2's confidence table, which rated the cloud fields "high" confidence on
+naming alone. Live-measured against X-Plane 12.4.3: a written cloud layer (`cloud_base_msl_m`,
+`cloud_coverage_percent`) does **not** appear on the very next read — one measurement was still
+stale after 1 s and had converged by 4 s; a later, more adversarial measurement (writing a
+*second*, different layer immediately after the first) was still only partway to the new target
+after a full 10 s wait. This reads as a genuine gradual transition, matching this design's own
+§7.1 note that "Laminar documents cloud changes as excepted — clouds still transition visually
+over the update interval" — except the transition turned out to affect the *dataref read-back*
+too, not only the rendering, which §7.1 had assumed stayed immediate.
+
+**Resolution shipped this session**: `_write_cloud_layers` now calls
+`_await_cloud_layers_settled`, which polls for up to 10 s and **returns regardless of whether the
+target was reached** — it does not raise, because the convergence time has no observed upper
+bound and blocking (or refusing) indefinitely would be worse than an occasionally-stale
+read-back. **Still open**: whether 10 s is long enough in the common case, and whether the
+contract suite's round-trip test (`test_set_weather_round_trips`) needs its own wait-and-retry
+instead of asserting immediately after `set_weather` returns — right now that test fails against
+this adapter for exactly this reason, which is why `can_set_weather` has not flipped.
+
+### 11.9 `sealevel_temperature_c` does not hold a written value at all — CONFIRMED, blocks the flag
+
+The most serious new finding. `sim/weather/region/sealevel_temperature_c` was measured drifting
+continuously (~+0.7 °C/s in one run) **regardless of `change_mode`**, independent of whether the
+13-level aloft ladder was also written, and unaffected by
+`sim/weather/region/thermal_rate_ms` (already `0.0` in the failing case, ruling out the one
+obvious lever). A direct write is visible for well under a second before the drift resumes — this
+is not the same "eventually converges" shape as §11.8's clouds; the sim appears to be actively
+computing this value from something other than the region weather engine, most plausibly a
+day/night thermal simulation this design assumed was part of the same system `change_mode`
+disables. `_write_temperature_ladder`'s docstring now states this plainly and the write is kept
+as best-effort (matching the rest of the adapter's posture on unresolved fields) rather than
+silently removed.
+
+**No dataref that stops the drift was found this session.** `weather_dewpoint`'s ladder writes
+inherit the same problem, since §7.2's dewpoint clamp is computed from this same sea-level
+temperature. **Resolution needed**: a further live session, ideally with someone able to watch
+X-Plane's own environment/time-of-day settings while probing — candidates worth trying next:
+`sim/time/*` datarefs (freezing simulated time), or a region dataref this session's `search_datarefs
+"weather region"` sweep did not surface because it lives outside the `sim/weather/region/`
+namespace entirely.
 
 ---
 

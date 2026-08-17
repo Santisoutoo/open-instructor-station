@@ -81,6 +81,52 @@ Record the outcome in `docs/` and update `adapters/xplane/xplane_adapter.py`: ei
 `set_position` signature. Nothing else in the codebase should need to change — that is what the
 `SimAdapter` seam is for.
 
+## `weather_datarefs.py`
+
+**Question: what value of `sim/weather/region/weather_source` actually means "manual", does the
+Web API accept a write to it at all, and do gusts and turbulence use the datarefs
+`docs/designs/weather-manager.md` §7.2 guesses at?**
+
+Three separate unverified facts block flipping `XPlaneSimAdapter._CAPABILITIES.can_set_weather`
+to `True` (§7.3): the manual-mode enum value (§11.1 — the one blocking unknown), whether gusts
+ride the `shear_speed_msc`/`shear_direction_degt` pair or a dedicated dataref this adapter does
+not know about (§11.2), and whether `sim/weather/region/turbulence` is scaled 0-1 or 0-10 (§11.3).
+Not run against a live simulator as of the X-Plane adapter track of the Weather Manager (#14) — no
+Docker Desktop and no running X-Plane were available in that session, so the mode-forcing sequence
+in `XPlaneSimAdapter.set_weather` is written and ready for this spike's findings but unconfirmed.
+
+### Running it
+
+```powershell
+& .venv\Scripts\python.exe spikes\weather_datarefs.py
+# or against another machine on the LAN, with a longer hold window:
+& .venv\Scripts\python.exe spikes\weather_datarefs.py --host 192.168.1.20 --hold-s 180
+```
+
+Load X-Plane into a flight with its weather still in the default **real weather** mode — the
+manual-mode probe needs something to override. The script tries each candidate
+`weather_source` value, writes a distinctive visibility after it, and watches for up to
+`--hold-s` seconds (120 by default) whether real weather rewrites it — the operational definition
+of "manual" used here, since no documentation for this exact enum exists in this repository. It
+then pauses twice, asking you to set a gust and maximum turbulence in X-Plane's own weather
+editor, and reads the region arrays back.
+
+### After the run
+
+Write the confirmed `weather_source` value into §7.1's table and into
+`_WEATHER_SOURCE_MANUAL_UNVERIFIED` in `adapters/xplane/xplane_adapter.py` (dropping the
+`_UNVERIFIED` suffix), correct the gust mapping if it is not the shear pair, and set
+`_TURBULENCE_SCALE_UNVERIFIED` to whatever scale was observed. Only then does flipping
+`can_set_weather = True` and running the §5.3 contract cases under `-m sim` become honest.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | A candidate `weather_source` value held for the full window; gust/turbulence findings printed. |
+| `1` | X-Plane was not reachable, or this build does not expose the region weather datarefs at all (they are declared `OPTIONAL` on this adapter for exactly this case). |
+| `2` | No candidate held. The script suggests the §11.1 fallback: check whether any region write flips the sim to manual by itself. |
+
 ## `sim_lifecycle.py`
 
 **Question: can a test run drive the X-Plane 12 *process* — start it at a chosen airport, wait
