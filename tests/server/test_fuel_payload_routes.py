@@ -100,6 +100,7 @@ def test_manifest_reports_unknown_limits_for_the_default_fake(client: TestClient
     body = response.json()
     assert body["limits_source"] == "unknown"
     assert body["limits_note"] is None
+    assert body["limits"] is None
     assert body["tank_count"] == 0
     assert body["station_count"] == 0
     assert body["supported"] is True
@@ -117,6 +118,16 @@ def test_manifest_reports_the_table_source_and_disclaimer_for_a_c172(
     assert body["limits_note"] == AIRCRAFT_MASS_LIMITS_TABLE["C172"].source_note
     assert body["tank_count"] == 2
     assert body["station_count"] == 3
+    # The UI needs the actual limits -- MTOW and the CG envelope -- to render
+    # the mass-and-balance graphic without a second round trip (§8.3.4).
+    limits = AIRCRAFT_MASS_LIMITS_TABLE["C172"].limits
+    assert body["limits"]["max_takeoff_weight_kg"] == pytest.approx(limits.max_takeoff_weight_kg)
+    assert body["limits"]["empty_weight_kg"] == pytest.approx(limits.empty_weight_kg)
+    assert len(body["limits"]["cg_envelope"]["points"]) == len(limits.cg_envelope.points)
+    assert body["limits"]["fuel_tank_capacities_kg"] == list(limits.fuel_tank_capacities_kg)
+    assert body["limits"]["payload_station_capacities_kg"] == list(
+        limits.payload_station_capacities_kg
+    )
 
 
 def test_manifest_is_always_200_even_without_the_capability(

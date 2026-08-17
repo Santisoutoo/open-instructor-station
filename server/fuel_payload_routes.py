@@ -37,7 +37,7 @@ from core.fuel_payload.models import (
     FuelPayloadRequest,
     MassAndBalanceResult,
 )
-from core.models import AircraftSetup, AirframeInfo, Loadout, LoadoutState
+from core.models import AircraftSetup, AirframeInfo, AirframeMassLimits, Loadout, LoadoutState
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
 from server.deps import get_adapter, get_airframe_info
 
@@ -94,6 +94,12 @@ class FuelPayloadManifest(BaseModel):
     limits_source: Literal["adapter", "table", "unknown"]
     limits_note: str | None = Field(
         default=None, description="The table entry's disclaimer, when limits_source == 'table'."
+    )
+    limits: AirframeMassLimits | None = Field(
+        default=None,
+        description="The resolved mass/CG facts themselves -- empty weight, MTOW, tank/station "
+        "capacities and arms, the CG envelope polygon -- so the panel can render MTOW and the "
+        "envelope without a second round trip. None iff limits_source == 'unknown'.",
     )
     tank_count: int
     station_count: int
@@ -214,6 +220,7 @@ def get_manifest() -> FuelPayloadManifest:
         icao_type=airframe.icao_type,
         limits_source=limits_source,
         limits_note=_limits_note(airframe, limits_source),
+        limits=resolved.limits if resolved is not None else None,
         tank_count=len(resolved.limits.fuel_tank_capacities_kg) if resolved is not None else 0,
         station_count=(
             len(resolved.limits.payload_station_capacities_kg) if resolved is not None else 0
