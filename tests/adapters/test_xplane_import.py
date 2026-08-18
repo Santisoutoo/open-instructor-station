@@ -10,7 +10,6 @@ import pytest
 from adapters.xplane import DATAREFS, XPlaneSimAdapter
 from adapters.xplane.xplane_adapter import DEFAULT_BASE_URL, XPlaneNotReachable
 from core.failures import FAILURE_IDS, FailureRef
-from core.models import AircraftSetup, Loadout, TankFuel
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.weather.models import WeatherSetup
 
@@ -37,11 +36,15 @@ def test_declares_only_the_phase_0_capabilities() -> None:
     assert capabilities.can_set_position is True
     assert capabilities.can_set_aircraft_state is True
     assert capabilities.can_control_autopilot is True
+    # can_set_fuel_payload flipped True: pytest -m sim passed against a live
+    # X-Plane 12.4.3 (fuel-payload.md §6.4/§9.4) -- see xplane_adapter.py's
+    # _write_loadout docstring for the live finding that resolved its own
+    # "open question for the live-validation pass".
+    assert capabilities.can_set_fuel_payload is True
     # Everything else arrives in a later phase and must stay off until then.
     assert capabilities.can_set_weather is False
     assert capabilities.can_inject_failures is False
     assert capabilities.can_spawn_traffic is False
-    assert capabilities.can_set_fuel_payload is False
     assert capabilities.can_control_camera is False
     assert capabilities.can_pushback is False
 
@@ -69,10 +72,13 @@ async def test_disconnect_on_a_fresh_adapter_is_harmless() -> None:
 
 
 async def test_phase_2_methods_refuse_without_their_capabilities() -> None:
-    """The Phase 2 shared-foundation stubs (weather-manager.md D16,
-    failures-manager.md D11/§5, fuel-payload.md D15): every flag stays
-    ``False`` on this adapter, and the six gated methods raise immediately,
-    with no socket touched (no ``connect()`` call in this test).
+    """The still-``False`` Phase 2 shared-foundation stubs (weather-manager.md
+    D16, failures-manager.md D11/§5): both flags stay ``False`` on this
+    adapter, and their gated methods raise immediately, with no socket
+    touched (no ``connect()`` call in this test). ``can_set_fuel_payload`` is
+    no longer in this set -- it flipped ``True`` (see
+    ``test_declares_only_the_phase_0_capabilities``) once ``pytest -m sim``
+    passed against a live simulator.
     """
     adapter = XPlaneSimAdapter()
     with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
@@ -85,12 +91,6 @@ async def test_phase_2_methods_refuse_without_their_capabilities() -> None:
         await adapter.clear_failure(FailureRef(failure_id="instruments.pitot"))
     with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
         await adapter.clear_all_failures()
-    with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
-        await adapter.get_loadout()
-    with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
-        await adapter.apply_setup(
-            AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
-        )
 
 
 async def test_phase_2_capability_free_reads_degrade_instead_of_raising() -> None:

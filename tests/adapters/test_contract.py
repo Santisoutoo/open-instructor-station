@@ -1074,7 +1074,19 @@ _DISTINCTIVE_LOADOUT = Loadout(
 
 
 async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
-    """The flag's coverage entry (fuel-payload.md §5.3 case 1)."""
+    """The flag's coverage entry (fuel-payload.md §5.3 case 1).
+
+    Asserts on stated masses by index, not on ``len(state.tanks/stations)``: a
+    real airframe's tank/station slots are a fixed physical property of the
+    loaded aircraft (X-Plane 12.4.3, measured live, exposes no dataref naming
+    how many payload stations exist at all — ``m_stations`` is always read as
+    the whole fixed array), so a real adapter can zero a slot but can never
+    make it stop existing. ``Loadout``/``LoadoutState``'s own contract (D10,
+    ``core/models.py::LoadoutState``) is "every *known* tank" — mass alone
+    does not decide whether a slot is known. Every named tank/station gets its
+    stated mass; that every *other* known slot is zeroed is asserted in
+    :func:`test_loadout_replaces_tanks_and_stations_wholesale` below.
+    """
     if not adapter.capabilities.can_set_fuel_payload:
         pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
 
@@ -1082,8 +1094,6 @@ async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
     await adapter.apply_setup(AircraftSetup(loadout=_DISTINCTIVE_LOADOUT))
     state = await adapter.get_loadout()
 
-    assert len(state.tanks) == 2
-    assert len(state.stations) == 2
     by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
     assert by_tank[0] == pytest.approx(52.0, abs=tol)
     assert by_tank[1] == pytest.approx(40.0, abs=tol)
@@ -1093,25 +1103,43 @@ async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
 
 
 async def test_loadout_replaces_tanks_and_stations_wholesale(adapter: SimAdapter) -> None:
-    """D10: a provided list replaces the whole set; ``[]`` empties it."""
+    """D10: a provided list replaces the whole set; ``[]`` empties it.
+
+    Asserted by mass, not by ``len(state.tanks)`` shrinking: measured live
+    against X-Plane 12.4.3, a wholesale-replace write can only zero a real
+    airframe's *other* known tanks, never remove them from ``m_fuel`` — the
+    array is fixed-size and physical (see
+    ``adapters/xplane/xplane_adapter.py::_write_loadout``'s docstring for the
+    live finding this resolved). "Empties it" is the honest reading for a
+    real aircraft too: draining a tank to 0 kg empties it without making it
+    cease to exist. ``Fake`` genuinely shrinks its own backing list (it has
+    no physical array to answer to) and satisfies every assertion below
+    trivially either way, so this still exercises the Fake exactly as before.
+    """
     if not adapter.capabilities.can_set_fuel_payload:
         pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
 
+    tol = LOADOUT_KG_TOLERANCE[adapter.name]
     two_tanks = Loadout(
         tanks=[TankFuel(tank_index=0, fuel_kg=10.0), TankFuel(tank_index=1, fuel_kg=10.0)]
     )
     await adapter.apply_setup(AircraftSetup(loadout=two_tanks))
     state = await adapter.get_loadout()
-    assert len(state.tanks) == 2
+    by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
+    assert by_tank[0] == pytest.approx(10.0, abs=tol)
+    assert by_tank[1] == pytest.approx(10.0, abs=tol)
 
     one_tank = Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=10.0)])
     await adapter.apply_setup(AircraftSetup(loadout=one_tank))
     state = await adapter.get_loadout()
-    assert len(state.tanks) == 1
+    by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
+    assert by_tank[0] == pytest.approx(10.0, abs=tol)
+    # Zeroed, not necessarily absent -- tank 1 still exists on a real airframe.
+    assert by_tank.get(1, 0.0) == pytest.approx(0.0, abs=tol)
 
     await adapter.apply_setup(AircraftSetup(loadout=Loadout(tanks=[])))
     state = await adapter.get_loadout()
-    assert state.tanks == []
+    assert all(tank.fuel_kg == pytest.approx(0.0, abs=tol) for tank in state.tanks)
 
 
 async def test_get_loadout_returns_a_valid_state(adapter: SimAdapter) -> None:

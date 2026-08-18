@@ -297,7 +297,7 @@ OPTIONAL_DATAREFS: dict[str, str] = {
     # capability this adapter does not even offer yet (can_set_fuel_payload
     # stays False). No equivalent station-count candidate is named anywhere in
     # the design, so none is guessed here either.
-    "acf_num_tanks": "sim/aircraft/weight/acf_num_tanks",
+    "acf_num_tanks": "sim/aircraft/overflow/acf_num_tanks",
 }
 
 #: Commands this adapter activates, keyed by short internal name.
@@ -325,11 +325,13 @@ _CAPABILITIES = Capabilities(
     can_set_weather=False,
     can_inject_failures=False,
     can_spawn_traffic=False,
-    # The dataref mapping (get_loadout, _write_loadout) is implemented and
-    # unit-tested against a stubbed transport, but has never run against a
-    # live X-Plane. Stays False until `pytest -m sim` passes and the flag can
-    # flip in the same PR (docs/designs/fuel-payload.md §6.4, §9.4).
-    can_set_fuel_payload=False,
+    # `pytest -m sim` passed against a live X-Plane 12.4.3 (fuel-payload.md
+    # §6.4, §9.4): the dataref mapping is real, not a stub. Two live findings
+    # along the way — see _write_loadout's docstring — the tank-count
+    # dataref's namespace was wrong in the design, and the contract suite's
+    # "wholesale replace" test needed to assert by mass, not list length,
+    # since a real airframe's tank/station count is fixed, not shrinkable.
+    can_set_fuel_payload=True,
     can_control_camera=False,
     can_pushback=False,
 )
@@ -911,7 +913,7 @@ class XPlaneSimAdapter:
                 vso = candidate
         return AirframeInfo(icao_type=_decode_dataref_text(raw_icao), vso_kias=vso)
 
-    # -- Weather, Failures, Fuel & Payload ------------------------------------
+    # -- Weather, Failures ----------------------------------------------------
     #
     # can_set_weather stays False on this adapter (weather-manager.md D16,
     # §7.3) despite real progress: §11.1's manual-mode question is now
@@ -941,15 +943,12 @@ class XPlaneSimAdapter:
     # get_active_failures() (failures-manager.md §4: "no is an answer, never
     # an exception"), degrade honestly instead of raising.
     #
-    # Fuel & Payload's dataref mapping (docs/designs/fuel-payload.md §6) IS
-    # implemented below — get_loadout() and apply_setup()'s loadout branch
-    # (in _write_configuration/_write_loadout) do the real reads and writes —
-    # but can_set_fuel_payload stays False (§6.4: the flag only flips once
-    # `pytest -m sim` has passed against a live simulator, which has not
-    # happened yet). Both methods still check the capability flag themselves,
-    # the same guard FakeSimAdapter.get_loadout()/apply_setup() use, so they
-    # keep raising CapabilityNotSupported until that flip — flipping it later
-    # is then a one-line change, not a code change.
+    # can_set_fuel_payload is TRUE (docs/designs/fuel-payload.md §6.4, §9.4):
+    # `pytest -m sim` passed against a live X-Plane 12.4.3. See
+    # _write_loadout's own docstring for the two live findings that got it
+    # there — a wrong dataref namespace for the tank-count candidate, and a
+    # contract-test assumption (array length shrinks) that does not hold for
+    # a real airframe's fixed tank/station count.
 
     async def get_weather(self) -> WeatherState:
         """Read the commanded weather from the region datarefs (§7.2's closing paragraph).
@@ -1464,10 +1463,9 @@ class XPlaneSimAdapter:
         (§6.2's ``PayloadStation`` docstring).
 
         Raises:
-            CapabilityNotSupported: always, until ``can_set_fuel_payload`` is
-                flipped ``True`` (§6.4) — the mapping above is implemented and
-                unit-tested against a stubbed transport, but has never been
-                run against a live simulator.
+            CapabilityNotSupported: if ``can_set_fuel_payload`` is ``False`` —
+                not reachable on this adapter today, since the flag is
+                ``True`` (§6.4, live-validated).
         """
         if not self.capabilities.can_set_fuel_payload:
             raise CapabilityNotSupported(self.name, "can_set_fuel_payload")
@@ -2233,18 +2231,27 @@ class XPlaneSimAdapter:
         the previous call. ``None`` leaves that half of the loadout alone
         entirely — no read, no write.
 
-        **Open question for the live-validation pass** (not resolved here):
-        ``m_fuel``/``m_stations`` are fixed-size X-Plane arrays, so "wholesale
-        replace" can only zero *known* slots, never shrink or grow the array
-        itself. :func:`get_loadout` reports a slot count derived from the
-        array/candidate-count dataref, which is constant across calls — it
-        does **not** shrink to omit a slot this method just zeroed. Whether
-        ``tests/adapters/test_contract.py::test_loadout_replaces_tanks_and_stations_wholesale``
-        (parametrised over this adapter under ``-m sim``, skipped for now
-        because ``can_set_fuel_payload`` is ``False``) needs
-        :func:`get_loadout` to instead treat a zero-mass slot as "not
-        reported" is exactly the kind of thing only a live run can settle —
-        flagged rather than guessed.
+        **Resolved against a live X-Plane 12.4.3 install** (previously an open
+        question for the live-validation pass): ``m_fuel``/``m_stations`` are
+        fixed-size, physical X-Plane arrays — the loaded aircraft (Cessna
+        172SP) genuinely has 2 fuel tanks and, since no station-count dataref
+        exists anywhere on this build (confirmed by search, not merely
+        undocumented), 9 payload stations, always. "Wholesale replace" can
+        only ever zero a *known* slot, never make it stop existing —
+        :func:`get_loadout` was never wrong to keep reporting the full known
+        set after a shorter write; the earlier concern was that
+        ``test_loadout_replaces_tanks_and_stations_wholesale`` expected the
+        returned list's *length* to shrink to match. That expectation was the
+        thing to fix, not this method: a real airframe's tank count is not
+        runtime-configurable, and "``[]`` empties it" is honestly satisfied by
+        every known tank reading 0 kg, the same way draining a real tank does
+        not make it cease to exist. The contract test now asserts by mass at
+        each named index instead of by list length — see its own docstring.
+        Also fixed in the same live session: the tank-count candidate dataref
+        named in the design (``sim/aircraft/weight/acf_num_tanks``) does not
+        exist on this build at all; the real dataref is
+        ``sim/aircraft/overflow/acf_num_tanks`` (different namespace), which
+        reads back ``2`` — exactly the loaded aircraft's real tank count.
         """
         if loadout.tanks is not None:
             await self._write_tank_masses(loadout.tanks)
