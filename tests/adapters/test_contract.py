@@ -51,6 +51,21 @@ from core.models import (
     TankFuel,
 )
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
+
+# NOTE: `core.traffic` is written by the traffic-contract foundation track
+# (docs/designs/ai-traffic.md §9.2 Track 0); this suite was authored against
+# the design, in parallel. Until that module lands, this import fails — that
+# is the expected pre-integration state, reported rather than hidden. It sits
+# in the first-party block, where ruff's isort will require it once the module
+# exists on disk (with no `known-first-party` configured, ruff classifies an
+# unresolvable module as third-party, so I001 flags this line only while the
+# module is missing).
+from core.traffic import (
+    TrafficCapacityExceeded,
+    TrafficContact,
+    TrafficTrack,
+    TrafficWaypoint,
+)
 from core.weather.models import CloudLayer, WeatherSetup, WeatherState, WindLayer
 
 # --------------------------------------------------------------------------
@@ -175,6 +190,37 @@ WEATHER_HOLD_S = {"fake": 0.2, "xplane": 90.0}
 #: gram; the Fake's is (docs/designs/fuel-payload.md §5.3).
 LOADOUT_KG_TOLERANCE = {"fake": 0.01, "xplane": 1.0}
 
+#: How far a freshly spawned traffic entity may already sit from its track's
+#: first waypoint when it is read back, in nautical miles. Never zero even for
+#: the Fake: an entity starts moving along its track the instant it spawns, so
+#: the read-back happens a real (if tiny) elapsed time later. A live bridge
+#: adds command/ack latency on top (docs/designs/ai-traffic.md §5.1).
+TRAFFIC_SPAWN_TOLERANCE_NM = {"fake": 0.01, "xplane": 0.25}
+
+#: Geometry of the track :func:`test_traffic_advances_along_its_track` spawns:
+#: the second waypoint sits :data:`TRAFFIC_ADVANCE_LEG_NM` away, reached at
+#: ``t_offset_s`` = :data:`TRAFFIC_ADVANCE_LEG_TIME_S` — 0.15 NM in 2 s is
+#: 270 kt, a realistic jet ground speed, and a displacement (~280 m) far
+#: outside any read-back tolerance, so "it moved" cannot be confused with
+#: noise.
+TRAFFIC_ADVANCE_LEG_NM = 0.15
+TRAFFIC_ADVANCE_LEG_TIME_S = 2.0
+
+#: Movement that counts as "the entity is really advancing", in nautical
+#: miles from the spawn waypoint (~90 m — a third of the leg, reached well
+#: inside the poll window on any correct implementation).
+TRAFFIC_MOVED_MIN_NM = 0.05
+
+#: How long the advance test polls before declaring the entity stuck. Longer
+#: than the whole leg, so even an implementation that only updates positions
+#: lazily on read has had every chance.
+TRAFFIC_ADVANCE_TIMEOUT_S = 6.0
+
+#: Hard ceiling on the capacity-enforcement spawn loop. No adapter is expected
+#: to allow anywhere near this many concurrent entities; hitting the bound
+#: without a refusal means capacity is simply not enforced.
+TRAFFIC_CAPACITY_PROBE_LIMIT = 100
+
 #: Which test pins each capability. ``PENDING`` marks a flag whose manager
 #: arrives in a later phase: the contract is not written yet, and that is a
 #: deliberate, visible decision rather than an oversight.
@@ -185,7 +231,7 @@ CAPABILITY_COVERAGE: dict[str, str] = {
     "can_set_aircraft_state": "test_apply_setup_applies_only_the_provided_fields",
     "can_set_weather": "test_set_weather_round_trips",
     "can_inject_failures": "test_injected_failure_is_reported_active",
-    "can_spawn_traffic": PENDING,
+    "can_spawn_traffic": "test_spawned_traffic_is_reported_active",
     "can_control_autopilot": "test_apply_setup_writes_the_autopilot",
     "can_set_fuel_payload": "test_set_loadout_round_trips",
     "can_control_camera": PENDING,
@@ -1229,6 +1275,225 @@ async def test_get_loadout_returns_a_valid_state(adapter: SimAdapter) -> None:
 
 
 # --------------------------------------------------------------------------
+# can_spawn_traffic
+# --------------------------------------------------------------------------
+
+
+def _traffic_track(
+    anchor: GeoPosition,
+    *,
+    callsign: str = "TFC01",
+    bearing_deg: float = 0.0,
+    leg_nm: float = TRAFFIC_ADVANCE_LEG_NM,
+    leg_time_s: float = TRAFFIC_ADVANCE_LEG_TIME_S,
+) -> TrafficTrack:
+    """A minimal two-waypoint ``custom`` track near ``anchor``.
+
+    Anchored to the aircraft's own position (live-suite rule 2): against a real
+    simulator an absolute coordinate could spawn an entity a continent away
+    from the loaded scenery. The track sits 2 NM off to the requested bearing
+    and 1000 ft above the anchor, so it never touches the user's aircraft.
+    """
+    start = point_at_distance_and_bearing(anchor, 2.0, bearing_deg)
+    start = GeoPosition(
+        latitude=start.latitude,
+        longitude=start.longitude,
+        altitude_ft=anchor.altitude_ft + 1000.0,
+    )
+    end_horizontal = point_at_distance_and_bearing(start, leg_nm, bearing_deg)
+    end = GeoPosition(
+        latitude=end_horizontal.latitude,
+        longitude=end_horizontal.longitude,
+        altitude_ft=start.altitude_ft,
+    )
+    speed_kt = leg_nm / leg_time_s * 3600.0
+    return TrafficTrack(
+        kind="aircraft",
+        scenario_shape="custom",
+        callsign=callsign,
+        label="contract-suite traffic",
+        waypoints=(
+            TrafficWaypoint(position=start, speed_kt=speed_kt, t_offset_s=0.0),
+            TrafficWaypoint(position=end, speed_kt=speed_kt, t_offset_s=leg_time_s),
+        ),
+    )
+
+
+def _contact_position(contact: TrafficContact) -> GeoPosition:
+    return GeoPosition(latitude=contact.latitude, longitude=contact.longitude)
+
+
+def _by_id(contacts: tuple[TrafficContact, ...], traffic_id: str) -> TrafficContact | None:
+    return next((c for c in contacts if c.traffic_id == traffic_id), None)
+
+
+async def test_spawned_traffic_is_reported_active(adapter: SimAdapter) -> None:
+    """The flag's coverage entry: spawn, then read the entity back.
+
+    The read-back is the assertion, not the absence of an exception — the
+    issue #39 lesson, restated once more: a track handed to ``spawn_traffic``
+    is not delivered until ``get_traffic_contacts`` reports an entity at the
+    track's first waypoint.
+    """
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    track = _traffic_track(_position_of(state))
+    contact = await adapter.spawn_traffic(track)
+    try:
+        assert isinstance(contact, TrafficContact)
+        assert contact.traffic_id
+        assert contact.callsign == track.callsign
+
+        reported = _by_id(await adapter.get_traffic_contacts(), contact.traffic_id)
+        assert reported is not None, "spawned traffic is missing from get_traffic_contacts()"
+        error_nm, _ = distance_and_bearing(track.waypoints[0].position, _contact_position(reported))
+        assert error_nm <= TRAFFIC_SPAWN_TOLERANCE_NM[adapter.name]
+    finally:
+        await adapter.despawn_traffic(contact.traffic_id)
+
+
+async def test_despawn_is_idempotent(adapter: SimAdapter) -> None:
+    """An unknown or already-gone id is a no-op, never an error."""
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    contact = await adapter.spawn_traffic(_traffic_track(_position_of(state)))
+    try:
+        await adapter.despawn_traffic(contact.traffic_id)
+        await adapter.despawn_traffic(contact.traffic_id)  # second time: still a no-op
+        assert _by_id(await adapter.get_traffic_contacts(), contact.traffic_id) is None
+    finally:
+        await adapter.despawn_traffic(contact.traffic_id)
+
+
+async def test_clear_all_traffic_leaves_none(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    anchor = _position_of(state)
+    try:
+        await adapter.spawn_traffic(_traffic_track(anchor, callsign="TFC01", bearing_deg=0.0))
+        await adapter.spawn_traffic(_traffic_track(anchor, callsign="TFC02", bearing_deg=90.0))
+        await adapter.clear_all_traffic()
+        assert await adapter.get_traffic_contacts() == ()
+    finally:
+        await adapter.clear_all_traffic()
+
+
+async def test_traffic_advances_along_its_track(adapter: SimAdapter) -> None:
+    """A spawned entity really moves along its track, on the track's own clock.
+
+    The second waypoint is materially displaced
+    (:data:`TRAFFIC_ADVANCE_LEG_NM`) and reached at ``t_offset_s`` =
+    :data:`TRAFFIC_ADVANCE_LEG_TIME_S`; the contact list is polled briefly (the
+    failures watcher-integration pattern) until the reported position has moved
+    measurably from the first waypoint toward the second — an adapter that
+    echoes the spawn point back forever fails at the deadline.
+    """
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    track = _traffic_track(_position_of(state))
+    start = track.waypoints[0].position
+    end = track.waypoints[1].position
+    contact = await adapter.spawn_traffic(track)
+    try:
+        deadline = asyncio.get_running_loop().time() + TRAFFIC_ADVANCE_TIMEOUT_S
+        moved_nm = 0.0
+        remaining_nm = TRAFFIC_ADVANCE_LEG_NM
+        while asyncio.get_running_loop().time() < deadline:
+            reported = _by_id(await adapter.get_traffic_contacts(), contact.traffic_id)
+            assert reported is not None, "the entity vanished while advancing along its track"
+            here = _contact_position(reported)
+            moved_nm, _ = distance_and_bearing(start, here)
+            remaining_nm, _ = distance_and_bearing(here, end)
+            if moved_nm >= TRAFFIC_MOVED_MIN_NM:
+                break
+            await asyncio.sleep(STREAM_INTERVAL_S)
+        assert moved_nm >= TRAFFIC_MOVED_MIN_NM, (
+            f"traffic never moved: still {moved_nm:.4f} NM from its spawn waypoint after "
+            f"{TRAFFIC_ADVANCE_TIMEOUT_S} s (needed {TRAFFIC_MOVED_MIN_NM} NM)"
+        )
+        # Moved *toward* the second waypoint, not off in some other direction.
+        assert remaining_nm <= TRAFFIC_ADVANCE_LEG_NM - TRAFFIC_MOVED_MIN_NM / 2.0
+    finally:
+        await adapter.despawn_traffic(contact.traffic_id)
+
+
+async def test_spawn_capacity_is_enforced(adapter: SimAdapter) -> None:
+    """One spawn past the adapter's own limit raises ``TrafficCapacityExceeded``.
+
+    The capacity is adapter-owned (ai-traffic.md D6), so the test does not
+    assume a number: it spawns until refused and pins the refusal's own
+    bookkeeping. Against ``xplane`` this runs only under ``-m sim`` (the
+    fixture's own parametrisation) — 19 real AI aircraft is heavy; against
+    ``fake`` it runs unconditionally in CI.
+    """
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    anchor = _position_of(state)
+    spawned = 0
+    try:
+        with pytest.raises(TrafficCapacityExceeded) as excinfo:
+            for index in range(TRAFFIC_CAPACITY_PROBE_LIMIT):
+                await adapter.spawn_traffic(
+                    _traffic_track(
+                        anchor,
+                        callsign=f"CAP{index:03d}",
+                        bearing_deg=(index * 17.0) % 360.0,
+                    )
+                )
+                spawned += 1
+        refusal = excinfo.value
+        assert refusal.capacity > 0
+        assert refusal.active_count >= refusal.capacity
+        assert spawned <= refusal.active_count
+        # The refusal corrupted nothing: everything spawned before it is intact.
+        assert len(await adapter.get_traffic_contacts()) >= spawned
+    finally:
+        await adapter.clear_all_traffic()
+
+
+async def test_stream_traffic_reflects_spawns(adapter: SimAdapter) -> None:
+    """An already-running stream picks up an entity spawned mid-stream.
+
+    The ``stream_state`` liveness pattern applied to the traffic feed: the
+    stream is started, one entity is spawned, and a subsequent tick must
+    include it — a stream replaying a snapshot taken at start-up fails here.
+    """
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    track = _traffic_track(_position_of(state))
+    stream = adapter.stream_traffic(STREAM_INTERVAL_S)
+    contact = None
+    try:
+        await anext(stream)  # the stream is alive before the spawn
+        contact = await adapter.spawn_traffic(track)
+        seen = False
+        for _ in range(50):
+            frame = await anext(stream)
+            if _by_id(frame, contact.traffic_id) is not None:
+                seen = True
+                break
+        assert seen, "a spawn during an open stream never appeared in any subsequent tick"
+    finally:
+        if contact is not None:
+            await adapter.despawn_traffic(contact.traffic_id)
+        aclose = getattr(stream, "aclose", None)
+        if aclose is not None:
+            await aclose()
+
+
+# --------------------------------------------------------------------------
 # Capability-free reads
 # --------------------------------------------------------------------------
 
@@ -1483,5 +1748,52 @@ async def test_loadout_methods_refuse_without_the_capability() -> None:
             await sim.apply_setup(
                 AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
             )
+    finally:
+        await sim.disconnect()
+
+
+async def test_traffic_methods_refuse_without_the_capability() -> None:
+    """Roadmap Phase 3 exit criterion 3, the CI-provable half (ai-traffic.md D14).
+
+    The criterion's own wording: *"With the bridge not installed, the
+    application starts, every non-traffic feature works, and traffic controls
+    are disabled with a stated reason — verified by a test running against an
+    adapter declaring ``can_spawn_traffic = False``."* This is that test at the
+    adapter seam, in CI, with no simulator and no bridge:
+
+    * every traffic *write* refuses with :class:`CapabilityNotSupported`
+      naming the missing flag — the stated reason;
+    * the *reads* degrade instead of failing: ``get_traffic_contacts()``
+      returns ``()`` and ``stream_traffic`` yields ``()`` forever, so nothing
+      that merely observes traffic (the WS route, the map) needs the flag.
+      That is a capability check, not a green-wash: "no traffic" is the honest
+      answer for an adapter that cannot spawn any.
+    """
+
+    class NoTrafficAdapter(FakeSimAdapter):
+        @property
+        def capabilities(self) -> Capabilities:
+            return super().capabilities.model_copy(update={"can_spawn_traffic": False})
+
+    sim = NoTrafficAdapter()
+    await sim.connect()
+    try:
+        anchor = GeoPosition(latitude=40.0, longitude=-3.0, altitude_ft=5000.0)
+        with pytest.raises(CapabilityNotSupported, match="can_spawn_traffic"):
+            await sim.spawn_traffic(_traffic_track(anchor))
+        with pytest.raises(CapabilityNotSupported, match="can_spawn_traffic"):
+            await sim.despawn_traffic("no-such-id")
+        with pytest.raises(CapabilityNotSupported, match="can_spawn_traffic"):
+            await sim.clear_all_traffic()
+
+        assert await sim.get_traffic_contacts() == ()
+
+        stream = sim.stream_traffic(STREAM_INTERVAL_S)
+        try:
+            assert await anext(stream) == ()
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if aclose is not None:
+                await aclose()
     finally:
         await sim.disconnect()
