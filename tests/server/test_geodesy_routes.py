@@ -2,11 +2,14 @@
 
 instructor-map.md (§2.1, §8.2): the route is a *faithful wrapper* around
 ``core.geodesy.distance_and_bearing`` and nothing more, so the assertions here
-are the same golden pair the core suite already proves
-(``tests/core/test_geodesy.py``): 25 NM at 137° true from Madrid measures back
-as exactly (25.0 NM, 137.0°). Targets are computed with ``core.geodesy`` in the
-test — never hard-coded coordinates — so a solver change that stays
-self-consistent cannot silently invalidate the fixture.
+lean on the property the core suite already proves
+(``tests/core/test_geodesy.py::test_direct_inverse_round_trip``, parametrised
+over bearings and distances): going out with ``point_at_distance_and_bearing``
+and measuring back returns the same distance and bearing. This file exercises
+one instance of that round trip — 25 NM at 137° true from Madrid — through the
+HTTP surface. Targets are computed with ``core.geodesy`` in the test — never
+hard-coded coordinates — so a solver change that stays self-consistent cannot
+silently invalidate the fixture.
 """
 
 from __future__ import annotations
