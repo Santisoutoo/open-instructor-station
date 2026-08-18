@@ -181,4 +181,26 @@ describe('<MapStagingBar /> Apply here', () => {
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Discard' })).toBeInTheDocument();
   });
+
+  it('carries the telemetry defaults on the Position-tab hand-off too', () => {
+    // D6 covers both commit paths: the hand-off stages the same telemetry-carried
+    // request Apply here would send, so the aircraft arrives at the Position tab
+    // configured rather than dropped. (Without telemetry the hand-off stays the
+    // explicit-zero ground point — pinned by MapPanel.test.tsx.)
+    const { store } = renderBar();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send to Position tab' }));
+
+    const state = store.getState();
+    expect(state.position.staged).toEqual({
+      type: 'coordinate',
+      position: { latitude: 40.46, longitude: -3.57, altitude_ft: 3000 },
+      heading_deg: 90,
+      ias_kt: 250,
+    });
+    expect(state.position.activeTab).toBe('coordinate');
+    expect(state.ui.activeTab).toBe('position');
+    expect(state.map.staged).toBeNull();
+    expect(state.map.mode).toBe('pan');
+  });
 });

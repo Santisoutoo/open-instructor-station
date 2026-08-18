@@ -10,7 +10,11 @@
  *   `commitGate`, imported, never reimplemented (D8).
  * - **Send to Position tab** is the hand-off for an instructor who wants to edit the
  *   full setup before committing — the Position panel's staging bar remains the only
- *   place that happens.
+ *   place that happens. It stages the *same* telemetry-carried defaults (D6 covers
+ *   both commit paths — the flight the aircraft is in should survive either door),
+ *   with the nullable heading/IAS coalesced to the Position tab's own explicit-zero
+ *   convention (`CoordinateForm`'s: 0 kt means "a point on the ground", stated, not
+ *   guessed).
  *
  * A failed apply renders the server's error `detail` inline, verbatim — the same
  * prose contract every other panel honours. Never a modal.
@@ -91,16 +95,12 @@ export function MapStagingBar({ staged }: { staged: LatLon }) {
           type="button"
           className="ghost-button"
           onClick={() => {
+            const request = defaultCoordinateRequest(staged, telemetry);
             dispatch(
               placementStaged({
-                type: 'coordinate',
-                position: {
-                  latitude: staged.lat,
-                  longitude: staged.lon,
-                  altitude_ft: 0,
-                },
-                heading_deg: 0,
-                ias_kt: 0,
+                ...request,
+                heading_deg: request.heading_deg ?? 0,
+                ias_kt: request.ias_kt ?? 0,
               }),
             );
             dispatch(positionTabSelected('coordinate'));
