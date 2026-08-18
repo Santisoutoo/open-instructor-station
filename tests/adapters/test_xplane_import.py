@@ -14,6 +14,7 @@ from adapters.xplane.xplane_adapter import (
     XPlaneWeatherRejected,
 )
 from core.failures import FAILURE_IDS, FailureRef
+from core.models import AircraftSetup, Loadout, TankFuel
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.weather.models import WeatherSetup
 
@@ -123,3 +124,22 @@ async def test_failure_support_when_disconnected_reports_every_entry_unsupported
     assert [entry.failure_id for entry in manifest.entries] == list(FAILURE_IDS)
     assert all(not entry.supported and entry.reason for entry in manifest.entries)
     assert await adapter.get_active_failures() == ()
+
+
+async def test_loadout_methods_refuse_while_disconnected() -> None:
+    """``can_set_fuel_payload`` is ``True``, but every method still checks
+    ``is_connected`` before touching a dataref -- a fresh, unconnected
+    adapter refuses rather than pretending to read or write. Unlike the
+    weather/failures capability checks above, ``get_loadout``/
+    ``apply_setup(loadout=...)`` have no per-entry resolution table to fall
+    back on: they go straight through ``_read``/``_write`` and hit
+    ``_require_client``'s own check, so the exception here is
+    ``XPlaneNotReachable``, not ``CapabilityNotSupported``.
+    """
+    adapter = XPlaneSimAdapter()
+    with pytest.raises(XPlaneNotReachable):
+        await adapter.get_loadout()
+    with pytest.raises(XPlaneNotReachable):
+        await adapter.apply_setup(
+            AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
+        )
