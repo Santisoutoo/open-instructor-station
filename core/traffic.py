@@ -187,7 +187,10 @@ class TcasConflictSpawnRequest(BaseModel):
     )
     miss_side: Literal["left", "right"] = "left"
     vertical_offset: Literal["above", "below"] = "above"
-    closure_ias_kt: float | None = Field(default=None, ge=0.0)
+    # gt, not ge: zero is never a meaningful speed here — None already means
+    # "use the default" — so the schema refuses it instead of building a
+    # degenerate motionless conflict. Same for the three sibling requests.
+    closure_ias_kt: float | None = Field(default=None, gt=0.0)
     kind: TrafficKind = "aircraft"
     callsign: str = Field(default="TFC01", min_length=1, max_length=12)
 
@@ -211,7 +214,7 @@ class RunwayIncursionSpawnRequest(BaseModel):
         "slightly AFTER the user's projected arrival — the worse-case incursion.",
     )
     from_side: Literal["left", "right"] = "left"
-    vehicle_speed_kt: float | None = Field(default=None, ge=0.0)
+    vehicle_speed_kt: float | None = Field(default=None, gt=0.0)
     kind: TrafficKind = "ground_vehicle"
     callsign: str = Field(default="GND01", min_length=1, max_length=12)
 
@@ -224,7 +227,7 @@ class ApproachSequenceSpawnRequest(BaseModel):
     airport_icao: str = Field(min_length=2, max_length=7)
     runway_ident: str = Field(min_length=1, max_length=3)
     distances_nm: tuple[float, ...] = Field(min_length=1, max_length=8)
-    ias_kt: float | None = Field(default=None, ge=0.0)
+    ias_kt: float | None = Field(default=None, gt=0.0)
     category: ApproachCategory = "B"
     kind: TrafficKind = "aircraft"
     callsign_prefix: str = Field(default="SEQ", min_length=1, max_length=8)
@@ -236,7 +239,7 @@ class TaxiTrafficSpawnRequest(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     type: Literal["taxi_traffic"]
     route: tuple[GeoPosition, ...] = Field(min_length=2, max_length=32)
-    speed_kt: float | None = Field(default=None, ge=0.0)
+    speed_kt: float | None = Field(default=None, gt=0.0)
     kind: TrafficKind = "aircraft"
     callsign: str = Field(default="TAXI01", min_length=1, max_length=12)
 
@@ -493,7 +496,16 @@ def tcas_conflict_track(
 
     A zero-miss request (the "head_on_ra"/"crossing_ra" defaults) places the
     intruder EXACTLY at the user's own projected position at t=spawn_lead_time_s.
+
+    Raises:
+        ValueError: for a non-positive closure speed — a motionless "intruder"
+            is three co-located waypoints, not a conflict.
     """
+    intruder_ias_kt = TCAS_DEFAULT_CLOSURE_IAS_KT if closure_ias_kt is None else closure_ias_kt
+    if intruder_ias_kt <= 0.0:
+        raise ValueError(
+            f"closure_ias_kt must be a positive speed in knots, got {intruder_ias_kt!r}."
+        )
     profile = TCAS_SEVERITY_PROFILES[severity]
     lead_s = profile.spawn_lead_time_s
 
@@ -523,7 +535,6 @@ def tcas_conflict_track(
         latitude=cpa.latitude, longitude=cpa.longitude, altitude_ft=intruder_altitude_ft
     )
 
-    intruder_ias_kt = TCAS_DEFAULT_CLOSURE_IAS_KT if closure_ias_kt is None else closure_ias_kt
     intruder_gs_kt = tas_from_ias(intruder_ias_kt, intruder_altitude_ft)
     # Negative distance walks backwards along the same geodesic, so spawn→CPA
     # measures exactly the distance the intruder covers in lead_s. The intruder

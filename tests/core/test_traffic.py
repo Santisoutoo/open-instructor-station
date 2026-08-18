@@ -182,6 +182,46 @@ def test_spawn_request_rejects_an_unknown_type() -> None:
         TypeAdapter(TrafficSpawnRequest).validate_python({"type": "flock_of_geese"})
 
 
+#: Every optional speed field across the request union, with a zero value.
+#: Zero is never a meaningful speed there — ``None`` already means "use the
+#: default" — so the schema itself refuses it (the server's 422) instead of
+#: letting a degenerate motionless entity be built.
+_ZERO_SPEED_PAYLOADS: list[dict[str, object]] = [
+    {"type": "tcas_conflict", "closure_ias_kt": 0.0},
+    {
+        "type": "runway_incursion",
+        "airport_icao": "LEMD",
+        "runway_ident": "32L",
+        "vehicle_speed_kt": 0.0,
+    },
+    {
+        "type": "approach_sequence",
+        "airport_icao": "LEMD",
+        "runway_ident": "32L",
+        "distances_nm": [10.0],
+        "ias_kt": 0.0,
+    },
+    {
+        "type": "taxi_traffic",
+        "route": [
+            {"latitude": 40.0, "longitude": -3.0},
+            {"latitude": 40.01, "longitude": -3.0},
+        ],
+        "speed_kt": 0.0,
+    },
+]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    _ZERO_SPEED_PAYLOADS,
+    ids=[str(payload["type"]) for payload in _ZERO_SPEED_PAYLOADS],
+)
+def test_spawn_request_speed_fields_reject_zero(payload: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        TypeAdapter(TrafficSpawnRequest).validate_python(payload)
+
+
 # --------------------------------------------------------------------------
 # interpolate_track
 # --------------------------------------------------------------------------
@@ -297,6 +337,13 @@ def test_ta_only_offsets_read_straight_off_the_severity_table() -> None:
     # vertical_offset defaults to "above": the intruder crosses 500 ft over.
     vertical_miss_ft = cpa_waypoint.position.altitude_ft - TCAS_USER.altitude_ft
     assert vertical_miss_ft == pytest.approx(profile.vertical_miss_distance_ft, abs=0.1)
+
+
+def test_tcas_conflict_refuses_a_non_positive_closure_speed() -> None:
+    """The same guard the three sibling builders have: a motionless "intruder"
+    is three co-located waypoints, not a conflict."""
+    with pytest.raises(ValueError, match="closure_ias_kt"):
+        tcas_conflict_track(TCAS_USER, closure_ias_kt=0.0)
 
 
 # --------------------------------------------------------------------------

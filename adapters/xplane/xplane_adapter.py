@@ -710,7 +710,6 @@ class XPlaneSimAdapter:
         # connection, from the bridge probe inside connect(), and never move
         # again for that connection's lifetime. Before connect() the honest
         # answer is the bridge-less baseline.
-        self._bridge_available = False
         self._capabilities = _CAPABILITIES
 
     # -- Identity ---------------------------------------------------------
@@ -822,9 +821,9 @@ class XPlaneSimAdapter:
         # once, here — and never move again for this connection's lifetime
         # (D4). The probe never raises and never fails the connect; an absent
         # bridge just means can_spawn_traffic stays False.
-        self._bridge_available = await self._probe_bridge(client)
+        bridge_available = await self._probe_bridge(client)
         self._capabilities = _CAPABILITIES.model_copy(
-            update={"can_spawn_traffic": self._bridge_available}
+            update={"can_spawn_traffic": bridge_available}
         )
 
         self._client = client
