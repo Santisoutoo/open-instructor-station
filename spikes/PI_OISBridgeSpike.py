@@ -260,7 +260,7 @@ class PythonInterface:
         elif op == "echo":
             self._write_ack({**base, "ok": True, "sha256": hashlib.sha256(payload).hexdigest()})
         elif op == "spawn":
-            self._op_spawn(base, command)
+            self._op_spawn(base, command, payload)
         elif op == "despawn":
             traffic_id = command.get("traffic_id")
             existed = self._entities.pop(traffic_id, None) is not None
@@ -276,13 +276,16 @@ class PythonInterface:
         else:
             self._write_ack({**base, "ok": False, "error": f"unknown op {op!r}"})
 
-    def _op_spawn(self, base: dict[str, Any], command: dict[str, Any]) -> None:
+    def _op_spawn(self, base: dict[str, Any], command: dict[str, Any], payload: bytes) -> None:
+        """``payload`` is the received command's own bytes — the sha256 in the ack
+        must hash exactly what arrived, never a re-serialisation of the parsed JSON
+        (this session's multiplayer-slot result is the reminder that "looks equal"
+        and "is byte-identical" are different claims)."""
         track = command.get("track")
         traffic_id = command.get("traffic_id")
         if not isinstance(track, dict) or not traffic_id:
             self._write_ack({**base, "ok": False, "error": "spawn needs traffic_id and track"})
             return
-        payload = _payload_of(self._command.content) or json.dumps(command).encode()
         self._entities[traffic_id] = {"track": track, "spawned_hb": self.heartbeat_s}
         self._write_ack(
             {

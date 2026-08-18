@@ -41,6 +41,7 @@ import binascii
 import contextlib
 import hashlib
 import json
+import math
 import statistics
 import time
 from typing import Any
@@ -209,7 +210,8 @@ def measure_latency(client: BridgeClient) -> dict[str, float]:
         "iterations": float(LATENCY_ITERATIONS),
         "min_ms": ordered[0] * 1000.0,
         "median_ms": statistics.median(samples) * 1000.0,
-        "p95_ms": ordered[max(0, int(len(ordered) * 0.95) - 1)] * 1000.0,
+        # Nearest-rank p95: the ceil(0.95 * n)-th ordered sample (1-based).
+        "p95_ms": ordered[min(len(ordered) - 1, math.ceil(len(ordered) * 0.95) - 1)] * 1000.0,
         "max_ms": ordered[-1] * 1000.0,
         "mean_polls": statistics.mean(poll_counts),
     }
