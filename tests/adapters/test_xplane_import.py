@@ -8,7 +8,11 @@ here touches a socket.
 import pytest
 
 from adapters.xplane import DATAREFS, XPlaneSimAdapter
-from adapters.xplane.xplane_adapter import DEFAULT_BASE_URL, XPlaneNotReachable
+from adapters.xplane.xplane_adapter import (
+    DEFAULT_BASE_URL,
+    XPlaneNotReachable,
+    XPlaneWeatherRejected,
+)
 from core.failures import FAILURE_IDS, FailureRef
 from core.models import AircraftSetup, Loadout, TankFuel
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
@@ -37,11 +41,24 @@ def test_declares_only_the_phase_0_capabilities() -> None:
     assert capabilities.can_set_position is True
     assert capabilities.can_set_aircraft_state is True
     assert capabilities.can_control_autopilot is True
+    # can_set_fuel_payload flipped True: pytest -m sim passed against a live
+    # X-Plane 12.4.3 (fuel-payload.md §6.4/§9.4) -- see xplane_adapter.py's
+    # _write_loadout docstring for the live finding that resolved its own
+    # "open question for the live-validation pass".
+    assert capabilities.can_set_fuel_payload is True
+    # can_inject_failures flipped True: the same live session verified §5.1's
+    # value enum and ran the full pytest -m sim failures contract suite (see
+    # adapters/xplane/failure_datarefs.py's module docstring).
+    assert capabilities.can_inject_failures is True
+    # can_set_weather flipped True: pytest -m sim passed against a live
+    # X-Plane 12.4.3 -- a "permanently broken" temperature-drift finding from
+    # an earlier session turned out to be a transient real-weather-engine
+    # interpolation, and a genuine cloud-settle bug was fixed alongside it
+    # (see xplane_adapter.py's _write_temperature_ladder and
+    # _await_cloud_layers_settled docstrings).
+    assert capabilities.can_set_weather is True
     # Everything else arrives in a later phase and must stay off until then.
-    assert capabilities.can_set_weather is False
-    assert capabilities.can_inject_failures is False
     assert capabilities.can_spawn_traffic is False
-    assert capabilities.can_set_fuel_payload is False
     assert capabilities.can_control_camera is False
     assert capabilities.can_pushback is False
 
@@ -68,37 +85,61 @@ async def test_disconnect_on_a_fresh_adapter_is_harmless() -> None:
     assert adapter.is_connected is False
 
 
-async def test_phase_2_methods_refuse_without_their_capabilities() -> None:
-    """The Phase 2 shared-foundation stubs (weather-manager.md D16,
-    failures-manager.md D11/§5, fuel-payload.md D15): every flag stays
-    ``False`` on this adapter, and the six gated methods raise immediately,
-    with no socket touched (no ``connect()`` call in this test).
+async def test_weather_methods_refuse_while_disconnected() -> None:
+    """``can_set_weather`` is ``True``, but nothing has resolved yet on a
+    fresh, unconnected adapter -- ``self._ids`` is empty until
+    :meth:`~adapters.xplane.xplane_adapter.XPlaneSimAdapter.connect` fills
+    it, so every region weather dataref looks the same as a build that does
+    not expose them (``_require_weather_datarefs``'s own documented
+    degradation, weather-manager.md §7). No socket is touched by this test.
     """
     adapter = XPlaneSimAdapter()
-    with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+    with pytest.raises(XPlaneWeatherRejected):
         await adapter.get_weather()
-    with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+    with pytest.raises(XPlaneWeatherRejected):
         await adapter.set_weather(WeatherSetup(visibility_m=1000.0))
+
+
+async def test_failure_injection_refuses_while_disconnected() -> None:
+    """``can_inject_failures`` is ``True``, but nothing has resolved yet on a
+    fresh, unconnected adapter -- ``_failure_ids`` is empty until
+    :meth:`~adapters.xplane.xplane_adapter.XPlaneSimAdapter.connect` fills it,
+    so every entry looks the same as a genuinely unsupported one
+    (``_resolved_failure_dataref_ids``'s own documented defence, §4).
+    """
+    adapter = XPlaneSimAdapter()
     with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
         await adapter.inject_failure(FailureRef(failure_id="instruments.pitot"))
     with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
         await adapter.clear_failure(FailureRef(failure_id="instruments.pitot"))
-    with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
-        await adapter.clear_all_failures()
-    with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
-        await adapter.get_loadout()
-    with pytest.raises(CapabilityNotSupported, match="can_set_fuel_payload"):
-        await adapter.apply_setup(
-            AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
-        )
 
 
-async def test_phase_2_capability_free_reads_degrade_instead_of_raising() -> None:
-    """``get_failure_support``/``get_active_failures`` are capability-free
-    reads (failures-manager.md §4): "no" is an answer, never an exception.
+async def test_failure_support_when_disconnected_reports_every_entry_unsupported() -> None:
+    """``get_failure_support`` is a capability-free read (failures-manager.md
+    §4): "no" is an answer, never an exception -- including for the reason
+    "this adapter has never connected, so nothing has resolved yet."
     """
     adapter = XPlaneSimAdapter()
     manifest = await adapter.get_failure_support()
     assert [entry.failure_id for entry in manifest.entries] == list(FAILURE_IDS)
     assert all(not entry.supported and entry.reason for entry in manifest.entries)
     assert await adapter.get_active_failures() == ()
+
+
+async def test_loadout_methods_refuse_while_disconnected() -> None:
+    """``can_set_fuel_payload`` is ``True``, but every method still checks
+    ``is_connected`` before touching a dataref -- a fresh, unconnected
+    adapter refuses rather than pretending to read or write. Unlike the
+    weather/failures capability checks above, ``get_loadout``/
+    ``apply_setup(loadout=...)`` have no per-entry resolution table to fall
+    back on: they go straight through ``_read``/``_write`` and hit
+    ``_require_client``'s own check, so the exception here is
+    ``XPlaneNotReachable``, not ``CapabilityNotSupported``.
+    """
+    adapter = XPlaneSimAdapter()
+    with pytest.raises(XPlaneNotReachable):
+        await adapter.get_loadout()
+    with pytest.raises(XPlaneNotReachable):
+        await adapter.apply_setup(
+            AircraftSetup(loadout=Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=1.0)]))
+        )

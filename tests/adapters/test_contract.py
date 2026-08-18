@@ -496,6 +496,78 @@ async def test_set_position_delivers_the_commanded_speed(adapter: SimAdapter) ->
         await adapter.set_position(home, heading_deg=original.heading_deg)
 
 
+#: Bound on how long a fresh teleport's *indicated* airspeed takes to settle
+#: once a non-zero wind is also freshly written, per
+#: :func:`test_set_position_delivers_the_commanded_speed_with_wind`. Measured
+#: live: the ground-velocity vector written is correct *immediately* (its own
+#: raw local_vx/vy/vz read back matching the predicted TAS-minus-headwind
+#: ground speed on the first read after the teleport) — what lags is
+#: X-Plane's own derivation of the indicated-airspeed instrument from that
+#: ground velocity plus the freshly-set regional wind, taking anywhere from
+#: ~3s to ~10s+ across repeated runs to settle within tolerance. This is a
+#: genuine instrument-settling effect, the same category as
+#: :data:`COMMANDED_IAS_TOLERANCE_KT`'s own "released the freeze, aircraft is
+#: still settling" note — just slower here because a fresh wind is also
+#: involved, not a defect in the write.
+_WIND_IAS_SETTLE_TIMEOUT_S = 20.0
+_WIND_IAS_SETTLE_POLL_INTERVAL_S = 1.0
+
+
+async def test_set_position_delivers_the_commanded_speed_with_wind(adapter: SimAdapter) -> None:
+    """Issue #42's own acceptance criterion: the commanded IAS is achieved
+    with a non-zero wind set, verified against a live simulator — a still-air
+    test (see :func:`test_set_position_delivers_the_commanded_speed` above)
+    cannot detect this bug at all.
+
+    A strong (25 kt) direct headwind is set at the aircraft's own altitude,
+    and the target heading points straight into it. If the ground-velocity
+    vector were still written air-relative (the pre-#42 bug: the vector
+    X-Plane consumes is a *ground* velocity, only equal to the air-relative
+    one in still air), the read-back would settle roughly 25 kt short of what
+    was commanded and never enter tolerance no matter how long this polls —
+    comfortably outside :data:`COMMANDED_IAS_TOLERANCE_KT`, so a regression in
+    the wind subtraction fails this test loudly, not by a marginal amount.
+    """
+    if not adapter.capabilities.can_set_position:
+        pytest.skip(f"{adapter.name} does not declare can_set_position")
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    heading_deg = 0.0
+    target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, heading_deg)
+
+    wind_direction_deg = heading_deg  # wind FROM the north == a direct headwind on heading 0.
+    try:
+        await adapter.set_weather(
+            WeatherSetup(
+                wind_layers=[
+                    WindLayer(
+                        altitude_ft=max(0.0, original.altitude_ft),
+                        direction_deg=wind_direction_deg,
+                        speed_kt=25.0,
+                    )
+                ]
+            )
+        )
+        await adapter.set_position(target, heading_deg=heading_deg, ias_kt=COMMANDED_IAS_KT)
+
+        tol = COMMANDED_IAS_TOLERANCE_KT[adapter.name]
+        deadline = asyncio.get_running_loop().time() + _WIND_IAS_SETTLE_TIMEOUT_S
+        state = await adapter.get_aircraft_state()
+        while (
+            abs(state.ias_kt - COMMANDED_IAS_KT) > tol
+            and asyncio.get_running_loop().time() < deadline
+        ):
+            await asyncio.sleep(_WIND_IAS_SETTLE_POLL_INTERVAL_S)
+            state = await adapter.get_aircraft_state()
+        assert state.ias_kt == pytest.approx(COMMANDED_IAS_KT, abs=tol)
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
+        await adapter.set_weather(WeatherSetup(wind_layers=[]))
+
+
 async def test_set_position_without_a_speed_preserves_the_current_one(
     adapter: SimAdapter,
 ) -> None:
@@ -1074,7 +1146,19 @@ _DISTINCTIVE_LOADOUT = Loadout(
 
 
 async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
-    """The flag's coverage entry (fuel-payload.md §5.3 case 1)."""
+    """The flag's coverage entry (fuel-payload.md §5.3 case 1).
+
+    Asserts on stated masses by index, not on ``len(state.tanks/stations)``: a
+    real airframe's tank/station slots are a fixed physical property of the
+    loaded aircraft (X-Plane 12.4.3, measured live, exposes no dataref naming
+    how many payload stations exist at all — ``m_stations`` is always read as
+    the whole fixed array), so a real adapter can zero a slot but can never
+    make it stop existing. ``Loadout``/``LoadoutState``'s own contract (D10,
+    ``core/models.py::LoadoutState``) is "every *known* tank" — mass alone
+    does not decide whether a slot is known. Every named tank/station gets its
+    stated mass; that every *other* known slot is zeroed is asserted in
+    :func:`test_loadout_replaces_tanks_and_stations_wholesale` below.
+    """
     if not adapter.capabilities.can_set_fuel_payload:
         pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
 
@@ -1082,8 +1166,6 @@ async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
     await adapter.apply_setup(AircraftSetup(loadout=_DISTINCTIVE_LOADOUT))
     state = await adapter.get_loadout()
 
-    assert len(state.tanks) == 2
-    assert len(state.stations) == 2
     by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
     assert by_tank[0] == pytest.approx(52.0, abs=tol)
     assert by_tank[1] == pytest.approx(40.0, abs=tol)
@@ -1093,25 +1175,43 @@ async def test_set_loadout_round_trips(adapter: SimAdapter) -> None:
 
 
 async def test_loadout_replaces_tanks_and_stations_wholesale(adapter: SimAdapter) -> None:
-    """D10: a provided list replaces the whole set; ``[]`` empties it."""
+    """D10: a provided list replaces the whole set; ``[]`` empties it.
+
+    Asserted by mass, not by ``len(state.tanks)`` shrinking: measured live
+    against X-Plane 12.4.3, a wholesale-replace write can only zero a real
+    airframe's *other* known tanks, never remove them from ``m_fuel`` — the
+    array is fixed-size and physical (see
+    ``adapters/xplane/xplane_adapter.py::_write_loadout``'s docstring for the
+    live finding this resolved). "Empties it" is the honest reading for a
+    real aircraft too: draining a tank to 0 kg empties it without making it
+    cease to exist. ``Fake`` genuinely shrinks its own backing list (it has
+    no physical array to answer to) and satisfies every assertion below
+    trivially either way, so this still exercises the Fake exactly as before.
+    """
     if not adapter.capabilities.can_set_fuel_payload:
         pytest.skip(f"{adapter.name} does not declare can_set_fuel_payload")
 
+    tol = LOADOUT_KG_TOLERANCE[adapter.name]
     two_tanks = Loadout(
         tanks=[TankFuel(tank_index=0, fuel_kg=10.0), TankFuel(tank_index=1, fuel_kg=10.0)]
     )
     await adapter.apply_setup(AircraftSetup(loadout=two_tanks))
     state = await adapter.get_loadout()
-    assert len(state.tanks) == 2
+    by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
+    assert by_tank[0] == pytest.approx(10.0, abs=tol)
+    assert by_tank[1] == pytest.approx(10.0, abs=tol)
 
     one_tank = Loadout(tanks=[TankFuel(tank_index=0, fuel_kg=10.0)])
     await adapter.apply_setup(AircraftSetup(loadout=one_tank))
     state = await adapter.get_loadout()
-    assert len(state.tanks) == 1
+    by_tank = {tank.tank_index: tank.fuel_kg for tank in state.tanks}
+    assert by_tank[0] == pytest.approx(10.0, abs=tol)
+    # Zeroed, not necessarily absent -- tank 1 still exists on a real airframe.
+    assert by_tank.get(1, 0.0) == pytest.approx(0.0, abs=tol)
 
     await adapter.apply_setup(AircraftSetup(loadout=Loadout(tanks=[])))
     state = await adapter.get_loadout()
-    assert state.tanks == []
+    assert all(tank.fuel_kg == pytest.approx(0.0, abs=tol) for tank in state.tanks)
 
 
 async def test_get_loadout_returns_a_valid_state(adapter: SimAdapter) -> None:

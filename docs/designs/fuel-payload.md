@@ -604,8 +604,10 @@ rather than implied, and is the subject of §11.1.
 
 `get_loadout()` reads `fuel_tank_kg` and `payload_station_kg` as whole arrays (the Web API returns
 the full array on a plain read) and slices them into `TankFuel`/`PayloadStation` lists in Python,
-against a tank/station count read once at connect (candidate: `sim/aircraft/weight/acf_num_tanks`
-/ an equivalent station count — **verify in spike**).
+against a tank/station count resolved per call (see §14's as-built addendum: the candidate named
+here, `sim/aircraft/weight/acf_num_tanks`, does not exist on a live install — the real path is
+`sim/aircraft/overflow/acf_num_tanks` — and no station-count dataref exists at all, so the
+station side always uses the whole array X-Plane reports).
 
 ### 6.3 CG is computed, never read
 
@@ -862,17 +864,25 @@ response's `state.mass_and_balance` matches the recomputed (not the pre-write) n
 sentences name the adapter and the flag; the manifest lists four presets and reports
 `limits_source` correctly against a Fake constructed with and without `mass_limits`.
 
-### 9.4 `@pytest.mark.sim` — `tests/sim/test_live_fuel_payload.py` (never in CI)
+### 9.4 `@pytest.mark.sim` — as-built: `tests/adapters/test_contract.py` (never in CI)
 
-- The §6.2 dataref guesses, read/write, one round trip per tank/station — this validates or kills
-  the "verify in spike" rows of §6.2 and §11.1 empirically.
-- Whether `mass_limits` comes back populated at all on the user's aircraft — logged, not asserted,
-  because the honest expectation (§6.2) is that it will not for most installs in Phase 2.
+**As-built (see §14):** this landed as three more parametrised cases in the shared
+`tests/adapters/test_contract.py` — `test_set_loadout_round_trips`,
+`test_loadout_replaces_tanks_and_stations_wholesale`, `test_get_loadout_returns_a_valid_state` —
+rather than a standalone `tests/sim/test_live_fuel_payload.py`, matching how the contract suite
+already parametrises every other capability over `fake`/`xplane`. What each covers:
+
+- The §6.2 dataref guesses, read/write, one round trip per tank/station — this validated (and in
+  one case, corrected — §14) the "verify in spike" rows of §6.2 and §11.1 empirically.
 - Applying a loadout mid-flight and observing the aircraft's IAS/attitude are undisturbed
   immediately after the write (proving §6.1's "no freeze needed" reasoning empirically, not just
   by argument).
 - Restores the aircraft's pre-test loadout in a `finally` — mass is state the live-suite rules
   require restoring, same as position.
+
+Not covered by this session's live pass: whether `mass_limits` comes back populated at all on the
+user's aircraft — still the honest expectation (§6.2) that it will not for most installs in
+Phase 2, and still worth a logged-not-asserted check in a future session.
 
 ### 9.5 UI tests (vitest)
 
@@ -1012,6 +1022,39 @@ shows gross weight, fuel, CG within envelope → Apply → confirmation reports 
 `Full` tile → preview shows the CG violation and a disabled Apply → tick "load anyway" → Apply
 succeeds → console clean. No live simulator needed; the real-sim proof is `pytest -m sim` and the
 `sim-validator`'s smoke, neither a merge gate.
+
+---
+
+## 14. Addendum: as-built — `can_set_fuel_payload` flipped after live validation
+
+`pytest -m sim` passed against a live X-Plane 12.4.3 install. Two live findings:
+
+- **The §6.2 tank-count candidate was in the wrong dataref namespace.** `sim/aircraft/weight/
+  acf_num_tanks` does not exist on this build at all; the real dataref is
+  `sim/aircraft/overflow/acf_num_tanks` — a different namespace, not a typo of the same one — and
+  it reads back `2`, exactly the loaded C172's real tank count. No station-count dataref of any
+  kind was found (confirmed by search, not merely undocumented per §6.2's original framing), so
+  `get_loadout()`'s station side always uses the whole array X-Plane reports (9 stations on this
+  aircraft) — that was already the honest fallback §6.2 specified for "no count dataref," it just
+  needed confirming that no such dataref exists to fall back *from*.
+- **§6.2's "wholesale replace" contract needed a semantic correction, not a code fix.** The
+  original contract test asserted that `get_loadout()`'s returned list *shrinks* to match the
+  length of the last `apply_setup(loadout=...)` call. A real airframe's tank/station count is a
+  fixed physical property — X-Plane can zero a tank's mass, it cannot make the tank slot itself
+  stop existing — so `Loadout`'s own D10 semantics ("a provided list replaces the whole set" /
+  "`[]` empties it") are honestly satisfied by every known slot reading zero mass, the same way
+  draining a real fuel tank to 0 kg does not make it cease to be a tank. The contract test
+  (`tests/adapters/test_contract.py::test_loadout_replaces_tanks_and_stations_wholesale`) now
+  asserts by mass at each named index instead of by list length — correct and unchanged in
+  behaviour for `FakeSimAdapter`, which has no physical array to answer to and still satisfies
+  every assertion.
+
+Test plan location, corrected from §9.4's original sketch: the live coverage landed as three more
+parametrised cases inside the shared `tests/adapters/test_contract.py`
+(`test_set_loadout_round_trips`, `test_loadout_replaces_tanks_and_stations_wholesale`,
+`test_get_loadout_returns_a_valid_state`), not a standalone `tests/sim/test_live_fuel_payload.py`
+— matching how every other capability in that file is already parametrised over `fake`/`xplane`
+rather than duplicated into a second file.
 
 ---
 
