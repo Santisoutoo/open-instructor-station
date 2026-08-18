@@ -128,6 +128,7 @@ from core.models import (
     PayloadStation,
     TankFuel,
 )
+from core.pushback import PushbackRequest
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter, WeatherRejected
 from core.traffic import TrafficContact, TrafficTrack
 from core.weather.models import (
@@ -2511,6 +2512,21 @@ class XPlaneSimAdapter:
             ),
         )
         await self._write("local_y", local.y_m)
+
+    # -- Pushback ---------------------------------------------------------
+
+    async def pushback(self, request: PushbackRequest) -> None:
+        """Refuse: this adapter does not declare ``can_pushback`` yet.
+
+        The contract-foundation stub (pushback-manager.md §9.2 Track 0),
+        mirroring the traffic stubs below: the flag is ``False``, so a caller
+        reaching this ignored the capabilities — exactly what
+        :class:`CapabilityNotSupported` means. Issue #123's track replaces it
+        with the §5.1 computed path (``pushback_target`` + the
+        already-validated :meth:`set_position`) and flips the flag.
+        """
+        del request
+        raise CapabilityNotSupported(self.name, "can_pushback")
 
     # -- AI traffic -------------------------------------------------------
     # Track 0 stubs (ai-traffic.md §9.2): the capability plumbing is real —

@@ -38,6 +38,7 @@ from core.models import (
     PayloadStation,
     TankFuel,
 )
+from core.pushback import PushbackRequest, pushback_target, require_on_ground
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.traffic import (
     TrafficCapacityExceeded,
@@ -321,6 +322,35 @@ class FakeSimAdapter:
         if ias_kt is not None:
             updates["ias_kt"] = ias_kt
         self._state = self._state.model_copy(update=updates)
+
+    async def pushback(self, request: PushbackRequest) -> None:
+        """Push the in-memory aircraft backward per ``request``.
+
+        Re-resolves the target from the *current* state via
+        :func:`core.pushback.pushback_target` — the same pure function the
+        preview route calls (pushback-manager.md D7) — then applies it. No
+        physics, no animation: the pushed-back aircraft is simply *there*,
+        stationary (``ias_kt=0``, ``vertical_speed_fpm=0``), exactly the
+        ledger philosophy the failures section states.
+
+        Raises:
+            CapabilityNotSupported: without ``can_pushback``.
+            PushbackNotOnGround: when the aircraft is airborne (D8 — a
+                precondition, not a capability; the aircraft is left unmoved).
+        """
+        if not self.capabilities.can_pushback:
+            raise CapabilityNotSupported(self.name, "can_pushback")
+        require_on_ground(self._state)
+        target = pushback_target(self._state, request)
+        self._state = self._state.model_copy(
+            update={
+                "latitude": target.position.latitude,
+                "longitude": target.position.longitude,
+                "heading_deg": target.heading_deg,
+                "ias_kt": 0.0,
+                "vertical_speed_fpm": 0.0,
+            }
+        )
 
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is set, leaving the rest untouched.
