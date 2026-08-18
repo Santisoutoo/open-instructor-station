@@ -24,3 +24,9 @@
   font-size: 0.65rem;
   color: var(--text-dim);
 }
+
+/* Capability known-false: the chip stays visible but reads as inert (hard rule 3). */
+.map-metar--disabled {
+  color: var(--text-dim);
+  border-style: dashed;
+}

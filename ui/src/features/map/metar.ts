@@ -11,10 +11,18 @@
  *   `27005KT 9999 BKN025 19/07 Q1016`
  *   `27020G30KT CAVOK 19/07 Q1013`
  *
- * with two deliberate deviations from a real report, both inherited from the wire model
- * (weather-manager.md D13): wind direction is TRUE degrees and is NOT rounded to the
- * nearest 10 — a crosswind preset that commanded 273° shows `273`, because showing the
- * commanded value verbatim is the whole point of the chip.
+ * with three deliberate deviations from a real report, all inherited from the wire model
+ * (weather-manager.md D13):
+ *
+ * - Wind direction is TRUE degrees and is NOT rounded to the nearest 10 — a crosswind
+ *   preset that commanded 273° shows `273`, because showing the commanded value verbatim
+ *   is the whole point of the chip.
+ * - Cloud bases are feet **MSL** (`CloudLayer.base_ft`'s own unit), whereas a real METAR
+ *   cloud group is height AGL. Converting needs the field elevation, which this module
+ *   does not have. TODO(#113): the overlays track mounts the chip next to its
+ *   reference-airport picker — pass that airport's elevation in and subtract it here.
+ * - There is no wind-variability, weather-phenomena or trend group: the wire model does
+ *   not command them.
  */
 
 import type { CloudLayer, WeatherState, WindLayer } from '../../api/models';
@@ -52,12 +60,17 @@ export function metarWind(layers: readonly WindLayer[]): string {
   return `${steady}G${twoDigits(peak)}KT`;
 }
 
-/** Four-digit metres, capped METAR-style: `0800`, `9999` at 10 km and above. */
+/** The commanded metres as METAR arithmetic sees them: rounded once, floored at zero. */
+function roundedVisibility(metres: number): number {
+  return Math.max(0, Math.round(metres));
+}
+
+/**
+ * Four-digit metres, capped METAR-style: `0800`, `9999` at 10 km and above. The cap is
+ * applied to the ROUNDED value, so 9999.7 m reads `9999` — never a five-digit `10000`.
+ */
 export function metarVisibility(metres: number): string {
-  if (metres >= 10000) {
-    return '9999';
-  }
-  return String(Math.max(0, Math.round(metres))).padStart(4, '0');
+  return String(Math.min(9999, roundedVisibility(metres))).padStart(4, '0');
 }
 
 /**
@@ -84,20 +97,23 @@ export function metarTemperatures(temperatureC: number, dewpointC: number): stri
   return `${token(temperatureC)}/${token(dewpointC)}`;
 }
 
-/** `Q1016` — QNH in whole hectopascals. */
+/** `Q1016` — QNH in whole hectopascals, always four digits: 998 hPa reads `Q0998`. */
 export function metarQnh(hpa: number): string {
-  return `Q${String(Math.round(hpa))}`;
+  return `Q${String(Math.round(hpa)).padStart(4, '0')}`;
 }
 
 /**
  * The whole chip string: wind, visibility + cloud (collapsed to `CAVOK` when the commanded
  * state earns it — 10 km or more, no cloud group, no precipitation), temperature/dewpoint
- * and QNH.
+ * and QNH. The CAVOK comparison uses the same ROUNDED metres the visibility token does,
+ * so 9999.7 m collapses to CAVOK rather than falling between the two.
  */
 export function formatMetar(state: WeatherState): string {
   const clouds = metarClouds(state.cloud_layers);
   const cavok =
-    state.visibility_m >= 10000 && clouds === 'SKC' && state.precipitation_ratio <= 0;
+    roundedVisibility(state.visibility_m) >= 10000 &&
+    clouds === 'SKC' &&
+    state.precipitation_ratio <= 0;
   const visibilityAndCloud = cavok
     ? 'CAVOK'
     : `${metarVisibility(state.visibility_m)} ${clouds}`;

@@ -4,17 +4,25 @@
  * asks for (and, when the gate is closed, that it asks for NOTHING) is what is worth
  * asserting.
  *
- * The behaviour under test is D10's fail-closed discipline: the chip is ABSENT — not
- * disabled, not a placeholder — unless `can_set_weather` is declared and the weather read
- * succeeded, and it never even issues `GET /api/weather` while the capability is unknown
- * or false (the endpoint 501s without it).
+ * The behaviour under test is D10's two fail-closed postures: a *disabled* chip with the
+ * reason stated when the capabilities are known and `can_set_weather` is false, and
+ * NOTHING at all while the capabilities are unknown/unreadable or the weather read fails —
+ * and in every closed state `GET /api/weather` is never even issued (the endpoint 501s
+ * without the capability).
+ *
+ * The fail-closed assertions wait for the query to actually settle (the rendered reason,
+ * or the query's own `rejected` status in the store) before asserting that no weather call
+ * was made — asserting on "capabilities was requested" alone could pass before the
+ * response was processed, proving nothing.
  */
 
 import { render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { instructorApi } from '../../api/instructorApi';
 import type { Capabilities, WeatherState } from '../../api/models';
 import { setupStore } from '../../store';
+import { weatherApi } from '../weather/weatherApi';
 import { MetarChip } from './MetarChip';
 
 const CAPABLE: Capabilities = {
@@ -89,7 +97,7 @@ function renderChip() {
       <MetarChip />
     </Provider>,
   );
-  return container;
+  return { container, store };
 }
 
 afterEach(() => {
@@ -107,23 +115,30 @@ describe('MetarChip', () => {
     );
   });
 
-  it('renders nothing without can_set_weather, and never asks for the weather', async () => {
+  it('renders a DISABLED chip with the reason without can_set_weather, and never asks for the weather', async () => {
     stubApi({ capabilities: { ...CAPABLE, can_set_weather: false } });
-    const container = renderChip();
+    renderChip();
 
-    await waitFor(() => {
-      expect(calls.some((url) => url.includes('/capabilities'))).toBe(true);
-    });
-    expect(container).toBeEmptyDOMElement();
+    // The rendered reason IS the proof the capabilities response was processed.
+    expect(
+      await screen.findByText(/does not declare can_set_weather/),
+    ).toBeInTheDocument();
+    const chip = screen.getByRole('note', { name: 'Commanded weather' });
+    expect(chip).toHaveAttribute('aria-disabled', 'true');
+    expect(chip).toHaveTextContent('METAR unavailable');
     expect(calls.some((url) => url.includes('/weather'))).toBe(false);
   });
 
   it('renders nothing when the capabilities themselves cannot be read', async () => {
     stubApi({ capabilitiesStatus: 500 });
-    const container = renderChip();
+    const { container, store } = renderChip();
 
+    // Wait for the query itself to settle as rejected — only then is "still empty and no
+    // weather call" a verdict rather than a race.
     await waitFor(() => {
-      expect(calls.some((url) => url.includes('/capabilities'))).toBe(true);
+      expect(
+        instructorApi.endpoints.getCapabilities.select()(store.getState()).isError,
+      ).toBe(true);
     });
     expect(container).toBeEmptyDOMElement();
     expect(calls.some((url) => url.includes('/weather'))).toBe(false);
@@ -131,10 +146,12 @@ describe('MetarChip', () => {
 
   it('renders nothing when the weather read fails', async () => {
     stubApi({ weatherStatus: 501 });
-    const container = renderChip();
+    const { container, store } = renderChip();
 
     await waitFor(() => {
-      expect(calls.some((url) => url.includes('/weather'))).toBe(true);
+      expect(
+        weatherApi.endpoints.getWeatherState.select()(store.getState()).isError,
+      ).toBe(true);
     });
     expect(container).toBeEmptyDOMElement();
   });

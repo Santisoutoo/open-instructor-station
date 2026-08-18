@@ -5,11 +5,17 @@
  * so on its face so an instructor never mistakes a manually-set CAT III fog for what is
  * actually happening outside the window.
  *
- * Fails closed, hard rule 3 style: it renders NOTHING — not a disabled shell — unless the
- * adapter declares `can_set_weather` and the weather read succeeded. The weather query is
- * skipped outright until the capability is known-true, because `GET /api/weather` itself
- * 501s without it (the same reasoning as `features/weather/gate.ts`), and "I could not find
- * out" counts as unsupported: a capabilities error keeps the chip absent too.
+ * Fails closed, hard rule 3 style, in two distinct postures (D10):
+ *
+ * - While the capabilities are loading or unreadable, or the weather read fails, it
+ *   renders NOTHING — "I could not find out" earns no shell at all.
+ * - When the capabilities are KNOWN and `can_set_weather` is false, it renders a
+ *   *disabled* chip with the reason stated — hard rule 3's "disabled in the UI", D10's
+ *   "disabled with a reason when can_set_weather is false thereafter".
+ *
+ * Either way the weather query is skipped outright until the capability is known-true,
+ * because `GET /api/weather` itself 501s without it (the same reasoning as
+ * `features/weather/gate.ts`).
  *
  * Not mounted anywhere yet: the overlays track (#113) owns `MapPanel.tsx` this wave and
  * mounts the chip next to its reference-airport picker.
@@ -27,7 +33,29 @@ export function MetarChip() {
     skip: !supported,
   });
 
-  if (!supported || weatherFailed || weather === undefined) {
+  if (capabilities === undefined) {
+    // Loading, or the capabilities themselves could not be read: no shell at all.
+    return null;
+  }
+
+  if (!supported) {
+    return (
+      <p
+        className="map-metar map-metar--disabled"
+        role="note"
+        aria-label="Commanded weather"
+        aria-disabled="true"
+      >
+        <span className="map-metar__string">METAR unavailable</span>
+        <span className="map-metar__source">
+          This adapter does not declare can_set_weather, so there is no commanded weather
+          to show.
+        </span>
+      </p>
+    );
+  }
+
+  if (weatherFailed || weather === undefined) {
     return null;
   }
 

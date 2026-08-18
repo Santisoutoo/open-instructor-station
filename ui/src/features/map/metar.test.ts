@@ -89,6 +89,10 @@ describe('metarVisibility', () => {
     expect(metarVisibility(10000)).toBe('9999');
     expect(metarVisibility(20000)).toBe('9999');
   });
+
+  it('caps the ROUNDED value: 9999.7 m reads 9999, never a five-digit 10000', () => {
+    expect(metarVisibility(9999.7)).toBe('9999');
+  });
 });
 
 describe('metarClouds', () => {
@@ -118,11 +122,21 @@ describe('metarQnh', () => {
   it('rounds to whole hectopascals behind a Q', () => {
     expect(metarQnh(1013.25)).toBe('Q1013');
   });
+
+  it('pads to four digits — a deep low reads Q0998, never Q998', () => {
+    expect(metarQnh(998)).toBe('Q0998');
+  });
 });
 
 describe('formatMetar', () => {
   it('collapses visibility and cloud to CAVOK when the commanded state earns it', () => {
     expect(formatMetar(weatherState())).toBe('27005KT CAVOK 19/07 Q1016');
+  });
+
+  it('reads CAVOK at 9999.7 m — the check uses the same rounded metres as the token', () => {
+    expect(formatMetar(weatherState({ visibility_m: 9999.7 }))).toBe(
+      '27005KT CAVOK 19/07 Q1016',
+    );
   });
 
   it('never reads CAVOK with cloud stated, even at full visibility', () => {
