@@ -7,11 +7,13 @@ committed fixture — every profile in this suite is built in-memory.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
 
+import core.profiles.store as profile_store_module
 from core.profiles.models import TrainingProfile, TrainingProfileCreate
 from core.profiles.store import ProfileStore, ProfileStoreError
 from core.scenarios.models import ScenarioDocument
@@ -108,7 +110,25 @@ class TestList:
         store = ProfileStore(tmp_path / "does-not-exist")
         assert store.list() == []
 
-    def test_lists_newest_updated_at_first(self, store: ProfileStore) -> None:
+    def test_lists_newest_updated_at_first(
+        self, store: ProfileStore, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two back-to-back ``store.create()`` calls need distinguishable
+        ``updated_at`` instants for "newest first" to have a defined answer --
+        some CI runners (observed: GitHub Actions windows-latest) have wall-clock
+        resolution coarse enough that consecutive ``datetime.now(UTC)`` calls tie,
+        which made this test flaky rather than wrong. Controlling the clock removes
+        the platform dependency without weakening what's actually being verified.
+        """
+        instants = iter(
+            [datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC), datetime(2026, 1, 1, 0, 0, 1, tzinfo=UTC)]
+        )
+        monkeypatch.setattr(
+            profile_store_module,
+            "datetime",
+            type("_FixedClock", (), {"now": staticmethod(lambda tz=None: next(instants))}),
+        )
+
         first = store.create(_draft("First"))
         second = store.create(_draft("Second"))
         summaries = store.list()
