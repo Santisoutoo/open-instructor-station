@@ -1,0 +1,32 @@
+/*
+ * The METAR chip (instructor-map.md §7.9). Its own file rather than an edit to `map.css`
+ * because the overlays track (#113) owns the map chrome files this wave; visually it
+ * follows `.map-panel__chip` — raised pill, mono, tabular numerals.
+ */
+
+.map-metar {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.map-metar__source {
+  font-size: 0.65rem;
+  color: var(--text-dim);
+}
+
+/* Capability known-false: the chip stays visible but reads as inert (hard rule 3). */
+.map-metar--disabled {
+  color: var(--text-dim);
+  border-style: dashed;
+}
