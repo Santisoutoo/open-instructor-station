@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from core.failures import ActiveFailure, FailureRef, FailureSupportManifest
 from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
+from core.traffic import TrafficContact, TrafficTrack
 from core.weather.models import WeatherSetup, WeatherState
 
 __all__ = [
@@ -38,7 +39,10 @@ class Capabilities(BaseModel):
     dataclass so that it is served verbatim by ``GET /api/capabilities`` and
     lands in the OpenAPI schema the UI client is generated from.
 
-    Immutable — an adapter's capabilities never change at runtime.
+    Immutable — an adapter's capabilities are fixed for the lifetime of a
+    connection, resolved once at ``connect()`` and never mutated afterwards
+    (ai-traffic.md D3/D4: a connect-time probe may decide a flag, but nothing
+    moves it mid-session).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -273,11 +277,57 @@ class SimAdapter(Protocol):
         """
         ...
 
+    async def get_traffic_contacts(self) -> tuple[TrafficContact, ...]:
+        """Every live traffic entity this adapter (or its bridge) currently reports.
+
+        Capability-free read (the get_active_failures posture): an adapter
+        without can_spawn_traffic, or whose bridge is not currently reachable,
+        returns () rather than raising. "No traffic" is always an honest, cheap
+        answer.
+        """
+        ...
+
+    async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
+        """Spawn one entity following ``track`` and return its initial contact,
+        carrying a fresh adapter-assigned traffic_id (ai-traffic.md D5).
+
+        Requires can_spawn_traffic. Raises
+        :class:`~core.traffic.TrafficCapacityExceeded` (D6) when the adapter is
+        already at whatever limit it enforces — never silently refuses and
+        never corrupts an existing entity's state instead.
+        """
+        ...
+
+    async def despawn_traffic(self, traffic_id: str) -> None:
+        """Remove one entity. Idempotent: an unknown or already-gone id is a
+        no-op, not an error — the same posture as clear_failure on a healthy
+        system. Requires can_spawn_traffic.
+        """
+        ...
+
+    async def clear_all_traffic(self) -> None:
+        """Despawn every entity this adapter is tracking. Idempotent.
+        Requires can_spawn_traffic.
+        """
+        ...
+
     def stream_state(self, interval_s: float) -> AsyncIterator[AircraftState]:
         """Yield aircraft states roughly every ``interval_s`` seconds until cancelled.
 
         Declared as a plain method returning an async iterator (not an ``async
         def``) so implementations can be async generators and callers can write
         ``async for state in adapter.stream_state(0.25)``.
+        """
+        ...
+
+    def stream_traffic(self, interval_s: float) -> AsyncIterator[tuple[TrafficContact, ...]]:
+        """Yield the full traffic picture roughly every ``interval_s`` seconds,
+        mirroring :meth:`stream_state`'s shape and reasoning: a plain method
+        returning an async iterator so implementations can be async generators.
+
+        Capability-free: an adapter without traffic support yields () forever
+        rather than raising, so a caller (the WS route) can iterate
+        unconditionally exactly like it does for state — no
+        adapter.capabilities check needed before the loop starts.
         """
         ...

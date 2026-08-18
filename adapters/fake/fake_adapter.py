@@ -12,7 +12,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from time import monotonic
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from core.failures import (
     FAILURE_CATALOGUE,
@@ -36,6 +39,12 @@ from core.models import (
     TankFuel,
 )
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
+from core.traffic import (
+    TrafficCapacityExceeded,
+    TrafficContact,
+    TrafficTrack,
+    interpolate_track,
+)
 from core.weather.models import WeatherSetup, WeatherState, WindLayer
 
 __all__ = ["FakeSimAdapter"]
@@ -93,6 +102,30 @@ _ALL_CAPABILITIES = Capabilities(
 _SECONDS_PER_HOUR = 3600.0
 _SECONDS_PER_MINUTE = 60.0
 
+#: The Fake's own traffic capacity (ai-traffic.md §4.4). Chosen to mirror
+#: X-Plane's real multiplayer-slot limit **for test realism only**: capacity is
+#: adapter-owned (D6), so this is the Fake's own picked constant, not a value
+#: read from ``core/traffic.py`` — and not one any other adapter inherits.
+_FAKE_MAX_TRAFFIC = 19
+
+#: How far apart the two samples of the finite-difference vertical speed are.
+_VERTICAL_SPEED_SAMPLE_GAP_S = 1.0
+
+
+@dataclass(frozen=True)
+class _FakeTrafficEntity:
+    """One spawned entity: its track and when the Fake's clock started it.
+
+    Everything a :class:`~core.traffic.TrafficContact` needs that is not
+    derived by :func:`~core.traffic.interpolate_track` — kind, scenario shape,
+    callsign, label — already travels on the track itself; only the
+    adapter-assigned id and the spawn instant live here.
+    """
+
+    traffic_id: str
+    track: TrafficTrack
+    spawned_at_monotonic: float
+
 
 class FakeSimAdapter:
     """A simulator that lives entirely in a Python object.
@@ -124,6 +157,9 @@ class FakeSimAdapter:
         # Active failures, keyed by (failure_id, engine_index). No physics —
         # this ledger IS the fake's observable failure behaviour.
         self._failures: set[tuple[FailureId, int | None]] = set()
+        # Spawned traffic, keyed by traffic_id. Contacts are derived from each
+        # entity's track at read time (interpolate_track), never stored.
+        self._traffic: dict[str, _FakeTrafficEntity] = {}
 
     # -- Identity ---------------------------------------------------------
 
@@ -364,6 +400,97 @@ class FakeSimAdapter:
             updates["loadout"] = incoming.loadout
         return current.model_copy(update=updates)
 
+    # -- AI traffic -------------------------------------------------------
+
+    async def get_traffic_contacts(self) -> tuple[TrafficContact, ...]:
+        """Every live entity, sampled off its track at the Fake's own clock.
+
+        A capability-free read: an adapter that cannot spawn traffic reports
+        ``()`` rather than raising. An entity whose ``despawn_after_s`` has
+        elapsed is dropped from the ledger as part of this read — lazy expiry,
+        no background task, matching the Fake's "no physics beyond what it is
+        asked to report" philosophy already used for failures.
+        """
+        if not self.capabilities.can_spawn_traffic:
+            return ()
+        now = monotonic()
+        contacts: list[TrafficContact] = []
+        for traffic_id, entity in list(self._traffic.items()):
+            elapsed_s = now - entity.spawned_at_monotonic
+            despawn_after_s = entity.track.despawn_after_s
+            if (
+                despawn_after_s is not None
+                and elapsed_s >= entity.track.waypoints[-1].t_offset_s + despawn_after_s
+            ):
+                del self._traffic[traffic_id]
+                continue
+            contacts.append(self._contact_at(entity, elapsed_s))
+        return tuple(contacts)
+
+    async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
+        """Record one entity and return its initial contact — exactly ``waypoints[0]``.
+
+        Raises:
+            CapabilityNotSupported: without ``can_spawn_traffic``.
+            TrafficCapacityExceeded: at :data:`_FAKE_MAX_TRAFFIC` entities — the
+                Fake's own limit (ai-traffic.md D6), never a ``core/`` constant.
+        """
+        if not self.capabilities.can_spawn_traffic:
+            raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        if len(self._traffic) >= _FAKE_MAX_TRAFFIC:
+            raise TrafficCapacityExceeded(self.name, _FAKE_MAX_TRAFFIC, len(self._traffic))
+        entity = _FakeTrafficEntity(
+            traffic_id=uuid4().hex,
+            track=track,
+            spawned_at_monotonic=monotonic(),
+        )
+        self._traffic[entity.traffic_id] = entity
+        return self._contact_at(entity, 0.0)
+
+    async def despawn_traffic(self, traffic_id: str) -> None:
+        """Remove one entity. Idempotent — an unknown id is a no-op, not an error."""
+        if not self.capabilities.can_spawn_traffic:
+            raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        self._traffic.pop(traffic_id, None)
+
+    async def clear_all_traffic(self) -> None:
+        """Despawn everything. Idempotent."""
+        if not self.capabilities.can_spawn_traffic:
+            raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        self._traffic.clear()
+
+    def _contact_at(self, entity: _FakeTrafficEntity, elapsed_s: float) -> TrafficContact:
+        """One entity's contact, ``elapsed_s`` after its spawn.
+
+        Position, heading, speed and ground flag come straight from
+        :func:`~core.traffic.interpolate_track` — the shared reference
+        implementation (ai-traffic.md D9). The vertical speed the sample does
+        not carry is derived the honest way: a finite difference of the track's
+        own interpolated altitude, so a descending approach-sequence aircraft
+        reports the descent it is actually flying.
+        """
+        sample = interpolate_track(entity.track, elapsed_s)
+        ahead = interpolate_track(entity.track, elapsed_s + _VERTICAL_SPEED_SAMPLE_GAP_S)
+        vertical_speed_fpm = (
+            (ahead.position.altitude_ft - sample.position.altitude_ft)
+            / _VERTICAL_SPEED_SAMPLE_GAP_S
+            * _SECONDS_PER_MINUTE
+        )
+        return TrafficContact(
+            traffic_id=entity.traffic_id,
+            kind=entity.track.kind,
+            scenario_shape=entity.track.scenario_shape,
+            callsign=entity.track.callsign,
+            label=entity.track.label,
+            latitude=sample.position.latitude,
+            longitude=sample.position.longitude,
+            altitude_ft=sample.position.altitude_ft,
+            heading_deg=sample.heading_deg,
+            ground_speed_kt=sample.ground_speed_kt,
+            vertical_speed_fpm=vertical_speed_fpm,
+            on_ground=sample.on_ground,
+        )
+
     # -- Streaming --------------------------------------------------------
 
     async def stream_state(self, interval_s: float) -> AsyncGenerator[AircraftState, None]:
@@ -376,6 +503,20 @@ class FakeSimAdapter:
         while True:
             self._advance(interval_s)
             yield self._state.model_copy(deep=True)
+            await asyncio.sleep(interval_s)
+
+    async def stream_traffic(
+        self, interval_s: float
+    ) -> AsyncGenerator[tuple[TrafficContact, ...], None]:
+        """Yield the full traffic picture every ``interval_s`` seconds.
+
+        The same shape as :meth:`stream_state`, and capability-free like the
+        read it wraps: an adapter (or subclass) without ``can_spawn_traffic``
+        yields ``()`` forever rather than raising, so the WS route iterates
+        unconditionally.
+        """
+        while True:
+            yield await self.get_traffic_contacts()
             await asyncio.sleep(interval_s)
 
     def _advance(self, elapsed_s: float) -> None:
