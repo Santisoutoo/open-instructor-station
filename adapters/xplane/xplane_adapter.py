@@ -129,6 +129,7 @@ from core.models import (
     TankFuel,
 )
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter, WeatherRejected
+from core.traffic import TrafficContact, TrafficTrack
 from core.weather.models import (
     MAX_WIND_LAYERS,
     CloudLayer,
@@ -705,6 +706,12 @@ class XPlaneSimAdapter:
         self._command_ids: dict[str, int] = {}
         self._failure_ids: dict[tuple[FailureId, int | None], tuple[int, ...]] = {}
         self._freeze_depth = 0
+        # ai-traffic.md §4.3 (D3/D4): capabilities are computed once per
+        # connection, from the bridge probe inside connect(), and never move
+        # again for that connection's lifetime. Before connect() the honest
+        # answer is the bridge-less baseline.
+        self._bridge_available = False
+        self._capabilities = _CAPABILITIES
 
     # -- Identity ---------------------------------------------------------
 
@@ -715,8 +722,16 @@ class XPlaneSimAdapter:
 
     @property
     def capabilities(self) -> Capabilities:
-        """Phase 0 capabilities: position, aircraft state and autopilot only."""
-        return _CAPABILITIES
+        """What this connection supports — resolved once, inside :meth:`connect`.
+
+        Everything except ``can_spawn_traffic`` is a static fact about this
+        adapter; that one flag depends on whether the optional ``bridge/``
+        plugin answered the connect-time probe (ai-traffic.md D3). It is never
+        mutated mid-session (D4): a bridge that disappears later is a
+        connectivity fault surfaced by the traffic write methods failing, not
+        a capability flip.
+        """
+        return self._capabilities
 
     @property
     def is_connected(self) -> bool:
@@ -803,10 +818,34 @@ class XPlaneSimAdapter:
                     dataref_id for dataref_id in resolved if dataref_id is not None
                 )
 
+        # ai-traffic.md §4.3: capabilities are computed from the bridge probe,
+        # once, here — and never move again for this connection's lifetime
+        # (D4). The probe never raises and never fails the connect; an absent
+        # bridge just means can_spawn_traffic stays False.
+        self._bridge_available = await self._probe_bridge(client)
+        self._capabilities = _CAPABILITIES.model_copy(
+            update={"can_spawn_traffic": self._bridge_available}
+        )
+
         self._client = client
         self._ids = index
         self._command_ids = commands
         self._failure_ids = failure_ids
+
+    async def _probe_bridge(self, client: httpx.AsyncClient) -> bool:
+        """Is the optional ``bridge/`` plugin loaded and alive on this connection?
+
+        **Track B stub** (ai-traffic.md §5.2, §9.2): the real probe looks for
+        the ``ois/bridge/heartbeat_s`` custom dataref in the index the same way
+        :data:`OPTIONAL_DATAREFS` are found, then reads it twice a short gap
+        apart, requiring the second read to be strictly greater — proving the
+        flight loop is actually ticking, not just that the plugin loaded and
+        then froze. Until that lands the honest answer is ``False`` — no
+        bridge, no traffic. Absence never raises and never fails
+        :meth:`connect`; that is the whole point of "optional".
+        """
+        del client  # unused until Track B implements the real probe
+        return False
 
     async def disconnect(self) -> None:
         """Close the HTTP client. Idempotent, never raises."""
@@ -2474,6 +2513,40 @@ class XPlaneSimAdapter:
         )
         await self._write("local_y", local.y_m)
 
+    # -- AI traffic -------------------------------------------------------
+    # Track 0 stubs (ai-traffic.md §9.2): the capability plumbing is real —
+    # can_spawn_traffic is resolved from the bridge probe at connect() — but
+    # the probe is a stub returning False until Track B lands the bridge
+    # transport (adapters/xplane/traffic_bridge.py), so the writes below can
+    # only ever answer with the capability refusal, which is the truth.
+
+    async def get_traffic_contacts(self) -> tuple[TrafficContact, ...]:
+        """Capability-free read: with no probed bridge there is no traffic.
+
+        Track B wires this to the bridge's ``ois/traffic/contacts`` dataref;
+        until then "none" is the honest, cheap answer — never an exception.
+        """
+        return ()
+
+    async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
+        """Refuse: this adapter never declares ``can_spawn_traffic`` today.
+
+        The bridge probe is a Track B stub returning ``False``, so the flag is
+        ``False`` on every connection and a caller reaching this ignored the
+        capabilities — exactly what :class:`CapabilityNotSupported` means.
+        """
+        del track
+        raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+
+    async def despawn_traffic(self, traffic_id: str) -> None:
+        """Refuse — see :meth:`spawn_traffic`."""
+        del traffic_id
+        raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+
+    async def clear_all_traffic(self) -> None:
+        """Refuse — see :meth:`spawn_traffic`."""
+        raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+
     # -- Streaming --------------------------------------------------------
 
     async def stream_state(self, interval_s: float) -> AsyncGenerator[AircraftState, None]:
@@ -2485,6 +2558,19 @@ class XPlaneSimAdapter:
         """
         while True:
             yield await self.get_aircraft_state()
+            await asyncio.sleep(interval_s)
+
+    async def stream_traffic(
+        self, interval_s: float
+    ) -> AsyncGenerator[tuple[TrafficContact, ...], None]:
+        """Yield the full traffic picture every ``interval_s`` seconds.
+
+        The same shape as :meth:`stream_state`, and capability-free like the
+        read it wraps: without a bridge this yields ``()`` forever rather than
+        raising, so the WS route iterates unconditionally.
+        """
+        while True:
+            yield await self.get_traffic_contacts()
             await asyncio.sleep(interval_s)
 
 
