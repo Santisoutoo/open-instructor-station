@@ -139,6 +139,21 @@ def test_inverse_bearing_is_normalised_to_0_360() -> None:
     assert bearing == pytest.approx(270.0, abs=1e-6)
 
 
+def test_a_hair_west_of_north_folds_to_zero_not_360() -> None:
+    """Float modulo can return exactly 360.0 for a tiny negative azimuth.
+
+    ``-1e-15 % 360.0 == 360.0``, so a destination an infinitesimal sliver west
+    of due north used to measure a bearing of exactly 360.0 — outside the
+    promised ``[0, 360)`` and outside ``MeasureResult``'s ``lt=360.0`` bound,
+    turning a valid ``/api/geodesy/measure`` request into a 500.
+    """
+    a = GeoPosition(latitude=40.0, longitude=0.0)
+    b = GeoPosition(latitude=41.0, longitude=-1e-16)
+    _, bearing = distance_and_bearing(a, b)
+    assert 0.0 <= bearing < 360.0
+    assert bearing == pytest.approx(0.0, abs=1e-9)
+
+
 def test_distance_is_symmetric() -> None:
     other = point_at_distance_and_bearing(MADRID, 42.0, 61.0)
     there, _ = distance_and_bearing(MADRID, other)

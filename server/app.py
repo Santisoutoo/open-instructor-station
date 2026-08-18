@@ -22,6 +22,8 @@ Surface:
 * ``/api/scenarios/*`` — the Flight Scenario Generator, in
   :mod:`server.scenario_routes`.
 * ``/api/profiles/*`` — Training Profiles, in :mod:`server.profile_routes`.
+* ``/api/geodesy/*`` — the Instructor Map's exact measurement, in
+  :mod:`server.geodesy_routes`.
 
 The UI (built separately into ``ui/dist``) is served from ``/`` when it exists;
 the server starts perfectly well without it.
@@ -46,6 +48,7 @@ from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from server import (
     failure_routes,
     fuel_payload_routes,
+    geodesy_routes,
     navdata_routes,
     position_routes,
     profile_routes,
@@ -385,6 +388,7 @@ def create_app() -> FastAPI:
 
     # The feature managers live in their own routers; this module stays the
     # shell. Registered before the UI mount, which claims "/".
+    app.include_router(geodesy_routes.router)
     app.include_router(navdata_routes.router)
     app.include_router(position_routes.router)
     app.include_router(weather_routes.router)
