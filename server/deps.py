@@ -20,6 +20,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.models import AirframeInfo
 from core.navdata.provider import NavdataProvider
+from core.profiles.paths import default_profiles_root
+from core.profiles.store import ProfileStore
 from core.sim_adapter import SimAdapter
 
 __all__ = [
@@ -27,10 +29,12 @@ __all__ = [
     "get_adapter",
     "get_airframe_info",
     "get_navdata",
+    "get_profile_store",
     "get_settings",
     "load_airframe_info",
     "reset_adapter",
     "reset_navdata",
+    "reset_profile_store",
 ]
 
 AdapterName = Literal["fake", "xplane"]
@@ -48,6 +52,10 @@ class Settings(BaseSettings):
     navdata: NavdataProviderName = "xplane_native"
     #: The X-Plane installation to read navdata from. ``None`` autodetects.
     navdata_root: str | None = None
+    #: Where training profiles are stored. ``None`` uses the per-OS default
+    #: (``core.profiles.paths.default_profiles_root``) — the same override
+    #: convention ``navdata_root`` uses for navdata autodetection.
+    profiles_root: str | None = None
     # Bound to all interfaces on purpose: using the station from a tablet on
     # the same LAN is a first-class scenario.
     host: str = "0.0.0.0"
@@ -174,10 +182,28 @@ def get_navdata() -> NavdataProvider:
     return _build_navdata(get_settings())
 
 
-def reset_adapter() -> None:
-    """Drop the cached settings, adapter, navdata provider and airframe.
+def _build_profile_store(settings: Settings) -> ProfileStore:
+    """Construct the profile store named by ``settings``. Performs no I/O.
 
-    All of them together: the first three are read from the same ``Settings``
+    Constructing a :class:`~core.profiles.store.ProfileStore` never creates
+    its directory (that module's own import-safety guarantee) — ``profiles_root``
+    is resolved here purely to decide *where* it would write, the same
+    composition-root reasoning ``_build_navdata`` uses for the navdata root.
+    """
+    root = Path(settings.profiles_root) if settings.profiles_root else default_profiles_root()
+    return ProfileStore(root)
+
+
+@lru_cache(maxsize=1)
+def get_profile_store() -> ProfileStore:
+    """Return the process-wide training-profile store singleton."""
+    return _build_profile_store(get_settings())
+
+
+def reset_adapter() -> None:
+    """Drop the cached settings, adapter, navdata provider, profile store and airframe.
+
+    All of them together: the first four are read from the same ``Settings``
     object, so a test that reconfigures one and leaves another cached would be
     running against a mismatched pair — and the airframe was read from the
     adapter being dropped, so keeping it would serve the old simulator's
@@ -186,6 +212,7 @@ def reset_adapter() -> None:
     global _airframe_info
     get_adapter.cache_clear()
     get_navdata.cache_clear()
+    get_profile_store.cache_clear()
     get_settings.cache_clear()
     _airframe_info = AirframeInfo()
 
@@ -193,3 +220,8 @@ def reset_adapter() -> None:
 def reset_navdata() -> None:
     """Drop only the cached navdata provider, keeping the adapter connected."""
     get_navdata.cache_clear()
+
+
+def reset_profile_store() -> None:
+    """Drop only the cached profile store. The ``reset_navdata()`` pattern, for tests."""
+    get_profile_store.cache_clear()

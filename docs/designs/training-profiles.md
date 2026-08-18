@@ -814,6 +814,80 @@ and right now neither is validated against real instructor workflow.
 
 ---
 
+## Addendum: as-built (resolving §10.1 against the shipped Scenario Generator)
+
+This section was written during implementation, once `core/placements.py` and
+`core/scenarios/models.py::ScenarioDocument` existed on `dev` — exactly the
+event §10.1 named as the trigger to revisit D4 and the "does `ProfileScenario`
+collapse into `Scenario`?" question. Both resolved in the direction §10.1's
+own text leaned, and the implementation follows the resolution rather than
+the original §3.2/§3.3 sketch:
+
+1. **§3.3's `ProfilePlacement` and its six `Profile*Placement` arms are not
+   built.** `core/profiles/models.py` imports `core.scenarios.models.ScenarioDocument`,
+   which already carries `position: core.placements.PlacementRequest | None`
+   — the exact `core/`-owned placement union D4 asked for, now with seven arms
+   (`RunwayThresholdPlacementRequest` included) rather than six. No shape-parity
+   test (§8.1's `test_profile_placement_shape.py`) is needed: there is only one
+   placement model in the codebase now, not two to keep in sync.
+
+2. **§3.2's `ProfileScenario` and `ProfileFailure` are not built.**
+   `TrainingProfile.scenario` and `TrainingProfileCreate.scenario` are typed
+   `core.scenarios.models.ScenarioDocument` directly. `ScenarioFailuresBlock`
+   (`immediate: tuple[InjectFailureRequest, ...]`, `armed: tuple[ArmFailureRequest, ...]`)
+   already matches `ProfileFailure`'s intent field-for-field, and
+   `ScenarioDocument.aircraft_state` already carries the "merged OVER the
+   placement's own derived setup" semantics §3.2 asked `setup_overrides` to
+   have — both feed `ApplyPlacementRequest.setup` the same way, through
+   `server/position_routes.py::execute_placement`. This was the
+   recommendation flagged in the implementation brief, made concrete: a
+   training profile inherits every future addition to `ScenarioDocument`
+   (traffic, once Phase 3 lands) for free, at the cost of the one tension the
+   brief itself named and asked to be flagged either way:
+
+   **The name/description duplication is accepted, not solved.**
+   `ScenarioDocument` carries its own `name`/`description`/`tags`;
+   `TrainingProfile` carries its own `name`/`description` alongside them. A
+   profile can rename/redescribe the scenario it wraps in the instructor's
+   own words — the Save form sets `scenario.name`/`scenario.description` to
+   the same values as the profile's own fields at creation time, so the
+   instructor is never asked twice, but the two are stored independently and
+   a `PUT` can drift them apart. Revisit if that turns out to confuse rather
+   than to help (§10.2's cross-version-sharing tension already flagged the
+   embedded document's own schema evolution as the harder open question; this
+   is the smaller, cosmetic sibling of it).
+
+3. **Consequence for the apply outcome model (§3.4): `ProfilePositionOutcome`
+   gained an `attempted: bool` field the original sketch did not have.**
+   §3.2's `ProfileScenario.placement` was a required field — a profile
+   always carried a position. `ScenarioDocument.position` is optional (a
+   profile may declare only weather, or only failures — `ScenarioDocument`'s
+   own validator requires at least one block, not specifically position), so
+   `ProfilePositionOutcome` now mirrors `ProfileWeatherOutcome`'s own
+   `attempted` flag rather than assuming position is always attempted.
+   `_degraded()` only counts a component against `degraded` when
+   `attempted` is true, exactly as §3.4 specified for weather.
+
+4. **§6.3's orchestration is *not* a call into `server/scenario_engine.py`.**
+   The engine built for the Scenario Generator runs its declared steps in a
+   fixed order and **stops at the first failure** (`_StepFailure`) — the
+   opposite of D8's "each component attempted independently, one component's
+   failure never prevents another's attempt." `server/profile_routes.py`
+   therefore implements its own `_apply_position`/`_apply_weather`/`_apply_failures`,
+   calling the same underlying manager functions the engine calls
+   (`server.position_routes.execute_placement`, `server.weather_routes`'s
+   resolve step, `server.failure_routes.arm_failure` plus
+   `adapter.inject_failure`) but running all three unconditionally and
+   catching each one's `HTTPException`/`CapabilityNotSupported`/
+   `WeatherRejected`/`NavdataUnavailable` into its own outcome, never
+   propagating. This was always the design's own D10 intent (§6.3's own
+   pseudocode already showed three independent `_apply_*` functions); the
+   only new fact is that reusing the engine wholesale was considered and
+   rejected once the engine's actual stop-at-first-failure semantics were
+   read, rather than assumed.
+
+---
+
 ## 11. Verification
 
 ```bash

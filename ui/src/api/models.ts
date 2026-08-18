@@ -294,6 +294,31 @@ export type ScenarioStepStatusValue = ScenarioStepStatus['status'];
 
 export type ScenarioRunStatusValue = ScenarioRunStatus['status'];
 
+// ---------------------------------------------------------------------------
+// Training Profiles
+// ---------------------------------------------------------------------------
+
+/** A saved scenario with a name and metadata — `GET/POST/PUT /api/profiles/{id}`. */
+export type TrainingProfile = components['schemas']['TrainingProfile'];
+
+/** The body of `POST /api/profiles` and `PUT /api/profiles/{id}`. */
+export type TrainingProfileCreate = components['schemas']['TrainingProfileCreate'];
+
+/** One row of `GET /api/profiles`. Cheap: no navdata lookup, no adapter read. */
+export type ProfileSummary = components['schemas']['ProfileSummary'];
+
+/** `POST /api/profiles/{id}/apply` — almost always 200; degradation is reported in the body. */
+export type ProfileApplyResult = components['schemas']['ProfileApplyResult'];
+
+/** The position + aircraft-state step's outcome, within a {@link ProfileApplyResult}. */
+export type ProfilePositionOutcome = components['schemas']['ProfilePositionOutcome'];
+
+/** The weather step's outcome, within a {@link ProfileApplyResult}. */
+export type ProfileWeatherOutcome = components['schemas']['ProfileWeatherOutcome'];
+
+/** One failure entry's outcome, within a {@link ProfileApplyResult}. */
+export type ProfileFailureOutcome = components['schemas']['ProfileFailureOutcome'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',
