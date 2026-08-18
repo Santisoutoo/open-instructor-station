@@ -265,7 +265,9 @@ class TcasConflictSpawnRequest(BaseModel):
     type: Literal["tcas_conflict"]
     severity: TcasSeverity = "head_on_ra"  # see §6.2 for what each preset means, in seconds/ft/nm
     relative_bearing_deg: float = Field(
-        default=180.0, ge=0.0, lt=360.0,
+        default=180.0,
+        ge=0.0,
+        lt=360.0,
         description="Intruder's track relative to the user's own, at spawn: 180=head-on, "
         "90/270=crossing, 0=same-direction closure from ahead or overtaking from behind.",
     )
@@ -284,11 +286,13 @@ class RunwayIncursionSpawnRequest(BaseModel):
     airport_icao: str = Field(min_length=2, max_length=7)
     runway_ident: str = Field(min_length=1, max_length=3)
     cross_at_along_track_nm: float = Field(
-        default=0.0, description="Distance beyond the threshold, along the landing direction, "
+        default=0.0,
+        description="Distance beyond the threshold, along the landing direction, "
         "where the crossing happens. 0.0 = at the threshold itself.",
     )
     lead_time_before_user_arrival_s: float = Field(
-        default=8.0, description="How many seconds BEFORE the user would reach the crossing "
+        default=8.0,
+        description="How many seconds BEFORE the user would reach the crossing "
         "point the vehicle starts crossing it. Negative = the vehicle is still crossing "
         "slightly AFTER the user's projected arrival — the worse-case incursion.",
     )
@@ -350,7 +354,9 @@ class TrafficContact(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    traffic_id: str = Field(description="Adapter-assigned uuid4 hex (D5). Stable for the entity's lifetime.")
+    traffic_id: str = Field(
+        description="Adapter-assigned uuid4 hex (D5). Stable for the entity's lifetime."
+    )
     kind: TrafficKind
     scenario_shape: TrafficScenarioShape
     callsign: str
@@ -414,6 +420,7 @@ async def get_traffic_contacts(self) -> tuple[TrafficContact, ...]:
     rather than raising. "No traffic" is always an honest, cheap answer.
     """
 
+
 async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
     """Spawn one entity following track and return its initial contact, carrying
     a fresh adapter-assigned traffic_id (D5).
@@ -423,16 +430,19 @@ async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
     and never corrupts an existing entity's state instead.
     """
 
+
 async def despawn_traffic(self, traffic_id: str) -> None:
     """Remove one entity. Idempotent: an unknown or already-gone id is a no-op,
     not an error — the same posture as clear_failure on a healthy system.
     Requires can_spawn_traffic.
     """
 
+
 async def clear_all_traffic(self) -> None:
     """Despawn every entity this adapter is tracking. Idempotent.
     Requires can_spawn_traffic.
     """
+
 
 def stream_traffic(self, interval_s: float) -> AsyncIterator[tuple[TrafficContact, ...]]:
     """Yield the full traffic picture roughly every interval_s seconds, mirroring
@@ -468,6 +478,7 @@ async def connect(self) -> None:
     self._capabilities = _CAPABILITIES.model_copy(
         update={"can_spawn_traffic": self._bridge_available}
     )
+
 
 @property
 def capabilities(self) -> Capabilities:
@@ -618,6 +629,7 @@ Everything in §3 (`TrafficKind`, `TrafficWaypoint`, `TrafficTrack`, the spawn-r
 ```python
 class TrafficSample(BaseModel):
     """Where a track-following entity is, at some elapsed time since spawn."""
+
     model_config = ConfigDict(frozen=True)
     position: GeoPosition
     heading_deg: float = Field(ge=0.0, le=360.0)
@@ -659,26 +671,35 @@ Constants and geometry builders (units and defaults as in §3.3's request models
 #: request's own fields — the FINAL_THROTTLE honesty class.
 TcasSeverity = Literal["head_on_ra", "crossing_ra", "ta_only"]
 
+
 class TcasSeverityProfile(BaseModel):
     model_config = ConfigDict(frozen=True)
-    spawn_lead_time_s: float   # total track duration from spawn to CPA
+    spawn_lead_time_s: float  # total track duration from spawn to CPA
     vertical_miss_distance_ft: float
     horizontal_miss_distance_nm: float
 
-TCAS_SEVERITY_PROFILES: Mapping[TcasSeverity, TcasSeverityProfile] = MappingProxyType({
-    "head_on_ra":  TcasSeverityProfile(spawn_lead_time_s=100.0, vertical_miss_distance_ft=0.0,
-                                        horizontal_miss_distance_nm=0.0),
-    "crossing_ra": TcasSeverityProfile(spawn_lead_time_s=100.0, vertical_miss_distance_ft=0.0,
-                                        horizontal_miss_distance_nm=0.0),
-    "ta_only":     TcasSeverityProfile(spawn_lead_time_s=90.0,  vertical_miss_distance_ft=500.0,
-                                        horizontal_miss_distance_nm=0.5),
-})
+
+TCAS_SEVERITY_PROFILES: Mapping[TcasSeverity, TcasSeverityProfile] = MappingProxyType(
+    {
+        "head_on_ra": TcasSeverityProfile(
+            spawn_lead_time_s=100.0, vertical_miss_distance_ft=0.0, horizontal_miss_distance_nm=0.0
+        ),
+        "crossing_ra": TcasSeverityProfile(
+            spawn_lead_time_s=100.0, vertical_miss_distance_ft=0.0, horizontal_miss_distance_nm=0.0
+        ),
+        "ta_only": TcasSeverityProfile(
+            spawn_lead_time_s=90.0, vertical_miss_distance_ft=500.0, horizontal_miss_distance_nm=0.5
+        ),
+    }
+)
 
 TCAS_DEFAULT_CLOSURE_IAS_KT: float = 250.0
-TCAS_TRACK_LEAD_TIME_S: float = 20.0   # how far past CPA the track continues before holding
+TCAS_TRACK_LEAD_TIME_S: float = 20.0  # how far past CPA the track continues before holding
 
-RUNWAY_INCURSION_DEFAULT_OFFSET_M: float = 60.0    # how far off each side of the runway the vehicle starts/ends
-RUNWAY_INCURSION_DEFAULT_SPEED_KT: float = 15.0    # a plausible airport service-vehicle speed
+RUNWAY_INCURSION_DEFAULT_OFFSET_M: float = (
+    60.0  # how far off each side of the runway the vehicle starts/ends
+)
+RUNWAY_INCURSION_DEFAULT_SPEED_KT: float = 15.0  # a plausible airport service-vehicle speed
 
 APPROACH_SEQUENCE_DEFAULT_DISTANCES_NM: tuple[float, ...] = (12.0, 8.0, 4.0)
 

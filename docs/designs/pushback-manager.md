@@ -137,11 +137,14 @@ class PushbackRequest(BaseModel):
 
     direction: PushbackDirection
     distance_m: float = Field(
-        gt=0.0, le=PUSHBACK_MAX_DISTANCE_M,
+        gt=0.0,
+        le=PUSHBACK_MAX_DISTANCE_M,
         description="Arc length (or straight length) the aircraft's reference point travels, metres.",
     )
     angle_deg: float = Field(
-        default=0.0, ge=0.0, le=PUSHBACK_MAX_ANGLE_DEG,
+        default=0.0,
+        ge=0.0,
+        le=PUSHBACK_MAX_ANGLE_DEG,
         description="Total heading change through the manoeuvre, degrees. Must be 0 for "
         "'straight', and > 0 for 'left'/'right'.",
     )
@@ -186,7 +189,9 @@ class PushbackResult(BaseModel):
 
     request: PushbackRequest
     target: PushbackTarget  # what was asked for, computed fresh at write time (D7)
-    state: AircraftState  # read back after the write — the honest verdict, PlacementResult's posture
+    state: (
+        AircraftState  # read back after the write — the honest verdict, PlacementResult's posture
+    )
 
 
 class PushbackManifest(BaseModel):
@@ -327,7 +332,8 @@ def require_on_ground(state: AircraftState) -> None:
 def pushback_target(
     state: AircraftState,
     request: PushbackRequest,
-    *, preview_points: int = PUSHBACK_PATH_PREVIEW_POINTS,
+    *,
+    preview_points: int = PUSHBACK_PATH_PREVIEW_POINTS,
 ) -> PushbackTarget:
     """Resolve request into a PushbackTarget from state's current position/heading.
 

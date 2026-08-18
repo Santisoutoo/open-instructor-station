@@ -134,16 +134,25 @@ class CameraViewSpec(BaseModel):
 
 
 CAMERA_VIEW_CATALOGUE: tuple[CameraViewSpec, ...] = (
-    CameraViewSpec(view_id="cockpit", label="Cockpit",
-        description="The pilot's own forward-facing view."),
-    CameraViewSpec(view_id="chase", label="Chase",
-        description="Follows the aircraft from behind and above."),
-    CameraViewSpec(view_id="tower", label="Tower",
-        description="Fixed view from the nearest airport tower, when the scenery has one."),
-    CameraViewSpec(view_id="wing", label="Wing",
-        description="Mounted on the wing, looking along the fuselage."),
-    CameraViewSpec(view_id="drone", label="Drone / free",
-        description="Freely positionable external camera — the base for custom saved positions."),
+    CameraViewSpec(
+        view_id="cockpit", label="Cockpit", description="The pilot's own forward-facing view."
+    ),
+    CameraViewSpec(
+        view_id="chase", label="Chase", description="Follows the aircraft from behind and above."
+    ),
+    CameraViewSpec(
+        view_id="tower",
+        label="Tower",
+        description="Fixed view from the nearest airport tower, when the scenery has one.",
+    ),
+    CameraViewSpec(
+        view_id="wing", label="Wing", description="Mounted on the wing, looking along the fuselage."
+    ),
+    CameraViewSpec(
+        view_id="drone",
+        label="Drone / free",
+        description="Freely positionable external camera — the base for custom saved positions.",
+    ),
 )
 CAMERA_VIEW_IDS: tuple[CameraViewId, ...] = get_args(CameraViewId)
 
@@ -179,28 +188,34 @@ class CameraOffset(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     forward_m: float = Field(
-        ge=-500.0, le=500.0,
+        ge=-500.0,
+        le=500.0,
         description="Metres forward of the aircraft's reference point, along its current "
         "heading. Negative is aft.",
     )
     right_m: float = Field(
-        ge=-500.0, le=500.0,
+        ge=-500.0,
+        le=500.0,
         description="Metres to the right of the reference point, perpendicular to the "
         "aircraft's current heading. Negative is left.",
     )
     up_m: float = Field(ge=-500.0, le=500.0, description="Metres above the reference point.")
     look_offset_deg: float = Field(
-        ge=-180.0, le=180.0,
+        ge=-180.0,
+        le=180.0,
         description="Camera yaw relative to the aircraft's CURRENT heading (D5). 0 = looking "
         "the same way the aircraft points; +90 = looking to the right of the nose.",
     )
     pitch_deg: float = Field(
-        ge=-90.0, le=90.0,
+        ge=-90.0,
+        le=90.0,
         description="Camera pitch, WORLD frame (D5), positive looking up toward the sky — "
         "independent of the aircraft's own pitch attitude.",
     )
     zoom_ratio: float = Field(
-        default=1.0, gt=0.0, le=10.0,
+        default=1.0,
+        gt=0.0,
+        le=10.0,
         description="Field-of-view zoom multiplier; 1.0 is the adapter's default FOV.",
     )
 
