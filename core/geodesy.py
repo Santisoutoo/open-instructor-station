@@ -570,7 +570,10 @@ def _profile_setup(placement: Placement) -> dict[str, Any]:
 
 def _normalise_bearing(bearing_deg: float) -> float:
     """Fold any angle in degrees into ``[0, 360)``."""
-    return bearing_deg % 360.0
+    folded = bearing_deg % 360.0
+    # Float modulo can land exactly ON 360.0 for a tiny negative input
+    # (-1e-15 % 360.0 == 360.0), which is outside the promised interval.
+    return 0.0 if folded == 360.0 else folded
 
 
 def _direct(
