@@ -5,12 +5,11 @@
  * fires a `dragend`/`click` by hand.
  */
 
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Map, Marker, resetMaplibreStub } from './maplibreStub';
 
-beforeEach(() => {
-  resetMaplibreStub();
-});
+// No local beforeEach: the shared afterEach in setup.ts already resets the
+// registries between tests, and this file leaning on that is part of the point.
 
 describe('maplibreStub events', () => {
   it('on() records a handler and trigger() fires it with the payload', () => {

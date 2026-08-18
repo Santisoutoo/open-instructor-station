@@ -12,8 +12,8 @@
  * `trigger(event, payload)` fires them — so a test that wants to exercise the
  * drag/click wiring itself (a `dragend` on the aircraft marker, a `click` on the
  * canvas) can reach the constructed instance through `Map.created` /
- * `Marker.created` and fire the event by hand. Call `resetMaplibreStub()` in
- * `beforeEach` when a test uses the instance registries.
+ * `Marker.created` and fire the event by hand. The registries are cleared
+ * automatically by the shared `afterEach` in `setup.ts`.
  */
 
 /** A handler registered through the stub's `on`/`once`. */
@@ -43,14 +43,10 @@ class StubEvented {
     return this;
   }
 
-  off(event?: string, listener?: StubListener): this {
-    if (event === undefined) {
-      return this;
-    }
-    const kept = (this.registrations[event] ?? []).filter(
-      (registration) => listener !== undefined && registration.listener !== listener,
+  off(event: string, listener: StubListener): this {
+    this.registrations[event] = (this.registrations[event] ?? []).filter(
+      (registration) => registration.listener !== listener,
     );
-    this.registrations[event] = kept;
     return this;
   }
 
