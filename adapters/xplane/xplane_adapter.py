@@ -323,7 +323,15 @@ _CAPABILITIES = Capabilities(
     can_control_autopilot=True,
     # The rest arrive in later phases.
     can_set_weather=False,
-    can_inject_failures=False,
+    # `pytest -m sim` passed against a live X-Plane 12.4.3 install
+    # (failures-manager.md D11/§5.3): the §5.1 value enum is confirmed, and
+    # inject/clear/clear-all/an indexed engine failure all round-trip for
+    # real. See adapters/xplane/failure_datarefs.py's module docstring for
+    # the live findings that got it there — a genuine spelling bug in the
+    # vacuum instrument's second dataref, several "verify in spike" rows
+    # resolved into fact, and two entries confirmed to have no matching
+    # dataref on this build at all.
+    can_inject_failures=True,
     can_spawn_traffic=False,
     # `pytest -m sim` passed against a live X-Plane 12.4.3 (fuel-payload.md
     # §6.4, §9.4): the dataref mapping is real, not a stub. Two live findings
@@ -913,7 +921,7 @@ class XPlaneSimAdapter:
                 vso = candidate
         return AirframeInfo(icao_type=_decode_dataref_text(raw_icao), vso_kias=vso)
 
-    # -- Weather, Failures ----------------------------------------------------
+    # -- Weather ----------------------------------------------------------------
     #
     # can_set_weather stays False on this adapter (weather-manager.md D16,
     # §7.3) despite real progress: §11.1's manual-mode question is now
@@ -936,12 +944,16 @@ class XPlaneSimAdapter:
     # below are real implementations that are DEAD CODE on this adapter
     # today — the capability check at the top of each raises before a single
     # dataref is touched.
+
+    # -- Failures -----------------------------------------------------------
     #
-    # Failures' capability-gated methods are refusing stubs
-    # (docs/designs/failures-manager.md D11/§5): can_inject_failures stays
-    # False; its two capability-free reads, get_failure_support()/
-    # get_active_failures() (failures-manager.md §4: "no is an answer, never
-    # an exception"), degrade honestly instead of raising.
+    # can_inject_failures is TRUE (docs/designs/failures-manager.md D11/§5.3):
+    # `pytest -m sim` passed against a live X-Plane 12.4.3. See
+    # adapters/xplane/failure_datarefs.py's module docstring for the live
+    # findings that got it there. Its two capability-free reads,
+    # get_failure_support()/get_active_failures() (failures-manager.md §4:
+    # "no is an answer, never an exception"), keep degrading honestly instead
+    # of raising for whichever catalogue entries still ship unsupported.
     #
     # can_set_fuel_payload is TRUE (docs/designs/fuel-payload.md §6.4, §9.4):
     # `pytest -m sim` passed against a live X-Plane 12.4.3. See

@@ -1,13 +1,22 @@
 """X-Plane failure dataref mapping — docs/designs/failures-manager.md §5.2.
 
-**No simulator has verified any of this yet.** Every row below is transcribed
-verbatim from the design document, including its confidence label and its
-"verify in spike" caveats — nothing here was invented to fill a gap. The spike
-that turns a guess into a fact is :mod:`spikes.failure_datarefs` (§10.8); until
-it runs against a live install, this file is best-effort transcription, not
-measurement.
+**Verified against a live X-Plane 12.4.3 install** (:mod:`spikes.failure_datarefs`,
+§10.8): the §5.1 value enum (0 = working, 6 = inoperative now) holds — a
+dataref was written to 6, read back 6, written to 0, read back 0, restored.
+That live session also dumped every one of the 795 datarefs this build
+publishes under ``sim/operation/failures/`` and cross-referenced it against
+every row below, resolving several "verify in spike" entries into fact,
+finding a genuine transcription bug (``instruments.vacuum``'s second dataref
+was misspelled ``rel_vacum2``; it is ``rel_vacuum2``, and the wrong name meant
+this entry was silently unsupported despite its first dataref resolving
+fine), and confirming two entries (``engine.partial_power``,
+``airframe.lightning_strike``) have no matching dataref on this build *at
+all* — not merely undocumented. ``adapters/xplane/xplane_adapter.py`` then
+ran the ``can_inject_failures`` contract suite under ``pytest -m sim``
+(inject, clear, clear-all, an indexed engine failure) against this same
+install — all passing — before the flag flipped ``True``.
 
-Two things make it safe to ship anyway (D11, §5.3):
+Two things make an entry still shipping unsupported safe (D11, §5.3):
 
 * Every dataref named below is resolved against the Web API's own dataref
   index at :meth:`~adapters.xplane.xplane_adapter.XPlaneSimAdapter.connect`
@@ -16,18 +25,11 @@ Two things make it safe to ship anyway (D11, §5.3):
   identifier degrades a control instead of failing the connection or raising
   at call time).
 * :attr:`FailureDatarefMapping.unsupported_reason` is set on every catalogue
-  entry that has no candidate identifier at all — there is nothing to probe,
-  so these ship permanently unsupported until a human edits this file with a
-  fact the spike produced.
-
-``adapters/xplane/xplane_adapter.py`` still declares ``can_inject_failures =
-False`` regardless of what this file resolves (docs/designs/failures-manager.md
-D11 plus this session's explicit instruction): the enum in §5.1 — which value
-means "working" and which means "failed now" — is quoted from X-Plane's
-published dataref documentation and is itself unverified against a live
-install. Flipping the flag on unverified dataref *behaviour* (as opposed to
-unverified dataref *names*, which this module already degrades safely) would
-be exactly the dishonest capability declaration hard rule 3 forbids.
+  entry that has no candidate identifier at all, or whose candidate's
+  semantics could not be confirmed this session (``flight_controls.spoilers``,
+  ``airframe.pressurisation`` — see their own entries below) — these ship
+  permanently unsupported until a human edits this file with a fact a further
+  session produces.
 """
 
 from __future__ import annotations
@@ -114,19 +116,16 @@ _ENTRIES: tuple[FailureDatarefMapping, ...] = (
         dataref_templates=(),
         confidence="low",
         unsupported_reason=(
-            "X-Plane publishes no standard partial-power failure; use engine.failure "
-            "or a fuel-system failure."
+            "CONFIRMED against a live install (795 datarefs enumerated under "
+            "sim/operation/failures/, searched): X-Plane publishes no standard "
+            "partial-power failure; use engine.failure or a fuel-system failure."
         ),
     ),
     FailureDatarefMapping(
         failure_id="fuel.leak",
-        dataref_templates=(),
-        confidence="low",
-        unsupported_reason=(
-            "The X-Plane 12 failure UI lists a fuel leak, but the dataref ident is "
-            "unconfirmed — verify against a live install's DataRefs.txt "
-            "(spikes/failure_datarefs.py)."
-        ),
+        # CONFIRMED against a live install: sim/operation/failures/rel_fuel_leak exists.
+        dataref_templates=(f"{_PREFIX}rel_fuel_leak",),
+        confidence="high",
     ),
     FailureDatarefMapping(
         failure_id="electrical.system",
@@ -156,10 +155,14 @@ _ENTRIES: tuple[FailureDatarefMapping, ...] = (
     ),
     FailureDatarefMapping(
         failure_id="instruments.vacuum",
-        # Names as given in §5.2, verbatim, including the "vacuum" / "vacum2" spelling
-        # mismatch between the two idents — not a transcription error here.
-        dataref_templates=(f"{_PREFIX}rel_vacuum", f"{_PREFIX}rel_vacum2"),
-        confidence="medium",
+        # CONFIRMED against a live X-Plane 12.4.3 install (spikes/failure_datarefs.py):
+        # §5.2's own comment claimed the "vacuum" / "vacum2" spelling mismatch between
+        # the two idents was deliberate, "not a transcription error" — it was one. The
+        # real second dataref is rel_vacuum2 (both u's), not rel_vacum2; the wrong name
+        # never resolved, so this entry silently degraded to unsupported (D11) despite
+        # rel_vacuum itself resolving fine. Both names now confirmed present.
+        dataref_templates=(f"{_PREFIX}rel_vacuum", f"{_PREFIX}rel_vacuum2"),
+        confidence="high",
     ),
     FailureDatarefMapping(
         failure_id="instruments.airspeed",
@@ -233,37 +236,50 @@ _ENTRIES: tuple[FailureDatarefMapping, ...] = (
         dataref_templates=(),
         confidence="low",
         unsupported_reason=(
-            "No candidate dataref ident yet — verify against a live install's "
-            "DataRefs.txt (spikes/failure_datarefs.py)."
+            "CONFIRMED against a live install: no simple actuator-style dataref exists "
+            "(unlike flight_controls.flaps's rel_flap_act). A candidate family does "
+            "exist — sim/operation/failures/rel_fcon_rspo_{1,2}_{lft,rgt}_"
+            "{cntr,gone,lock,mxdn,mxup} — but its five-way fly-by-wire failure-mode "
+            "taxonomy per side does not match this catalogue's simple binary relay "
+            "convention (§5.1: 0 = working, 6 = inoperative now); which sub-mode, if "
+            "any, behaves as that simple relay was not determined this session and "
+            "needs a follow-up rather than a guess."
         ),
     ),
     FailureDatarefMapping(
         failure_id="gear.stuck",
-        dataref_templates=(),
-        confidence="low",
-        unsupported_reason=(
-            "Candidates only, not verified: a per-leg rel_lagear* family vs a single "
-            "actuator ref — verify against a live install's DataRefs.txt "
-            "(spikes/failure_datarefs.py) before mapping either."
-        ),
+        # CONFIRMED against a live install: the single-actuator candidate
+        # (sim/operation/failures/rel_gear_act) exists — "the actuator that drives
+        # gear extension/retraction jams" matches "no longer responds to the handle"
+        # (FailureSpec's own description). Medium, not high: the loaded aircraft's
+        # gear is fixed (does not retract), so the behavioural effect of this failure
+        # could not be observed, only that the dataref itself resolves and accepts
+        # the write. The per-leg rel_lagear1-5/rel_lagear_6-10 family also exists and
+        # was considered — it reads as a multi-gear-leg complex-aircraft model, a
+        # worse fit for a single generic "gear.stuck" entry than one actuator ref.
+        dataref_templates=(f"{_PREFIX}rel_gear_act",),
+        confidence="medium",
     ),
     FailureDatarefMapping(
         failure_id="gear.brakes",
-        dataref_templates=(),
-        confidence="low",
-        unsupported_reason=(
-            "Candidates only, not verified: a left/right pair, both to be written for "
-            "one entry — verify against a live install's DataRefs.txt "
-            "(spikes/failure_datarefs.py)."
-        ),
+        # CONFIRMED against a live install: exactly the left/right pair the design's
+        # own candidate note anticipated — sim/operation/failures/rel_lbrakes and
+        # rel_rbrakes, both real dataref idents on this build.
+        dataref_templates=(f"{_PREFIX}rel_lbrakes", f"{_PREFIX}rel_rbrakes"),
+        confidence="high",
     ),
     FailureDatarefMapping(
         failure_id="airframe.pressurisation",
         dataref_templates=(),
         confidence="low",
         unsupported_reason=(
-            "No candidate dataref ident yet — verify against a live install's "
-            "DataRefs.txt (spikes/failure_datarefs.py)."
+            "CONFIRMED against a live install: two candidates exist, "
+            "sim/operation/failures/rel_depres_fast and rel_depres_slow, but the "
+            "catalogue wants one generic 'pressurisation fails' entry and nothing in "
+            "either name settles which single one that is (or whether both should "
+            "fire together). The loaded C172 is unpressurised, so neither candidate's "
+            "actual effect could be observed this session — needs a follow-up with a "
+            "pressurised airframe loaded, or Laminar's own documentation for the pair."
         ),
     ),
     FailureDatarefMapping(
@@ -273,22 +289,24 @@ _ENTRIES: tuple[FailureDatarefMapping, ...] = (
     ),
     FailureDatarefMapping(
         failure_id="airframe.bird_strike",
-        dataref_templates=(),
-        confidence="low",
-        unsupported_reason=(
-            "Present in the X-Plane 12 failure UI, but its dataref ident is "
-            "unconfirmed — verify against a live install's DataRefs.txt "
-            "(spikes/failure_datarefs.py)."
-        ),
+        # CONFIRMED against a live install: sim/operation/failures/rel_bird_strike
+        # exists (per-engine rel_bird_strike_eng1/eng2 variants also exist, but this
+        # catalogue entry does not take an engine index, so the generic ident is the
+        # right one). Medium, not high: the loaded aircraft could not be used to
+        # observe an actual visible effect from injecting this failure.
+        dataref_templates=(f"{_PREFIX}rel_bird_strike",),
+        confidence="medium",
     ),
     FailureDatarefMapping(
         failure_id="airframe.lightning_strike",
         dataref_templates=(),
         confidence="low",
         unsupported_reason=(
-            "Present in the X-Plane 12 failure UI, but its dataref ident is "
-            "unconfirmed — verify against a live install's DataRefs.txt "
-            "(spikes/failure_datarefs.py)."
+            "CONFIRMED against a live install: no dataref under "
+            "sim/operation/failures/ matches 'lightning' at all (795 datarefs "
+            "enumerated and searched) — this is not an unconfirmed guess anymore, "
+            "X-Plane genuinely does not expose a lightning-strike failure on this "
+            "build. Stays unsupported."
         ),
     ),
 )

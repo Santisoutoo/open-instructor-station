@@ -41,9 +41,12 @@ def test_declares_only_the_phase_0_capabilities() -> None:
     # _write_loadout docstring for the live finding that resolved its own
     # "open question for the live-validation pass".
     assert capabilities.can_set_fuel_payload is True
+    # can_inject_failures flipped True: the same live session verified §5.1's
+    # value enum and ran the full pytest -m sim failures contract suite (see
+    # adapters/xplane/failure_datarefs.py's module docstring).
+    assert capabilities.can_inject_failures is True
     # Everything else arrives in a later phase and must stay off until then.
     assert capabilities.can_set_weather is False
-    assert capabilities.can_inject_failures is False
     assert capabilities.can_spawn_traffic is False
     assert capabilities.can_control_camera is False
     assert capabilities.can_pushback is False
@@ -71,12 +74,12 @@ async def test_disconnect_on_a_fresh_adapter_is_harmless() -> None:
     assert adapter.is_connected is False
 
 
-async def test_phase_2_methods_refuse_without_their_capabilities() -> None:
-    """The still-``False`` Phase 2 shared-foundation stubs (weather-manager.md
-    D16, failures-manager.md D11/§5): both flags stay ``False`` on this
-    adapter, and their gated methods raise immediately, with no socket
-    touched (no ``connect()`` call in this test). ``can_set_fuel_payload`` is
-    no longer in this set -- it flipped ``True`` (see
+async def test_weather_methods_refuse_without_their_capability() -> None:
+    """The still-``False`` Phase 2 shared-foundation stub (weather-manager.md
+    D16): ``can_set_weather`` stays ``False`` on this adapter, and its gated
+    methods raise immediately, with no socket touched (no ``connect()`` call
+    in this test). ``can_set_fuel_payload``/``can_inject_failures`` are no
+    longer in this set -- both flipped ``True`` (see
     ``test_declares_only_the_phase_0_capabilities``) once ``pytest -m sim``
     passed against a live simulator.
     """
@@ -85,17 +88,26 @@ async def test_phase_2_methods_refuse_without_their_capabilities() -> None:
         await adapter.get_weather()
     with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
         await adapter.set_weather(WeatherSetup(visibility_m=1000.0))
+
+
+async def test_failure_injection_refuses_while_disconnected() -> None:
+    """``can_inject_failures`` is ``True``, but nothing has resolved yet on a
+    fresh, unconnected adapter -- ``_failure_ids`` is empty until
+    :meth:`~adapters.xplane.xplane_adapter.XPlaneSimAdapter.connect` fills it,
+    so every entry looks the same as a genuinely unsupported one
+    (``_resolved_failure_dataref_ids``'s own documented defence, §4).
+    """
+    adapter = XPlaneSimAdapter()
     with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
         await adapter.inject_failure(FailureRef(failure_id="instruments.pitot"))
     with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
         await adapter.clear_failure(FailureRef(failure_id="instruments.pitot"))
-    with pytest.raises(CapabilityNotSupported, match="can_inject_failures"):
-        await adapter.clear_all_failures()
 
 
-async def test_phase_2_capability_free_reads_degrade_instead_of_raising() -> None:
-    """``get_failure_support``/``get_active_failures`` are capability-free
-    reads (failures-manager.md §4): "no" is an answer, never an exception.
+async def test_failure_support_when_disconnected_reports_every_entry_unsupported() -> None:
+    """``get_failure_support`` is a capability-free read (failures-manager.md
+    §4): "no" is an answer, never an exception -- including for the reason
+    "this adapter has never connected, so nothing has resolved yet."
     """
     adapter = XPlaneSimAdapter()
     manifest = await adapter.get_failure_support()

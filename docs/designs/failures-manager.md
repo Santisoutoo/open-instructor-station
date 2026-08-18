@@ -987,3 +987,43 @@ arm pitot below the current altitude minus 500 ft while descending (fake flies; 
 VS from the Aircraft Control panel) → watch it fire → CLEAR ALL empties everything, plus a
 console check. Live-sim validation (`pytest -m sim`, §8.4) is the `sim-validator` agent's job
 and is not a merge gate.
+
+---
+
+## 12. Addendum: as-built — `can_inject_failures` flipped after live validation
+
+§10.8's spike ran against a live X-Plane 12.4.3 install and resolved §5.1 and every "verify in
+spike" row in §5.2 into fact, in one session:
+
+- **§5.1's value enum holds**: `0` = working, `6` = inoperative now, confirmed by writing both
+  values to `rel_pitot` and reading them back, then restoring.
+- **A genuine transcription bug, not a naming mismatch**: `instruments.vacuum`'s second dataref
+  was written as `rel_vacum2` (missing a "u"). The real ident is `rel_vacuum2`. The wrong name
+  never resolved, so this entry silently shipped unsupported despite `rel_vacuum` itself
+  resolving fine — D11's connect-time probing did exactly its job of degrading safely, but the
+  underlying bug still needed a human to fix. Now `high` confidence.
+- **Resolved into fact, `high`/`medium` confidence**: `fuel.leak` → `rel_fuel_leak`; `gear.brakes`
+  → `rel_lbrakes`/`rel_rbrakes` (exactly the left/right pair this design's own candidate note
+  anticipated); `gear.stuck` → `rel_gear_act` (medium — the loaded aircraft's gear does not
+  retract, so the dataref's write-time existence is confirmed but its behavioural effect could
+  not be observed); `airframe.bird_strike` → `rel_bird_strike` (medium, same caveat).
+- **Confirmed absent, not merely unconfirmed**: `engine.partial_power` and
+  `airframe.lightning_strike` — no matching dataref exists anywhere in the 795 datarefs this
+  build publishes under `sim/operation/failures/`. These stay unsupported permanently on this
+  adapter, not pending a future spike.
+- **Still open**: `flight_controls.spoilers` has a candidate family
+  (`rel_fcon_rspo_{1,2}_{lft,rgt}_{cntr,gone,lock,mxdn,mxup}`) but its five-way fly-by-wire
+  failure-mode taxonomy per side does not match this catalogue's simple binary relay convention,
+  and which sub-mode (if any) behaves as a simple relay was not determined. `airframe.pressurisation`
+  has two candidates (`rel_depres_fast`, `rel_depres_slow`) with no way to tell from the names
+  alone which single one — or whether both — constitutes this catalogue's one generic entry, and
+  the loaded (unpressurised) aircraft could not be used to observe either's actual effect. Both
+  stay unsupported pending a further session.
+- **`can_inject_failures` flipped `True`**: the full contract suite —
+  `test_failure_support_covers_the_whole_catalogue`, `test_injected_failure_is_reported_active`,
+  `test_indexed_failure_carries_its_engine_index`, `test_clear_failure_repairs_it`,
+  `test_clear_all_failures_leaves_none_active` — passed under `pytest -m sim` against this same
+  install, so the flag now reflects a genuinely proven capability, not a hopeful one.
+
+Full detail lives in `adapters/xplane/failure_datarefs.py`'s module docstring and each affected
+entry's own comment, not repeated here.
