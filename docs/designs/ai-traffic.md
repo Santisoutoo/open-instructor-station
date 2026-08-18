@@ -1146,6 +1146,62 @@ the `sim-lifecycle` skill's own conventions. **This is the single biggest schedu
 rather than estimated away, because until the spike runs, §5's design is the best available
 reasoning from public X-Plane/XPPython3 documentation, not a measurement.
 
+#### Spike findings (2026-08-18)
+
+Measured against X-Plane 12 at LEMD with XPPython3 4.7.1 (Python 3.12), spike plugin
+`spikes/PI_OISBridgeSpike.py` + driver `spikes/bridge_transport.py`, Web API on `localhost:8086`,
+Docker Desktop running (the known 4.1 s/request gotcha absent). Verbatim findings JSON is in the
+spike run's output; the numbers below are that run.
+
+**(a) Command→ack round-trip latency — CONFIRMED, and cheap.** 50 timed `ping` commands
+(PATCH `ois/traffic/command` → poll `ois/traffic/command_ack` for the matching `seq`):
+**min 23.3 ms, median 26.9 ms, p95 34.8 ms, worst 36.6 ms**, and the ack was there on the
+**first** poll every single time (mean polls 1.0) — the flight loop had already answered before
+one HTTP GET could turn around. §5.1's request/poll protocol with "at most one command in
+flight" is comfortably viable: even a worst-case 19-aircraft `approach_sequence` spawned
+sequentially costs well under a second of transport. The §5.2 probe recipe is also confirmed
+operationally, including its failure mode: a first run immediately after `wait-ready` read
+`heartbeat_s = 0.0` twice — the plugin had registered its datarefs but the flight loop had not
+ticked yet — and the strictly-greater rule correctly refused it; seconds later the heartbeat was
+advancing and the probe passed. The recipe distinguishes exactly what §5.2 says it must.
+
+**(b) Payload ceiling — no ceiling found; one write is safe.** `echo` payloads of 256 B → 64 KB
+**all arrived intact** (length and SHA-256 verified plugin-side), at a flat ~28-33 ms round trip
+regardless of size. A 66 000 B write — deliberately past the 65 536 B capacity the accessor
+*declares* — also arrived intact, so the Web API does not even clamp writes to the registered
+size. The realistic payload, an 8-waypoint `approach_sequence` `TrafficTrack` spawn command
+(§3.2 field names), is **1 572 bytes** and round-tripped intact in 25.5 ms; the spawned entity
+then appeared in `ois/traffic/contacts` (read as a *variable-length* data dataref — that style
+works too) and `despawn` emptied it. **§5.3's chunking fallback is not needed.** The one
+caveat carried forward: the command dataref must be registered before the flight loads, since
+the Web API indexes datarefs at startup — true for any normally-installed plugin.
+
+**(c) Spawn mechanism — the design's §5.4 premise is AMENDED.** The legacy multiplayer-slot
+route does **not** work on a real install: `XPLMAcquirePlanes` returned failure (the aircraft
+set was already controlled by another plugin — this machine runs xPilot, IVAO pilot, AutoDGS,
+BetterPushback, exactly the plugin population target users have), and writes to
+`sim/multiplayer/position/plane1_x/y/z/psi` did not stick — reads 10 flight loops later
+returned the empty-TCAS-slot sentinel (−3.4e38) and `psi = 0.0`, with every one of those
+datarefs reporting `writable = true`. Capabilities-not-failures applies to the bridge itself:
+slot acquisition is contended, and losing that contention must not be a runtime surprise. What
+**does** work, measured in the same session: the **XPLMInstance path** —
+`lookupObjects("lib/airport/vehicles/pushback/tug.obj")` resolved a real object
+(`Resources/default scenery/airport scenery/Dynamic_Vehicles/Tug_GT110.obj`),
+`loadObject` → `createInstance` → `instanceSetPosition` all succeeded — and the modern
+**TCAS-target override API** is present and writable: `sim/operation/override/override_TCAS`
+(writable) plus `sim/cockpit2/tcas/targets/modeS_id` (writable int array, **size 64**).
+Consequence for Track B: the bridge drives entities as **XPLMInstance objects for the visual**
+(aircraft, ground vehicles *and* birds — one mechanism, different `.obj`, resolving D12's open
+question: no second subsystem) **plus a TCAS-target entry via `override_TCAS`/`modeS_id` for
+`kind="aircraft"`** so the student's TCAS can see them — the same architecture LiveTraffic/XPMP2
+settled on. §5.4's `MAX_CONCURRENT_TRAFFIC_XPLANE = 19` (multiplayer slots) should become the
+TCAS-target budget (64 entries, one being the user aircraft) when Track B lands; D6 — capacity
+is adapter-owned, the bridge is the source of truth — is unchanged. Still open, and now clearly
+`@pytest.mark.sim` territory for §8.4: which aircraft `.obj`/CSL model to instance for a
+convincing aircraft visual (this install ships `IVAO_CSL`), and whether the user aircraft's own
+TCAS instrument actually trips on override-written targets (§1.2 already scoped that out of this
+manager's exit criteria).
+
 ### 10.5 Taxiway routing is out of scope, and that is a real product gap
 
 `taxi_traffic_track` takes an explicit point list because this project has never parsed taxiway
