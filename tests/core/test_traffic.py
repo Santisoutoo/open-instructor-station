@@ -22,15 +22,6 @@ from core.geodesy import (
     point_at_distance_and_bearing,
 )
 from core.models import AircraftState, GeoPosition, Runway
-
-# NOTE: `core.traffic` is written by the traffic-contract foundation track
-# (docs/designs/ai-traffic.md §9.2 Track 0); this suite was authored against
-# the design, in parallel. Until that module lands, this import fails — that
-# is the expected pre-integration state, reported rather than hidden. It sits
-# in the first-party block, where ruff's isort will require it once the module
-# exists on disk (with no `known-first-party` configured, ruff classifies an
-# unresolvable module as third-party, so I001 flags this line only while the
-# module is missing).
 from core.traffic import (
     TCAS_SEVERITY_PROFILES,
     ApproachSequenceSpawnRequest,
