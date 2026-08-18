@@ -496,6 +496,78 @@ async def test_set_position_delivers_the_commanded_speed(adapter: SimAdapter) ->
         await adapter.set_position(home, heading_deg=original.heading_deg)
 
 
+#: Bound on how long a fresh teleport's *indicated* airspeed takes to settle
+#: once a non-zero wind is also freshly written, per
+#: :func:`test_set_position_delivers_the_commanded_speed_with_wind`. Measured
+#: live: the ground-velocity vector written is correct *immediately* (its own
+#: raw local_vx/vy/vz read back matching the predicted TAS-minus-headwind
+#: ground speed on the first read after the teleport) — what lags is
+#: X-Plane's own derivation of the indicated-airspeed instrument from that
+#: ground velocity plus the freshly-set regional wind, taking anywhere from
+#: ~3s to ~10s+ across repeated runs to settle within tolerance. This is a
+#: genuine instrument-settling effect, the same category as
+#: :data:`COMMANDED_IAS_TOLERANCE_KT`'s own "released the freeze, aircraft is
+#: still settling" note — just slower here because a fresh wind is also
+#: involved, not a defect in the write.
+_WIND_IAS_SETTLE_TIMEOUT_S = 20.0
+_WIND_IAS_SETTLE_POLL_INTERVAL_S = 1.0
+
+
+async def test_set_position_delivers_the_commanded_speed_with_wind(adapter: SimAdapter) -> None:
+    """Issue #42's own acceptance criterion: the commanded IAS is achieved
+    with a non-zero wind set, verified against a live simulator — a still-air
+    test (see :func:`test_set_position_delivers_the_commanded_speed` above)
+    cannot detect this bug at all.
+
+    A strong (25 kt) direct headwind is set at the aircraft's own altitude,
+    and the target heading points straight into it. If the ground-velocity
+    vector were still written air-relative (the pre-#42 bug: the vector
+    X-Plane consumes is a *ground* velocity, only equal to the air-relative
+    one in still air), the read-back would settle roughly 25 kt short of what
+    was commanded and never enter tolerance no matter how long this polls —
+    comfortably outside :data:`COMMANDED_IAS_TOLERANCE_KT`, so a regression in
+    the wind subtraction fails this test loudly, not by a marginal amount.
+    """
+    if not adapter.capabilities.can_set_position:
+        pytest.skip(f"{adapter.name} does not declare can_set_position")
+    if not adapter.capabilities.can_set_weather:
+        pytest.skip(f"{adapter.name} does not declare can_set_weather")
+
+    original = await adapter.get_aircraft_state()
+    home = _position_of(original)
+    heading_deg = 0.0
+    target = point_at_distance_and_bearing(home, HOP_DISTANCE_NM, heading_deg)
+
+    wind_direction_deg = heading_deg  # wind FROM the north == a direct headwind on heading 0.
+    try:
+        await adapter.set_weather(
+            WeatherSetup(
+                wind_layers=[
+                    WindLayer(
+                        altitude_ft=max(0.0, original.altitude_ft),
+                        direction_deg=wind_direction_deg,
+                        speed_kt=25.0,
+                    )
+                ]
+            )
+        )
+        await adapter.set_position(target, heading_deg=heading_deg, ias_kt=COMMANDED_IAS_KT)
+
+        tol = COMMANDED_IAS_TOLERANCE_KT[adapter.name]
+        deadline = asyncio.get_running_loop().time() + _WIND_IAS_SETTLE_TIMEOUT_S
+        state = await adapter.get_aircraft_state()
+        while (
+            abs(state.ias_kt - COMMANDED_IAS_KT) > tol
+            and asyncio.get_running_loop().time() < deadline
+        ):
+            await asyncio.sleep(_WIND_IAS_SETTLE_POLL_INTERVAL_S)
+            state = await adapter.get_aircraft_state()
+        assert state.ias_kt == pytest.approx(COMMANDED_IAS_KT, abs=tol)
+    finally:
+        await adapter.set_position(home, heading_deg=original.heading_deg)
+        await adapter.set_weather(WeatherSetup(wind_layers=[]))
+
+
 async def test_set_position_without_a_speed_preserves_the_current_one(
     adapter: SimAdapter,
 ) -> None:

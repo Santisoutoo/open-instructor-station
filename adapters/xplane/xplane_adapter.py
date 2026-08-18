@@ -321,8 +321,14 @@ _CAPABILITIES = Capabilities(
     can_set_position=True,
     can_set_aircraft_state=True,
     can_control_autopilot=True,
-    # The rest arrive in later phases.
-    can_set_weather=False,
+    # `pytest -m sim` passed against a live X-Plane 12.4.3 install
+    # (weather-manager.md §7.3): a genuine bug the earlier session's shorter
+    # observation window mistook for a permanent one -- see
+    # _write_temperature_ladder's docstring -- plus a real cloud-settle bug
+    # (only slot 0 was ever checked for convergence, and the timeout was far
+    # too short for the ~55-60s cycle clouds actually need; see
+    # _await_cloud_layers_settled's docstring for both).
+    can_set_weather=True,
     # `pytest -m sim` passed against a live X-Plane 12.4.3 install
     # (failures-manager.md D11/§5.3): the §5.1 value enum is confirmed, and
     # inject/clear/clear-all/an indexed engine failure all round-trip for
@@ -492,11 +498,22 @@ _WEATHER_SOURCE_MANUAL = 0
 _WEATHER_CHANGE_MODE_STATIC = 3
 
 #: How long :meth:`_write_cloud_layers` waits for a cloud write to actually
-#: land before giving up. Measured lag on a live install: up to ~4s between a
-#: successful PATCH and the dataref's own read-back changing. 10s leaves
-#: margin without making a stuck write hang the caller indefinitely.
-_CLOUD_SETTLE_TIMEOUT_S = 10.0
-_CLOUD_SETTLE_POLL_INTERVAL_S = 0.25
+#: land before giving up.
+#:
+#: **CONFIRMED, and a much larger number than this constant's first measured
+#: value** (which found "up to ~4s"): cloud writes on a live X-Plane 12.4.3
+#: install do not land smoothly or immediately at all — every slot holds an
+#: unrelated, uniform stale value (observed: the *same* number across all
+#: three slots, itself a leftover from an earlier write) for up to ~55s, then
+#: every slot snaps to its correct, distinct commanded value in the same
+#: instant. This matches Laminar's own documented real-weather refresh
+#: interval — the same "≤60 s" figure :data:`WEATHER_HOLD_S` in
+#: ``tests/adapters/test_contract.py`` already budgets for — applied here to
+#: cloud writes specifically, which the original measurement session did not
+#: wait long enough to discover. 70 s leaves margin past the observed ~55 s
+#: cycle boundary without making a genuinely stuck write hang indefinitely.
+_CLOUD_SETTLE_TIMEOUT_S = 70.0
+_CLOUD_SETTLE_POLL_INTERVAL_S = 1.0
 _CLOUD_SETTLE_BASE_TOLERANCE_M = 5.0
 _CLOUD_SETTLE_COVERAGE_TOLERANCE = 0.02
 
@@ -923,27 +940,19 @@ class XPlaneSimAdapter:
 
     # -- Weather ----------------------------------------------------------------
     #
-    # can_set_weather stays False on this adapter (weather-manager.md D16,
-    # §7.3) despite real progress: §11.1's manual-mode question is now
-    # RESOLVED against a live X-Plane 12.4.3 install (weather_source is
-    # read-only; change_mode=3 + update_immediately=1 holds manual weather
-    # for 120s+ with zero drift — see _WEATHER_SOURCE_MANUAL's docstring),
-    # and _write_cloud_layers now waits out the measured settle lag instead
-    # of racing it. What still blocks the flag: cloud layers were observed
-    # still converging well past a 10s wait on the same install (a genuine
-    # gradual transition, not a fixed delay with a knowable bound), and
-    # sim/weather/region/sealevel_temperature_c does not hold a written value
-    # at all — it drifts continuously regardless of change_mode, most likely
-    # driven by a day/night thermal cycle this design did not anticipate as
-    # separate from the weather engine. Both are CONFIRMED findings from this
-    # session's live testing, not speculative "verify in spike" items
-    # anymore — see the docstrings on _await_cloud_layers_settled and
-    # _write_temperature_ladder. The flag flips once temperature is fixed (a
-    # different dataref/mechanism needs finding) and the contract suite's
-    # cloud test tolerates the slow convergence. get_weather()/set_weather()
-    # below are real implementations that are DEAD CODE on this adapter
-    # today — the capability check at the top of each raises before a single
-    # dataref is touched.
+    # can_set_weather is TRUE (weather-manager.md D16, §7.3): `pytest -m sim`
+    # passed against a live X-Plane 12.4.3 install. §11.1's manual-mode
+    # question is RESOLVED (weather_source is read-only; change_mode=3 +
+    # update_immediately=1 holds manual weather for 120s+ with zero drift —
+    # see _WEATHER_SOURCE_MANUAL's docstring). Two more findings closed the
+    # gap between "resolved" and "flag flips": the sealevel_temperature_c
+    # drift an earlier session called permanently broken turned out to be a
+    # transient real-weather-engine interpolation, not structural (confirmed
+    # holding for a full 100s once past it — see _write_temperature_ladder's
+    # docstring); and cloud layers needed both a much longer settle timeout
+    # (~55-60s, not 10s) and a bug fix (only slot 0 was ever checked for
+    # convergence, so a wholesale-replace write's zeroed slot was never
+    # confirmed — see _await_cloud_layers_settled's docstring for both).
 
     # -- Failures -----------------------------------------------------------
     #
@@ -969,9 +978,6 @@ class XPlaneSimAdapter:
         collapsing the padded duplicate levels :meth:`_write_wind_layers` left
         behind back into the layer they came from — adjacent levels with equal
         direction/speed/gust/turbulence are one layer.
-
-        Dead code while ``can_set_weather`` is ``False`` — see this section's
-        header comment.
         """
         if not self.capabilities.can_set_weather:
             raise CapabilityNotSupported(self.name, "can_set_weather")
@@ -1031,9 +1037,6 @@ class XPlaneSimAdapter:
         Every dataref the requested fields need is checked present *before*
         anything is written, so a build missing one of them fails cleanly
         rather than leaving the weather half-applied.
-
-        Dead code while ``can_set_weather`` is ``False`` — see this section's
-        header comment.
         """
         if not self.capabilities.can_set_weather:
             raise CapabilityNotSupported(self.name, "can_set_weather")
@@ -1200,16 +1203,18 @@ class XPlaneSimAdapter:
         which :meth:`_read_cloud_layers` reads back as "no layer here".
 
         **Confirmed against a live X-Plane 12.4.3 install**: unlike
-        visibility/QNH/wind, a cloud dataref write is not immediately visible
-        on read-back — measured up to ~4s of lag between a successful PATCH
-        and the value actually changing, even with
-        ``sim/weather/region/update_immediately`` set. Laminar's own docs say
-        cloud *rendering* transitions visually over the update interval; this
-        adapter measured the *dataref itself* lagging too, which the design's
-        §7.1 confidence table did not anticipate. Returning before the write
-        has settled means the very next ``get_weather()`` — which is exactly
-        what ``apply``'s read-back does — observes a stale, in-flight value.
-        :meth:`_await_cloud_layers_settled` closes that gap.
+        visibility/QNH/wind, a cloud dataref write is not visible on
+        read-back for up to ~55s — not a smooth transition, a single jump at
+        a periodic cycle boundary (see :meth:`_await_cloud_layers_settled`'s
+        own docstring for the full measurement). Laminar's own docs say cloud
+        *rendering* transitions visually over the update interval; this
+        adapter measured the *dataref itself* lagging on the same ~60s cycle
+        the real-weather engine already documents elsewhere
+        (``WEATHER_HOLD_S`` in ``tests/adapters/test_contract.py``), which the
+        design's §7.1 confidence table did not anticipate. Returning before
+        the write has settled means the very next ``get_weather()`` — which
+        is exactly what ``apply``'s read-back does — observes a stale,
+        in-flight value. :meth:`_await_cloud_layers_settled` closes that gap.
         """
         count = len(layers)
         for slot in range(_WEATHER_CLOUD_LAYERS):
@@ -1228,32 +1233,46 @@ class XPlaneSimAdapter:
         await self._await_cloud_layers_settled(layers)
 
     async def _await_cloud_layers_settled(self, layers: list[CloudLayer]) -> None:
-        """Best-effort wait for slot 0's commanded base/coverage to land.
+        """Best-effort wait for every touched slot's commanded base/coverage to land.
 
-        **Confirmed, and stranger than the "up to ~4s" figure this docstring
-        originally carried**: measured against a live X-Plane 12.4.3 install,
-        a cloud write can still be converging well past 10s — one measurement
-        read back partway between the old and new commanded values at the
-        10s mark. This reads as a genuine gradual transition (matching
-        weather-manager.md §7.1's own note that "clouds still transition
-        visually over the update interval"), not a fixed propagation delay
-        with a knowable bound. Blocking indefinitely — or raising when the
-        bound is merely a guess — would be worse than returning once a
-        generous, bounded window has passed: **this method waits, but never
-        raises**. A caller wanting the fully-settled value should treat the
-        first `get_weather()` after a cloud-bearing `set_weather()` as
-        provisional, the same way the UI already treats cloud rendering
-        itself as gradual.
+        **Confirmed against a live X-Plane 12.4.3 install, and a stranger
+        shape than "gradual transition" this docstring originally guessed**:
+        a cloud write does not converge smoothly at all. Every slot holds an
+        unrelated, uniform stale value — observed: the *same* number across
+        all three slots simultaneously, itself a leftover from an earlier
+        write — for up to ~55s, then every slot snaps to its own correct,
+        distinct commanded value in the same instant. See
+        :data:`_CLOUD_SETTLE_TIMEOUT_S`'s own docstring for the full
+        measurement. This method waits, but never raises, even once the
+        timeout passes — a caller wanting the fully-settled value should
+        treat the first `get_weather()` after a cloud-bearing `set_weather()`
+        as provisional if it returns before the observed ~55s cycle boundary.
+
+        **Checks every slot this write touched, not only slot 0** — an
+        earlier version of this method checked slot 0 alone, so a
+        wholesale-replace write that zeroed a *different* slot (D3: a
+        shorter layer list omits — and must zero — the slots past its own
+        length) was declared "settled" the instant slot 0 landed, without
+        ever confirming the omitted slot actually reached zero.
         """
-        target_base_m = (layers[0].base_ft if layers else 0.0) * _METRES_PER_FOOT
-        target_coverage = layers[0].coverage_ratio if layers else 0.0
+        count = len(layers)
+        targets: list[tuple[float, float]] = [
+            (
+                (layers[slot].base_ft * _METRES_PER_FOOT, layers[slot].coverage_ratio)
+                if slot < count
+                else (0.0, 0.0)
+            )
+            for slot in range(_WEATHER_CLOUD_LAYERS)
+        ]
         deadline = asyncio.get_running_loop().time() + _CLOUD_SETTLE_TIMEOUT_S
         while asyncio.get_running_loop().time() < deadline:
-            base_m = float((await self._read("cloud_base_msl_m"))[0])
-            coverage = float((await self._read("cloud_coverage_percent"))[0])
-            if (
-                abs(base_m - target_base_m) <= _CLOUD_SETTLE_BASE_TOLERANCE_M
-                and abs(coverage - target_coverage) <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
+            base_array = await self._read("cloud_base_msl_m")
+            coverage_array = await self._read("cloud_coverage_percent")
+            if all(
+                abs(float(base_array[slot]) - target_base_m) <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                and abs(float(coverage_array[slot]) - target_coverage)
+                <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
+                for slot, (target_base_m, target_coverage) in enumerate(targets)
             ):
                 return
             await asyncio.sleep(_CLOUD_SETTLE_POLL_INTERVAL_S)
@@ -1271,20 +1290,20 @@ class XPlaneSimAdapter:
         confirmed here) so a warm day is warm all the way up rather than only
         at the beach. Ladder shape is "verify in spike" per §7.2.
 
-        **CONFIRMED BROKEN against a live X-Plane 12.4.3 install, blocking
-        the capability flag on its own** (this is new information §7.2 did
-        not anticipate, not the "verify in spike" item it already flagged):
-        ``sim/weather/region/sealevel_temperature_c`` does not hold a written
-        value even briefly — measured drifting continuously (~+0.7 °C/s in
-        one run) regardless of ``change_mode``, independent of whether the
-        aloft ladder is also written, and unaffected by
-        ``sim/weather/region/thermal_rate_ms`` (already 0 in the failing
-        case). The behaviour is consistent with a day/night thermal
-        simulation this design assumed was part of the same "real weather
-        engine" `change_mode=3` disables, but is evidently a separate system.
-        No dataref that stops it was found this session. Writes are still
-        issued here (best effort, matching the rest of this adapter's posture
-        toward unresolved fields) but a caller must not trust the read-back.
+        **A previous live session found this drifting continuously
+        (~+0.7 °C/s) regardless of ``change_mode`` and concluded it was
+        permanently broken — that finding was wrong, and a later session
+        traced why.** ``sim/weather/region/sealevel_temperature_c`` holds a
+        written value perfectly (confirmed for a full 100s, zero drift) once
+        X-Plane's real-weather engine has finished whatever in-flight
+        interpolation it was doing at the moment ``change_mode`` was forced —
+        a fresh boot (or a build that was recently in real-weather mode)
+        leaves that engine actively converging toward the live METAR
+        temperature for several minutes, and a write issued *during* that
+        window gets overwritten by the tail end of it, in either direction,
+        looking exactly like permanent drift if the observation window is
+        short. This is a transient startup condition, not a structural
+        limitation of the dataref or of ``change_mode=3``.
         """
         await self._write("weather_sealevel_temperature_c", sea_level_temperature_c)
         altitudes_ft = await self._read_wind_level_altitudes_ft()

@@ -8,7 +8,11 @@ here touches a socket.
 import pytest
 
 from adapters.xplane import DATAREFS, XPlaneSimAdapter
-from adapters.xplane.xplane_adapter import DEFAULT_BASE_URL, XPlaneNotReachable
+from adapters.xplane.xplane_adapter import (
+    DEFAULT_BASE_URL,
+    XPlaneNotReachable,
+    XPlaneWeatherRejected,
+)
 from core.failures import FAILURE_IDS, FailureRef
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.weather.models import WeatherSetup
@@ -45,8 +49,14 @@ def test_declares_only_the_phase_0_capabilities() -> None:
     # value enum and ran the full pytest -m sim failures contract suite (see
     # adapters/xplane/failure_datarefs.py's module docstring).
     assert capabilities.can_inject_failures is True
+    # can_set_weather flipped True: pytest -m sim passed against a live
+    # X-Plane 12.4.3 -- a "permanently broken" temperature-drift finding from
+    # an earlier session turned out to be a transient real-weather-engine
+    # interpolation, and a genuine cloud-settle bug was fixed alongside it
+    # (see xplane_adapter.py's _write_temperature_ladder and
+    # _await_cloud_layers_settled docstrings).
+    assert capabilities.can_set_weather is True
     # Everything else arrives in a later phase and must stay off until then.
-    assert capabilities.can_set_weather is False
     assert capabilities.can_spawn_traffic is False
     assert capabilities.can_control_camera is False
     assert capabilities.can_pushback is False
@@ -74,19 +84,18 @@ async def test_disconnect_on_a_fresh_adapter_is_harmless() -> None:
     assert adapter.is_connected is False
 
 
-async def test_weather_methods_refuse_without_their_capability() -> None:
-    """The still-``False`` Phase 2 shared-foundation stub (weather-manager.md
-    D16): ``can_set_weather`` stays ``False`` on this adapter, and its gated
-    methods raise immediately, with no socket touched (no ``connect()`` call
-    in this test). ``can_set_fuel_payload``/``can_inject_failures`` are no
-    longer in this set -- both flipped ``True`` (see
-    ``test_declares_only_the_phase_0_capabilities``) once ``pytest -m sim``
-    passed against a live simulator.
+async def test_weather_methods_refuse_while_disconnected() -> None:
+    """``can_set_weather`` is ``True``, but nothing has resolved yet on a
+    fresh, unconnected adapter -- ``self._ids`` is empty until
+    :meth:`~adapters.xplane.xplane_adapter.XPlaneSimAdapter.connect` fills
+    it, so every region weather dataref looks the same as a build that does
+    not expose them (``_require_weather_datarefs``'s own documented
+    degradation, weather-manager.md §7). No socket is touched by this test.
     """
     adapter = XPlaneSimAdapter()
-    with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+    with pytest.raises(XPlaneWeatherRejected):
         await adapter.get_weather()
-    with pytest.raises(CapabilityNotSupported, match="can_set_weather"):
+    with pytest.raises(XPlaneWeatherRejected):
         await adapter.set_weather(WeatherSetup(visibility_m=1000.0))
 
 

@@ -1016,3 +1016,65 @@ seven presets → `crosswind` tile disabled until an airport/runway is picked, w
 pick ZZZZ 36 → preview shows wind from 090° at 20 kt with the provenance sentence → Apply →
 the confirmation reports the read-back → console clean. No live simulator is needed; the
 real-sim proof is `pytest -m sim` and the `sim-validator`'s smoke, and neither is a merge gate.
+
+---
+
+## 13. Addendum: as-built — `can_set_weather` flipped after live validation
+
+A later live session re-examined the two findings §11.8/§11.9 recorded as blocking the flag, and
+both turned out to be transient, not structural. Both are recorded in code where they were
+found — `adapters/xplane/xplane_adapter.py`'s `_write_temperature_ladder` and
+`_await_cloud_layers_settled` docstrings carry the full detail — this section is the summary.
+
+- **Temperature: the "permanent drift" was a startup transient, not a broken dataref.**
+  `sim/weather/region/sealevel_temperature_c` was re-tested and found to hold a written value
+  perfectly — zero drift over a full 100 s, well past `WEATHER_HOLD_S["xplane"] = 90.0`'s own
+  bar. The earlier session's "~+0.7 °C/s regardless of `change_mode`" measurement was real, but
+  its cause was different from what was concluded: X-Plane's real-weather engine, freshly booted
+  (or recently in real-weather mode), keeps actively interpolating toward the live METAR
+  temperature for a period of minutes even after `change_mode` is forced manual, and a write
+  issued *during* that window gets overwritten by the tail end of it — in either direction,
+  looking exactly like permanent drift if the observation window is shorter than the transition.
+  Once that transition finishes, every `change_mode` value 0–7 held a written temperature with
+  zero drift, not just `change_mode = 3`. §11.9 is resolved: **not** open, **not** a day/night
+  thermal system separate from the weather engine as originally hypothesised.
+
+- **Clouds: two real bugs, not a fixed limitation.** §11.8's own "converging well past a 10 s
+  wait" finding was correct as far as it went, but two things were still wrong: the settle
+  timeout (`_CLOUD_SETTLE_TIMEOUT_S`) was 10 s against a real convergence window of ~55–60 s —
+  matching Laminar's own documented real-weather refresh interval, the same figure
+  `WEATHER_HOLD_S` already budgets for, just not yet applied to cloud writes specifically — and
+  `_await_cloud_layers_settled` only ever checked slot 0's convergence, so a wholesale-replace
+  write that zeroed a *different* slot was declared "settled" the instant slot 0 landed, without
+  ever confirming the zeroed slot actually reached zero. Measured live: all three cloud slots
+  update simultaneously at the cycle boundary — not a smooth transition, a single jump — after
+  holding an unrelated, uniform stale value (observed: the *same* number across all three slots,
+  itself a leftover from an earlier write) for the whole waiting period. Both are fixed: the
+  timeout is now 70 s, and every touched slot (not only slot 0) is checked before returning.
+
+- **`can_set_weather` flipped `True`**: the full contract suite —
+  `test_set_weather_round_trips`, `test_set_weather_applies_only_the_provided_fields`,
+  `test_set_weather_replaces_layer_lists_wholesale`,
+  `test_set_weather_holds_across_the_sims_update_cycle`, `test_get_weather_returns_a_valid_state`
+  — passed under `pytest -m sim` against a live X-Plane 12.4.3 install before the flag flipped.
+
+### Issue #42, closed in the same session
+
+#42's own acceptance criterion ("the commanded indicated airspeed is achieved within tolerance
+with a non-zero wind set, verified against a live simulator") needed exactly the weather
+datarefs this manager delivers, which is why the issue was scoped to land here. The wind-aware
+velocity-vector fix (`_write_velocity_vector`'s subtraction of the commanded wind from the
+ground-velocity vector) was already implemented, but had no live test proving it — added as
+`test_set_position_delivers_the_commanded_speed_with_wind` in `tests/adapters/test_contract.py`.
+
+The first live run of that test failed in a way worth recording: indicated airspeed read back at
+7 kt against 90 kt commanded, not the ~25 kt-short reading a genuinely broken wind subtraction
+would produce. A targeted diagnostic read the *raw* `local_vx/vy/vz` immediately after the
+teleport and found the written ground-velocity vector already matched the predicted
+TAS-minus-headwind value almost exactly — the write was correct from the first frame. What was
+wrong was the test's own assumption that X-Plane's `indicated_airspeed` instrument reflects a
+fresh ground-velocity-plus-wind combination immediately; measured live, it takes anywhere from
+~3 s to ~10 s+ across repeated runs to settle, the same category of instrument-settling effect
+`COMMANDED_IAS_TOLERANCE_KT`'s own comment already documents for the still-air case, just slower
+here because a fresh wind is also involved. The test now polls for up to 20 s instead of
+asserting immediately, and passed once corrected.
