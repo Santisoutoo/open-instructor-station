@@ -109,6 +109,13 @@ exclude = ["ui/", "build/", "dist/"]
 module = ["geographiclib.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+# `xp` is XPPython3's in-sim API module: it only exists inside the interpreter
+# X-Plane embeds, never in this project's environment. Only the throwaway
+# bridge spike plugin (spikes/PI_OISBridgeSpike.py) imports it.
+module = ["xp"]
+ignore_missing_imports = true
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
