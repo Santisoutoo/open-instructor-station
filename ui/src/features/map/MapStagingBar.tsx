@@ -1,26 +1,69 @@
 /**
- * The bar under the map while a reposition is staged: the picked coordinates, and the
- * hand-off to the Position tab.
+ * The bar under the map while a reposition is staged: the picked coordinates and the
+ * two commit paths (map design D5) — never a third write path.
  *
- * The map never commits a placement itself — repositioning is the Position Manager's
- * job. "Send to Position tab" stages a coordinate placement over there (the exact
- * payload the CoordinateForm builds: altitude, heading and speed at 0, the ground-point
- * defaults) and switches tabs, so the instructor lands on the staging bar that can
- * actually commit, with the full setup editor around it.
+ * - **Apply here** commits immediately through the *identical* `POST
+ *   /api/position/apply` mutation the Position panel's own commit button calls,
+ *   carrying the aircraft's last telemetry frame onto the new point (D6): altitude,
+ *   heading and IAS travel with the drag, so a repositioned aircraft arrives
+ *   configured rather than dropped. Gated by the Position Manager's own
+ *   `commitGate`, imported, never reimplemented (D8).
+ * - **Send to Position tab** is the hand-off for an instructor who wants to edit the
+ *   full setup before committing — the Position panel's staging bar remains the only
+ *   place that happens.
+ *
+ * A failed apply renders the server's error `detail` inline, verbatim — the same
+ * prose contract every other panel honours. Never a modal.
  */
 
+import {
+  useApplyPlacementMutation,
+  useGetCapabilitiesQuery,
+} from '../../api/instructorApi';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { tabSelected as moduleTabSelected } from '../../store/uiSlice';
+import { errorMessage } from '../position/errors';
+import { commitGate } from '../position/gate';
 import {
   placementStaged,
   tabSelected as positionTabSelected,
 } from '../position/positionSlice';
 import { type LatLon } from './measure';
 import { modeSelected, stagedDiscarded } from './mapSlice';
+import { defaultCoordinateRequest } from './reposition';
 
 export function MapStagingBar({ staged }: { staged: LatLon }) {
   const dispatch = useAppDispatch();
   const mode = useAppSelector((state) => state.map.mode);
+  const telemetry = useAppSelector((state) => state.telemetry.latest);
+
+  const { data: capabilities, isError: capabilitiesFailed } = useGetCapabilitiesQuery();
+  const gate = commitGate(capabilities, capabilitiesFailed);
+  const [applyPlacement, applyState] = useApplyPlacementMutation();
+
+  /** Consume the staging and drop an armed tool back to pan. */
+  function disarm(): void {
+    dispatch(stagedDiscarded());
+    if (mode !== 'pan') {
+      // Selecting the armed mode again is the slice's way back to pan.
+      dispatch(modeSelected(mode));
+    }
+  }
+
+  function applyHere(): void {
+    void applyPlacement({
+      placement: defaultCoordinateRequest(staged, telemetry),
+      setup: null,
+    })
+      .unwrap()
+      .then(() => {
+        // The aircraft marker jumping to the point is the visible confirmation.
+        disarm();
+      })
+      .catch(() => {
+        // Rendered from applyState.error below; the staging stays for a retry.
+      });
+  }
 
   return (
     <div className="map-staging" role="region" aria-label="Staged map position">
@@ -28,6 +71,12 @@ export function MapStagingBar({ staged }: { staged: LatLon }) {
       <span className="map-staging__coords">
         {staged.lat.toFixed(5)}, {staged.lon.toFixed(5)}
       </span>
+      {!gate.open && <p className="map-staging__blocked">{gate.reason}</p>}
+      {applyState.isError && (
+        <p className="panel__error">
+          {errorMessage(applyState.error, 'The aircraft could not be placed here.')}
+        </p>
+      )}
       <div className="map-staging__actions">
         <button
           type="button"
@@ -40,7 +89,7 @@ export function MapStagingBar({ staged }: { staged: LatLon }) {
         </button>
         <button
           type="button"
-          className="map-staging__send"
+          className="ghost-button"
           onClick={() => {
             dispatch(
               placementStaged({
@@ -56,14 +105,18 @@ export function MapStagingBar({ staged }: { staged: LatLon }) {
             );
             dispatch(positionTabSelected('coordinate'));
             dispatch(moduleTabSelected('position'));
-            dispatch(stagedDiscarded());
-            if (mode !== 'pan') {
-              // Selecting the armed mode again is the slice's way back to pan.
-              dispatch(modeSelected(mode));
-            }
+            disarm();
           }}
         >
           Send to Position tab
+        </button>
+        <button
+          type="button"
+          className="map-staging__send"
+          disabled={!gate.open || applyState.isLoading}
+          onClick={applyHere}
+        >
+          {applyState.isLoading ? 'Placing…' : 'Apply here'}
         </button>
       </div>
     </div>

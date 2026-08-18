@@ -123,6 +123,10 @@ export type ApplyPlacementRequest = components['schemas']['ApplyPlacementRequest
  */
 export type PlacementRequest = ApplyPlacementRequest['placement'];
 
+/** The bare where-and-how placement the map's drag/click staging builds. */
+export type CoordinatePlacementRequest =
+  components['schemas']['CoordinatePlacementRequest'];
+
 /** The named runway-relative placements: the six finals, short final, and eight circuit legs. */
 export type RunwayPlacementName =
   components['schemas']['RunwayPlacementRequest']['placement'];
