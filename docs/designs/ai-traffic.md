@@ -1186,6 +1186,23 @@ itself inherited from `position-manager.md`): a bridge command that times out su
 today. When the project-wide 502 convention is settled, it is settled once, app-wide — this
 manager follows, it does not fork.
 
+### 10.9 `tcas_conflict_track` has no minimum spawn separation
+
+A consequence of §6.1's own math, recorded here for a product decision rather than patched in
+code: the intruder's spawn point is the CPA walked back `spawn_lead_time_s` along its own track
+at its own speed, and the user's current position is the CPA walked back the same time along the
+user's track at the user's speed. With `relative_bearing_deg=0` (a same-direction closure) and a
+closure speed equal to the user's, those two walks are the *same* walk — the intruder spawns
+**co-located with the user aircraft** — and any same-direction geometry with closure near the
+user's speed spawns it arbitrarily close. The zero-speed degenerate case is now refused
+(`closure_ias_kt` must be positive, at the schema and in the builder), but the co-location case
+is well-formed by every rule this design states, and no minimum-spawn-separation requirement
+exists anywhere in the document to refuse it against. **What would resolve it:** a product
+decision on whether the builder should enforce a minimum spawn separation from the user aircraft
+(refuse, or clamp the geometry) or whether an instructor asking for a same-speed
+same-direction "conflict" is exercising a legitimate, if odd, freedom — decided once, here, not
+improvised in a request validator.
+
 ---
 
 ## 11. Verification
