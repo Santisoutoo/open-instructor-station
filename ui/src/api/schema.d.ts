@@ -113,6 +113,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/geodesy/measure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Measure
+         * @description The exact WGS84 distance and initial true bearing from point 1 to point 2.
+         */
+        get: operations["measure_api_geodesy_measure_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/navdata/status": {
         parameters: {
             query?: never;
@@ -2280,6 +2300,22 @@ export interface components {
             violations: string[];
         };
         /**
+         * MeasureResult
+         * @description The exact geodesic answer between two points, WGS84.
+         */
+        MeasureResult: {
+            /**
+             * Distance Nm
+             * @description Geodesic distance, nautical miles.
+             */
+            distance_nm: number;
+            /**
+             * Initial Bearing True Deg
+             * @description Initial true bearing from point 1 to point 2, degrees.
+             */
+            initial_bearing_true_deg: number;
+        };
+        /**
          * Navaid
          * @description A ground-based navigation aid.
          *
@@ -3735,6 +3771,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AircraftSetupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measure_api_geodesy_measure_get: {
+        parameters: {
+            query: {
+                lat1: number;
+                lon1: number;
+                lat2: number;
+                lon2: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeasureResult"];
                 };
             };
             /** @description Validation Error */
