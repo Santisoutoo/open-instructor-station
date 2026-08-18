@@ -100,7 +100,16 @@ def _poll_until_settled(client: TestClient) -> dict[str, Any]:
 
 
 def _restore(client: TestClient, home: dict[str, Any]) -> None:
-    """Clear every failure and put the aircraft back where this test found it."""
+    """Clear every failure and put the aircraft back where this test found it.
+
+    ``home``'s own ``ias_kt`` only applies if it was airborne -- a stationary
+    placement on the ground always commands 0, matching
+    ``tests/conftest.py``'s own restore branch (the "a placement now commands
+    its own speed" fix this repo's ``CLAUDE.md`` documents: a parked
+    aircraft handed a nonzero speed is fine, but an airborne one handed 0
+    falls out of the sky below stall speed -- and the reverse, a parked one
+    kept at cruise IAS, is just as wrong).
+    """
     print("[live-scenarios]   restore: clearing failures", file=sys.stderr, flush=True)
     clear_response = client.post("/api/failures/clear-all")
     assert clear_response.status_code == 200, clear_response.text
@@ -116,7 +125,7 @@ def _restore(client: TestClient, home: dict[str, Any]) -> None:
                     "altitude_ft": home["altitude_ft"],
                 },
                 "heading_deg": home["heading_deg"],
-                "ias_kt": 0.0,
+                "ias_kt": 0.0 if home["on_ground"] else home["ias_kt"],
             }
         },
     )
@@ -176,7 +185,7 @@ def test_every_available_scenario_runs_to_completion(live_scenario_client: TestC
 
     # The exit-criterion assertion itself: every attempted scenario -- every
     # one the manifest itself declared available -- reached "completed".
-    assert skipped == {"tcas-resolution-advisory": skipped.get("tcas-resolution-advisory")}, (
+    assert set(skipped) == {"tcas-resolution-advisory"}, (
         f"expected only tcas-resolution-advisory to be unavailable, got: {skipped}"
     )
     assert len(results) == 13, f"expected 13 attempted scenarios, ran {len(results)}: {results}"
