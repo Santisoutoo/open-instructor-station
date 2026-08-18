@@ -212,6 +212,23 @@ TRAFFIC_ADVANCE_TIMEOUT_S = 6.0
 #: without a refusal means capacity is simply not enforced.
 TRAFFIC_CAPACITY_PROBE_LIMIT = 100
 
+#: Track timing for :func:`test_traffic_expires_after_despawn_after_s`: the
+#: track's last waypoint is reached at :data:`TRAFFIC_EXPIRY_LEG_TIME_S` and
+#: automatic despawn is due :data:`TRAFFIC_EXPIRY_DESPAWN_AFTER_S` later — a
+#: 2 s nominal lifetime, short enough to keep the suite fast, long enough that
+#: the read taken immediately after spawn cannot race the expiry.
+TRAFFIC_EXPIRY_LEG_TIME_S = 1.0
+TRAFFIC_EXPIRY_DESPAWN_AFTER_S = 1.0
+
+#: How long past the nominal expiry the test keeps polling before declaring
+#: the entity immortal. Generous: lazy expiry only has to happen on *a* read
+#: after the deadline, not at the deadline.
+TRAFFIC_EXPIRY_GRACE_S = 4.0
+
+#: Slack on the "never disappears early" lower bound, absorbing the clock
+#: reads on either side of the spawn call itself.
+TRAFFIC_EXPIRY_CLOCK_EPSILON_S = 0.05
+
 #: Which test pins each capability. ``PENDING`` marks a flag whose manager
 #: arrives in a later phase: the contract is not written yet, and that is a
 #: deliberate, visible decision rather than an oversight.
@@ -1277,6 +1294,7 @@ def _traffic_track(
     bearing_deg: float = 0.0,
     leg_nm: float = TRAFFIC_ADVANCE_LEG_NM,
     leg_time_s: float = TRAFFIC_ADVANCE_LEG_TIME_S,
+    despawn_after_s: float | None = None,
 ) -> TrafficTrack:
     """A minimal two-waypoint ``custom`` track near ``anchor``.
 
@@ -1307,6 +1325,7 @@ def _traffic_track(
             TrafficWaypoint(position=start, speed_kt=speed_kt, t_offset_s=0.0),
             TrafficWaypoint(position=end, speed_kt=speed_kt, t_offset_s=leg_time_s),
         ),
+        despawn_after_s=despawn_after_s,
     )
 
 
@@ -1414,6 +1433,64 @@ async def test_traffic_advances_along_its_track(adapter: SimAdapter) -> None:
         assert remaining_nm <= TRAFFIC_ADVANCE_LEG_NM - TRAFFIC_MOVED_MIN_NM / 2.0
     finally:
         await adapter.despawn_traffic(contact.traffic_id)
+
+
+async def test_traffic_expires_after_despawn_after_s(adapter: SimAdapter) -> None:
+    """``despawn_after_s`` is honoured: the entity outlives its track by exactly
+    that long, then disappears from ``get_traffic_contacts()`` on its own.
+
+    Both halves of the timing are pinned (ai-traffic.md §3.2, §4.4):
+
+    * **never early** — the entity must not vanish before
+      ``waypoints[-1].t_offset_s + despawn_after_s``; every poll that still
+      finds it before that deadline is consistent, and the moment it is first
+      observed missing must sit at or after the deadline. An adapter that
+      despawns at track end, ignoring the extra ``despawn_after_s``, fails
+      this lower bound loudly.
+    * **eventually gone** — within :data:`TRAFFIC_EXPIRY_GRACE_S` past the
+      deadline the contact list no longer carries it, with no despawn call
+      made. Expiry may be lazy (evaluated on read, no background task — the
+      Fake's documented shape), so only *a* read after the deadline has to
+      show it gone, not the first tick past it.
+    """
+    if not adapter.capabilities.can_spawn_traffic:
+        pytest.skip(f"{adapter.name} does not declare can_spawn_traffic")
+
+    state = await adapter.get_aircraft_state()
+    track = _traffic_track(
+        _position_of(state),
+        leg_time_s=TRAFFIC_EXPIRY_LEG_TIME_S,
+        despawn_after_s=TRAFFIC_EXPIRY_DESPAWN_AFTER_S,
+    )
+    lifetime_s = TRAFFIC_EXPIRY_LEG_TIME_S + TRAFFIC_EXPIRY_DESPAWN_AFTER_S
+    loop = asyncio.get_running_loop()
+    try:
+        spawned_at = loop.time()
+        contact = await adapter.spawn_traffic(track)
+        # Alive immediately after spawn — expiry is measured from here.
+        assert _by_id(await adapter.get_traffic_contacts(), contact.traffic_id) is not None
+
+        deadline = spawned_at + lifetime_s + TRAFFIC_EXPIRY_GRACE_S
+        first_missing_at: float | None = None
+        while loop.time() < deadline:
+            if _by_id(await adapter.get_traffic_contacts(), contact.traffic_id) is None:
+                first_missing_at = loop.time()
+                break
+            await asyncio.sleep(STREAM_INTERVAL_S)
+
+        assert first_missing_at is not None, (
+            f"traffic never expired: still reported "
+            f"{lifetime_s + TRAFFIC_EXPIRY_GRACE_S:.1f} s after spawn, with "
+            f"despawn_after_s={TRAFFIC_EXPIRY_DESPAWN_AFTER_S} due at {lifetime_s:.1f} s"
+        )
+        survived_s = first_missing_at - spawned_at
+        assert survived_s >= lifetime_s - TRAFFIC_EXPIRY_CLOCK_EPSILON_S, (
+            f"traffic expired early: gone {survived_s:.2f} s after spawn, but "
+            f"despawn_after_s only falls due at {lifetime_s:.1f} s — the entity must "
+            "hold at its last waypoint until then"
+        )
+    finally:
+        await adapter.clear_all_traffic()
 
 
 async def test_spawn_capacity_is_enforced(adapter: SimAdapter) -> None:
