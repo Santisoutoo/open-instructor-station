@@ -127,6 +127,52 @@ Write the confirmed `weather_source` value into §7.1's table and into
 | `1` | X-Plane was not reachable, or this build does not expose the region weather datarefs at all (they are declared `OPTIONAL` on this adapter for exactly this case). |
 | `2` | No candidate held. The script suggests the §11.1 fallback: check whether any region write flips the sim to manual by itself. |
 
+## `bridge_transport.py` + `PI_OISBridgeSpike.py`
+
+**Question: does the AI Traffic bridge transport of `docs/designs/ai-traffic.md` §5.1 actually
+work, and at what cost?** Three unknowns, named in §10.4: (a) the command→ack round-trip latency
+under flight-loop scheduling, (b) the `data`-dataref payload-size ceiling over the Web API —
+is one JSON-encoded `TrafficTrack` safe in a single write? — and (c) whether AI/multiplayer
+aircraft slots (`sim/multiplayer/position/plane1…`) can be driven for a spawned entity, and what
+ground vehicles / birds need instead (XPLMInstance vs slots).
+
+Two halves: `PI_OISBridgeSpike.py` is a **throwaway XPPython3 plugin** that registers the §5.1
+custom datarefs (`ois/bridge/heartbeat_s`, `ois/traffic/command`, `ois/traffic/command_ack`,
+`ois/traffic/contacts`) and answers commands from its flight loop; `bridge_transport.py` drives
+the protocol from outside over the Web API and takes the measurements.
+
+### Running it
+
+1. Copy `spikes/PI_OISBridgeSpike.py` into
+   `<X-Plane 12>/Resources/plugins/PythonPlugins/` (requires XPPython3). It must be there
+   **before X-Plane starts** — the Web API indexes datarefs at startup.
+2. Start X-Plane and load a flight (`spikes/sim_lifecycle.py launch` + `wait-ready` does this
+   unattended).
+3. From the repository root:
+
+```powershell
+& .venv\Scripts\python.exe spikes\bridge_transport.py
+# or against another machine on the LAN:
+& .venv\Scripts\python.exe spikes\bridge_transport.py --host 192.168.1.20 --port 8086
+```
+
+4. **Remove the plugin file (and its `__pycache__` entry) afterwards.** It is a measurement rig,
+   not the real bridge, and nothing in the application ever depends on it.
+
+### After the run
+
+The measurements belong in `docs/designs/ai-traffic.md` §10.4 ("Spike findings"), where they
+confirm or amend §5's transport design before Track B (`feature/traffic-bridge`) builds the real
+plugin. They do not belong here.
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| `0` | All three measurements were taken; findings JSON printed. |
+| `1` | X-Plane unreachable, or the `ois/*` datarefs are missing from the index (plugin not installed, or installed after launch). |
+| `2` | The transport answered but a measurement failed; the output says which. |
+
 ## `sim_lifecycle.py`
 
 **Question: can a test run drive the X-Plane 12 *process* — start it at a chosen airport, wait
