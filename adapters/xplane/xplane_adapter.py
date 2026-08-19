@@ -100,6 +100,13 @@ from core.atmosphere import (
     tas_from_ias,
     temperature_from_deviation_c,
 )
+from core.camera.models import (
+    CAMERA_VIEW_CATALOGUE,
+    CameraOffset,
+    CameraSupportManifest,
+    CameraViewId,
+    CameraViewSupport,
+)
 from core.failures import (
     FAILURE_CATALOGUE,
     ActiveFailure,
@@ -2527,6 +2534,48 @@ class XPlaneSimAdapter:
         """
         del request
         raise CapabilityNotSupported(self.name, "can_pushback")
+
+    # -- Camera -------------------------------------------------------------
+    # Track 0 stubs (camera-manager.md §9.2 Track 0), mirroring the pushback
+    # stub above: can_control_camera stays False until Track B (#128) lands
+    # §5.1's command mapping and §5.2's offset spike, so a caller reaching
+    # the writes below ignored the capabilities — exactly what
+    # CapabilityNotSupported means. The two reads are capability-free (D2/D6
+    # in the design) and answer honestly without a live probe.
+
+    async def get_camera_support(self) -> CameraSupportManifest:
+        """Every view unsupported, ``custom_positions_supported=False``.
+
+        A capability-free read (camera-manager.md D2): without
+        ``can_control_camera`` declared, every entry carries the same one
+        reason — the flag gates the whole group before any per-view question
+        is even asked. Track B replaces this with §5.1's connect-time command
+        probe and §5.2's offset-dataref finding.
+        """
+        reason = f"{self.name!r} does not declare can_control_camera."
+        return CameraSupportManifest(
+            caveat=None,
+            views=tuple(
+                CameraViewSupport(view_id=spec.view_id, supported=False, reason=reason)
+                for spec in CAMERA_VIEW_CATALOGUE
+            ),
+            custom_positions_supported=False,
+            custom_positions_reason=reason,
+        )
+
+    async def set_camera_view(self, view_id: CameraViewId) -> None:
+        """Refuse — see the module note above :meth:`get_camera_support`."""
+        del view_id
+        raise CapabilityNotSupported(self.name, "can_control_camera")
+
+    async def get_camera_offset(self) -> CameraOffset | None:
+        """``None`` — a capability-free read; there is nothing to report yet."""
+        return None
+
+    async def set_camera_offset(self, offset: CameraOffset) -> None:
+        """Refuse — see the module note above :meth:`get_camera_support`."""
+        del offset
+        raise CapabilityNotSupported(self.name, "can_control_camera")
 
     # -- AI traffic -------------------------------------------------------
     # Track 0 stubs (ai-traffic.md §9.2): the capability plumbing is real —

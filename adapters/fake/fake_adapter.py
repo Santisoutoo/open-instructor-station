@@ -17,6 +17,13 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from core.camera.models import (
+    CAMERA_VIEW_CATALOGUE,
+    CameraOffset,
+    CameraSupportManifest,
+    CameraViewId,
+    CameraViewSupport,
+)
 from core.failures import (
     FAILURE_CATALOGUE,
     FAILURE_IDS,
@@ -161,6 +168,11 @@ class FakeSimAdapter:
         # Spawned traffic, keyed by traffic_id. Contacts are derived from each
         # entity's track at read time (interpolate_track), never stored.
         self._traffic: dict[str, _FakeTrafficEntity] = {}
+        # The last-requested named view and the last-set free-camera offset.
+        # Mutually exclusive (camera-manager.md §4.1): setting one clears the
+        # other, because the view alone does not imply a pose.
+        self._camera_view: CameraViewId | None = None
+        self._camera_offset: CameraOffset | None = None
 
     # -- Identity ---------------------------------------------------------
 
@@ -351,6 +363,68 @@ class FakeSimAdapter:
                 "vertical_speed_fpm": 0.0,
             }
         )
+
+    # -- Camera -------------------------------------------------------------
+
+    async def get_camera_support(self) -> CameraSupportManifest:
+        """Every view supported, custom positions supported — the reference answer.
+
+        A capability-free read (camera-manager.md D2): an adapter without
+        ``can_control_camera`` still answers, every view unsupported with a
+        stated reason, but this is the Fake, which declares the flag, so
+        everything is ``True``.
+        """
+        supported = self.capabilities.can_control_camera
+        reason = None if supported else f"{self.name!r} does not declare can_control_camera."
+        return CameraSupportManifest(
+            caveat=None,
+            views=tuple(
+                CameraViewSupport(view_id=spec.view_id, supported=supported, reason=reason)
+                for spec in CAMERA_VIEW_CATALOGUE
+            ),
+            custom_positions_supported=supported,
+            custom_positions_reason=reason,
+        )
+
+    async def set_camera_view(self, view_id: CameraViewId) -> None:
+        """Record the requested view, clearing any previously set free-camera offset.
+
+        Switching to any named view — including re-selecting ``"drone"``
+        without an explicit offset — clears the last free-camera pose,
+        because the view alone does not imply one.
+        """
+        if not self.capabilities.can_control_camera:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        self._camera_view = view_id
+        self._camera_offset = None
+
+    async def get_camera_offset(self) -> CameraOffset | None:
+        """The last offset :meth:`set_camera_offset` recorded, or ``None``.
+
+        A capability-free read: an adapter that cannot control the camera, or
+        that has no free-camera pose to report right now, returns ``None``
+        rather than raising.
+        """
+        if not self.capabilities.can_control_camera:
+            return None
+        return self._camera_offset
+
+    async def set_camera_offset(self, offset: CameraOffset) -> None:
+        """Record ``offset`` and switch the current view to ``"drone"``.
+
+        Requires ``can_control_camera`` AND the manifest's
+        ``custom_positions_supported`` — read through :meth:`get_camera_support`
+        rather than a second top-level flag (D3), so a subclass that overrides
+        the manifest to force ``custom_positions_supported=False`` is honoured
+        here without needing its own override of this method too.
+        """
+        if not self.capabilities.can_control_camera:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        support = await self.get_camera_support()
+        if not support.custom_positions_supported:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        self._camera_offset = offset
+        self._camera_view = "drone"
 
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is set, leaving the rest untouched.
