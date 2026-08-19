@@ -2,15 +2,22 @@
  * A small SVG schematic of the staged manoeuvre — a schematic, not a map (the
  * Position Manager's D16 precedent; no MapLibre here either).
  *
- * Drawn in the aircraft's local frame with the nose up: the arc is computed
- * client-side by `arc.ts` (the `measure.ts` discipline — decorative precision, the
- * exact numbers come from the server's preview once the wiring wave lands). A nose
- * marker sits at the start pointing up, and another at the target rotated by the
- * signed angle — D5 made visible: "right" bends the nose marker clockwise.
+ * Drawn in the aircraft's local frame with the nose up. A nose marker sits at the start
+ * pointing up, and another at the target rotated by the signed angle — D5 made visible:
+ * "right" bends the nose marker clockwise.
+ *
+ * **Two sources, one drawing, in a deliberate order.** Once the instructor presses
+ * Preview, the polyline is the server's own `target.path_preview`, projected nose-up:
+ * what is drawn is then literally what `core.pushback` resolved. Before that — while the
+ * sliders are still being dragged and nothing has been sent to the simulator — it falls
+ * back to `arc.ts`'s client-side arc, so the shape responds live. The two agree by
+ * construction (`arc.ts` implements the same closed-form chord identity), which is what
+ * makes the swap invisible; the fallback is the decorative one and never outlives a
+ * preview.
  */
 
-import { pushbackPathLocal, signedAngleDeg } from './arc';
-import type { PushbackDirection } from './types.mock';
+import type { PushbackDirection, PushbackPreview } from '../../api/models';
+import { projectPathLocal, pushbackPathLocal, signedAngleDeg } from './arc';
 
 const VIEW_W = 220;
 const VIEW_H = 170;
@@ -22,10 +29,24 @@ interface PathPreviewProps {
   direction: PushbackDirection;
   distanceM: number;
   angleDeg: number;
+  /** The server's resolved preview once it has answered; the arc is a stand-in until then. */
+  preview?: PushbackPreview | undefined;
 }
 
-export function PathPreview({ direction, distanceM, angleDeg }: PathPreviewProps) {
-  const path = pushbackPathLocal(direction, distanceM, angleDeg);
+export function PathPreview({
+  direction,
+  distanceM,
+  angleDeg,
+  preview,
+}: PathPreviewProps) {
+  const path =
+    preview === undefined
+      ? pushbackPathLocal(direction, distanceM, angleDeg)
+      : projectPathLocal(
+          preview.target.path_preview,
+          preview.current_position,
+          preview.current_heading_deg,
+        );
 
   const xs = path.map((p) => p.x);
   const ys = path.map((p) => p.y);

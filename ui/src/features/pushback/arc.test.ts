@@ -6,8 +6,13 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { finalHeadingDeg, pushbackPathLocal, signedAngleDeg } from './arc';
-import { PUSHBACK_PATH_PREVIEW_POINTS } from './types.mock';
+import {
+  PUSHBACK_PATH_PREVIEW_POINTS,
+  finalHeadingDeg,
+  projectPathLocal,
+  pushbackPathLocal,
+  signedAngleDeg,
+} from './arc';
 
 /** The §3 worked example: distance 30 m, angle 90° → radius 60/π, chord ≈ 27.0095 m. */
 const RADIUS_M = 30 / (Math.PI / 2);
@@ -91,5 +96,62 @@ describe('pushbackPathLocal', () => {
     // Full chord at 180° is the diameter, at a local bearing of 180 + 90 = 270°.
     expect(end?.x).toBeCloseTo(-2 * radiusM, 6);
     expect(end?.y).toBeCloseTo(0, 6);
+  });
+});
+
+describe('projectPathLocal', () => {
+  const ORIGIN = { latitude: 40.4936, longitude: -3.5668, altitude_ft: 1998 };
+
+  /** Metres north/east of the origin, as a GeoPosition. */
+  function offset(northM: number, eastM: number) {
+    return {
+      latitude: ORIGIN.latitude + northM / 111320,
+      longitude:
+        ORIGIN.longitude + eastM / (111320 * Math.cos((ORIGIN.latitude * Math.PI) / 180)),
+      altitude_ft: ORIGIN.altitude_ft,
+    };
+  }
+
+  it('puts the origin itself at the origin, whatever the heading', () => {
+    expect(projectPathLocal([ORIGIN], ORIGIN, 217)).toEqual([{ x: 0, y: 0 }]);
+  });
+
+  it('reads a point ahead of the nose as +y, for a heading that is not north', () => {
+    // Facing east: 30 m due east is 30 m ahead, 0 m abeam.
+    const [point] = projectPathLocal([offset(0, 30)], ORIGIN, 90);
+
+    expect(point?.y).toBeCloseTo(30, 3);
+    expect(point?.x).toBeCloseTo(0, 3);
+  });
+
+  it('reads a point off the left wing as −x — the rotation is not an identity', () => {
+    // Facing east, due north is off the LEFT wing.
+    const [point] = projectPathLocal([offset(30, 0)], ORIGIN, 90);
+
+    expect(point?.x).toBeCloseTo(-30, 3);
+    expect(point?.y).toBeCloseTo(0, 3);
+  });
+
+  it("agrees with the client arc, which is why swapping one for the other is invisible", () => {
+    // Build a geodetic path from the client arc's own answer, facing 090°, then project
+    // it back: the round trip is the guarantee that the schematic does not jump when the
+    // server's preview replaces the stand-in.
+    const heading = 90;
+    const local = pushbackPathLocal('right', 30, 90);
+    const geodetic = local.map((point) => {
+      const rad = (heading * Math.PI) / 180;
+      // Inverse of the projection: local (x right, y ahead) back to north/east.
+      const northM = point.y * Math.cos(rad) - point.x * Math.sin(rad);
+      const eastM = point.y * Math.sin(rad) + point.x * Math.cos(rad);
+      return offset(northM, eastM);
+    });
+
+    const projected = projectPathLocal(geodetic, ORIGIN, heading);
+
+    expect(projected).toHaveLength(local.length);
+    projected.forEach((point, index) => {
+      expect(point.x).toBeCloseTo(local[index]?.x ?? Number.NaN, 3);
+      expect(point.y).toBeCloseTo(local[index]?.y ?? Number.NaN, 3);
+    });
   });
 });

@@ -2,6 +2,12 @@
  * The form reducer's one invariant, exercised from every edge: the form always
  * describes a request the backend's §3 validator would accept — angle 0 exactly when
  * straight, in (0, max] otherwise — and a staged request never outlives an edit.
+ *
+ * The ceiling arrives *on the action*, from `GET /api/pushback/manifest`, and these tests
+ * pass it explicitly: the reducer must clamp against whatever the server said, never
+ * against a constant of its own. `MANIFEST_MAX_*` are the values `core.pushback`
+ * publishes today; the point of the "different ceiling" case is that another pair would
+ * be honoured just as faithfully, with no UI change.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -16,6 +22,19 @@ import reducer, {
   stagedDiscarded,
   toRequest,
 } from './pushbackSlice';
+
+/** What `GET /api/pushback/manifest` states today. The reducer is told; it never assumes. */
+const MANIFEST_MAX_DISTANCE_M = 200;
+const MANIFEST_MAX_ANGLE_DEG = 180;
+
+/** The panel always passes the manifest's bound alongside the slider's new value. */
+function distanceEdit(value: number, max: number | undefined = MANIFEST_MAX_DISTANCE_M) {
+  return distanceChanged({ value, max });
+}
+
+function angleEdit(value: number, max: number | undefined = MANIFEST_MAX_ANGLE_DEG) {
+  return angleChanged({ value, max });
+}
 
 describe('pushbackSlice', () => {
   it("starts at the design's one-tap default: straight back, 20 m, nothing staged", () => {
@@ -36,7 +55,7 @@ describe('pushbackSlice', () => {
 
   it('keeps a deliberately chosen angle when switching between left and right', () => {
     let state = reducer(initialPushbackState, directionSelected('right'));
-    state = reducer(state, angleChanged(60));
+    state = reducer(state, angleEdit(60));
 
     state = reducer(state, directionSelected('left'));
 
@@ -45,32 +64,49 @@ describe('pushbackSlice', () => {
 
   it('zeroes the angle when returning to straight — 5° straight would be a 422', () => {
     let state = reducer(initialPushbackState, directionSelected('right'));
-    state = reducer(state, angleChanged(60));
+    state = reducer(state, angleEdit(60));
 
     state = reducer(state, directionSelected('straight'));
 
     expect(state.angleDeg).toBe(0);
   });
 
-  it('clamps the distance into (0, 200] — a slider cannot show an error', () => {
-    expect(reducer(initialPushbackState, distanceChanged(500)).distanceM).toBe(200);
-    expect(reducer(initialPushbackState, distanceChanged(0)).distanceM).toBe(1);
-    expect(reducer(initialPushbackState, distanceChanged(-5)).distanceM).toBe(1);
+  it("clamps the distance to the manifest's ceiling — a slider cannot show an error", () => {
+    expect(reducer(initialPushbackState, distanceEdit(500)).distanceM).toBe(
+      MANIFEST_MAX_DISTANCE_M,
+    );
+    expect(reducer(initialPushbackState, distanceEdit(0)).distanceM).toBe(1);
+    expect(reducer(initialPushbackState, distanceEdit(-5)).distanceM).toBe(1);
   });
 
-  it('clamps the angle into (0, 180] on an arc and ignores writes while straight', () => {
+  it("clamps the angle to the manifest's ceiling on an arc, ignoring writes while straight", () => {
     const arc = reducer(initialPushbackState, directionSelected('right'));
 
-    expect(reducer(arc, angleChanged(999)).angleDeg).toBe(180);
-    expect(reducer(arc, angleChanged(0)).angleDeg).toBe(1);
+    expect(reducer(arc, angleEdit(999)).angleDeg).toBe(MANIFEST_MAX_ANGLE_DEG);
+    expect(reducer(arc, angleEdit(0)).angleDeg).toBe(1);
     // Straight: the disabled slider must not be able to smuggle an angle in.
-    expect(reducer(initialPushbackState, angleChanged(30)).angleDeg).toBe(0);
+    expect(reducer(initialPushbackState, angleEdit(30)).angleDeg).toBe(0);
+  });
+
+  it('honours a ceiling that is not the shipped one — the bound is the server\'s', () => {
+    expect(reducer(initialPushbackState, distanceEdit(500, 50)).distanceM).toBe(50);
+
+    const arc = reducer(initialPushbackState, directionSelected('right'));
+    expect(reducer(arc, angleEdit(500, 90)).angleDeg).toBe(90);
+  });
+
+  it('leaves the top open until a bound is stated — the gate has the panel closed then', () => {
+    // Dispatched directly: `distanceEdit`'s default would turn an explicit `undefined`
+    // back into the shipped ceiling, which is the opposite of what this pins.
+    const edit = distanceChanged({ value: 500, max: undefined });
+
+    expect(reducer(initialPushbackState, edit).distanceM).toBe(500);
   });
 
   it('stages the exact wire shape — snake_case keys, no extras (§3)', () => {
     let state = reducer(initialPushbackState, directionSelected('right'));
-    state = reducer(state, distanceChanged(30));
-    state = reducer(state, angleChanged(90));
+    state = reducer(state, distanceEdit(30));
+    state = reducer(state, angleEdit(90));
 
     state = reducer(state, previewStaged());
 
@@ -83,8 +119,8 @@ describe('pushbackSlice', () => {
       previewStaged(),
     );
 
-    expect(reducer(staged, distanceChanged(40)).staged).toBeNull();
-    expect(reducer(staged, angleChanged(30)).staged).toBeNull();
+    expect(reducer(staged, distanceEdit(40)).staged).toBeNull();
+    expect(reducer(staged, angleEdit(30)).staged).toBeNull();
     expect(reducer(staged, directionSelected('left')).staged).toBeNull();
     expect(reducer(staged, stagedDiscarded()).staged).toBeNull();
   });

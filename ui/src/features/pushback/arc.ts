@@ -17,7 +17,7 @@
  * `core.pushback.pushback_target()` uses.
  */
 
-import { PUSHBACK_PATH_PREVIEW_POINTS, type PushbackDirection } from './types.mock';
+import type { GeoPosition, PushbackDirection } from '../../api/models';
 
 /** A point in the aircraft's local frame, metres. The aircraft sits at the origin. */
 export interface LocalPoint {
@@ -27,7 +27,22 @@ export interface LocalPoint {
   y: number;
 }
 
+/**
+ * How many segments the *client-side* schematic draws. Deliberately the same count
+ * `core.pushback.PUSHBACK_PATH_PREVIEW_POINTS` uses for its own path, so the thumbnail
+ * does not visibly change resolution the moment the server's preview replaces it — but
+ * this is a drawing choice, not an API constant, which is why it lives here and not in a
+ * hand-typed copy of the schema.
+ */
+export const PUSHBACK_PATH_PREVIEW_POINTS = 8;
+
 const DEG = Math.PI / 180;
+
+/**
+ * Metres per degree of latitude. A sphere is enough here for the same reason the flat
+ * plane is: over the ≤200 m a `PushbackRequest` can ask for, the error is millimetric.
+ */
+const M_PER_DEG_LAT = 111320;
 
 /** `0 · sin(225°)` is `-0`; the origin (and any axis crossing) should read `0`. */
 function normalisedZero(value: number): number {
@@ -93,4 +108,31 @@ export function pushbackPathLocal(
     });
   }
   return path;
+}
+
+/**
+ * The server's own `PushbackTarget.path_preview`, projected into the same nose-up local
+ * frame so the schematic can draw *the server's* answer rather than a client-side
+ * re-derivation of it.
+ *
+ * `origin` is the preview's `current_position` and `headingDeg` its `current_heading_deg`,
+ * so the first point lands on the origin and the path runs down the screen behind the
+ * aircraft. Altitude is ignored: this is a plan view of a manoeuvre on a ramp.
+ */
+export function projectPathLocal(
+  path: readonly GeoPosition[],
+  origin: GeoPosition,
+  headingDeg: number,
+): LocalPoint[] {
+  const mPerDegLon = M_PER_DEG_LAT * Math.cos(origin.latitude * DEG);
+  const heading = headingDeg * DEG;
+  return path.map((point) => {
+    const northM = (point.latitude - origin.latitude) * M_PER_DEG_LAT;
+    const eastM = (point.longitude - origin.longitude) * mPerDegLon;
+    // Rotate the local ENU offset into the aircraft's frame: +y is the nose.
+    return {
+      x: normalisedZero(eastM * Math.cos(heading) - northM * Math.sin(heading)),
+      y: normalisedZero(eastM * Math.sin(heading) + northM * Math.cos(heading)),
+    };
+  });
 }

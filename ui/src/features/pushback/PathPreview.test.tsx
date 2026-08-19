@@ -7,7 +7,7 @@
 import { render } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 import { PathPreview } from './PathPreview';
-import { PUSHBACK_PATH_PREVIEW_POINTS } from './types.mock';
+import { PUSHBACK_PATH_PREVIEW_POINTS } from './arc';
 
 function polylinePoints(container: HTMLElement): [number, number][] {
   const polyline = container.querySelector('polyline');
@@ -52,6 +52,35 @@ describe('PathPreview', () => {
     expect(start?.getAttribute('transform')).not.toContain('rotate');
     // D5 on screen: a right push rotates the target nose marker clockwise (+90).
     expect(end?.getAttribute('transform')).toContain('rotate(90.0)');
+  });
+
+  it("draws the SERVER's path once a preview arrives, not the client stand-in", () => {
+    // Three points where the client arc would draw nine: if the polyline still has nine,
+    // the panel is drawing its own arithmetic instead of what core.pushback resolved.
+    const origin = { latitude: 40.4936, longitude: -3.5668, altitude_ft: 1998 };
+    const { container } = render(
+      <PathPreview
+        direction="right"
+        distanceM={30}
+        angleDeg={90}
+        preview={{
+          request: { direction: 'right', distance_m: 30, angle_deg: 90 },
+          current_position: origin,
+          current_heading_deg: 90,
+          target: {
+            position: { ...origin, longitude: origin.longitude - 0.0003 },
+            heading_deg: 180,
+            path_preview: [
+              origin,
+              { ...origin, longitude: origin.longitude - 0.00015 },
+              { ...origin, longitude: origin.longitude - 0.0003 },
+            ],
+          },
+        }}
+      />,
+    );
+
+    expect(polylinePoints(container)).toHaveLength(3);
   });
 
   it('names the direction for assistive tech', () => {

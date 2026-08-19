@@ -12,7 +12,7 @@
  * wiring wave — either way this component never knows.
  */
 
-import type { PushbackDirection } from './types.mock';
+import type { PushbackDirection } from '../../api/models';
 import { PUSHBACK_ANGLE_MIN_DEG, PUSHBACK_DISTANCE_MIN_M } from './pushbackSlice';
 
 const SEGMENTS: { direction: PushbackDirection; label: string }[] = [
@@ -25,9 +25,12 @@ interface PushbackControlsProps {
   direction: PushbackDirection;
   distanceM: number;
   angleDeg: number;
-  /** Echoed by the manifest once the backend lands; §3 constants until then. */
-  maxDistanceM: number;
-  maxAngleDeg: number;
+  /**
+   * Straight from `GET /api/pushback/manifest`, so the sliders hold no second copy of
+   * `PushbackRequest`'s field constraints. `undefined` only while the gate is closed.
+   */
+  maxDistanceM: number | undefined;
+  maxAngleDeg: number | undefined;
   /** True while the pushback gate is closed — every control disables, none disappears. */
   disabled: boolean;
   onDirectionSelected: (direction: PushbackDirection) => void;

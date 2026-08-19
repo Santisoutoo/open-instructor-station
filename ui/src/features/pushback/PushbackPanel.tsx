@@ -2,77 +2,113 @@
  * The Pushback tab: gate → direction/distance/angle controls → path schematic →
  * stage-then-execute bar, the Position/Weather house pattern (design §7.1).
  *
- * PURE-LOGIC HALF — no fetch yet. The RTK Query wiring (`pushbackApi.ts` via
- * `injectEndpoints`, D10) waits for the pushback server track to land and the OpenAPI
- * schema to regenerate. Until then:
+ * Form state is the `pushback` slice in the store; everything the server knows —
+ * the manifest, the preview, the result — is RTK Query (`pushbackApi.ts`).
  *
- * - `capabilities`/`capabilitiesError` arrive as props instead of the capabilities
- *   query, and Preview/Execute *emit callbacks* carrying the exact `PushbackRequest`
- *   wire shape the endpoints will take;
- * - the form state runs through `pushbackSlice`'s reducer via `useReducer` — the same
- *   actions and transitions the store will own once the wiring wave registers the
- *   slice, so the lift is a mechanical swap;
- * - the slider bounds are the §3 constants the manifest will echo.
+ * **The two refusals are kept apart, because the server keeps them apart.** A missing
+ * `can_pushback` (501 territory) is permanent: the gate closes, every control disables,
+ * and the server's own sentence says which adapter and which flag. "The aircraft is
+ * airborne" (409) is not: the adapter is perfectly capable, this aircraft simply is not on
+ * the ground *right now*, so the controls stay live, the notice says so in as many words,
+ * and only the commit is held back until a preview succeeds again. Flattening the two
+ * would disable the panel for the rest of the session over a condition that clears on
+ * touchdown.
  *
- * Preview stages the request (Execute is disarmed until then, and any edit disarms it
- * again — a stale preview is never what Execute sends); the schematic redraws live
- * from the form, so the instructor sees the arc *before* staging anything.
+ * Execute is armed only by a preview that actually came back. The staging latch alone is
+ * not enough: pressing Preview while airborne stages a request the server has just
+ * refused, and an armed Execute after a refused preview would be exactly the "preview
+ * draws a path execute would refuse" lie `server/pushback_routes.py` goes out of its way
+ * to prevent. A successful push disarms it again — the manoeuvre is deliberately *not*
+ * idempotent, so a second Execute would push back a second time.
  */
 
-import { useReducer } from 'react';
-import type { Capabilities } from '../../api/models';
+import { skipToken } from '@reduxjs/toolkit/query';
+import { useAppDispatch, useAppSelector } from '../../store';
 import { PathPreview } from './PathPreview';
 import { PushbackControls } from './PushbackControls';
+import { describePushbackRefusal, disablesPushback } from './errors';
 import { pushbackGate } from './gate';
-import pushbackReducer, {
+import {
+  useExecutePushbackMutation,
+  useGetPushbackManifestQuery,
+  usePreviewPushbackQuery,
+} from './pushbackApi';
+import {
   angleChanged,
   directionSelected,
   distanceChanged,
-  initialPushbackState,
   previewStaged,
-  toRequest,
+  stagedDiscarded,
 } from './pushbackSlice';
-import {
-  PUSHBACK_MAX_ANGLE_DEG,
-  PUSHBACK_MAX_DISTANCE_M,
-  type PushbackRequest,
-} from './types.mock';
+import type { PushbackRequest } from '../../api/models';
 import './pushback.css';
 
-interface PushbackPanelProps {
-  /** From the capabilities query once wired; `undefined` while loading or failed. */
-  capabilities: Capabilities | undefined;
-  capabilitiesError: boolean;
-  /** Stands in for `previewPushback` (query) until the wiring wave. */
-  onPreview: (request: PushbackRequest) => void;
-  /** Stands in for `executePushback` (mutation) until the wiring wave. */
-  onExecute: (request: PushbackRequest) => void;
+function describeRequest(request: PushbackRequest): string {
+  return request.direction === 'straight'
+    ? `straight back, ${String(request.distance_m)} m`
+    : `nose ${request.direction}, ${String(request.distance_m)} m, ${String(request.angle_deg)}°`;
 }
 
-export function PushbackPanel({
-  capabilities,
-  capabilitiesError,
-  onPreview,
-  onExecute,
-}: PushbackPanelProps) {
-  const gate = pushbackGate(capabilities, capabilitiesError);
-  const [form, dispatch] = useReducer(pushbackReducer, initialPushbackState);
+/** Headings are read aloud as three digits on the radio; render them that way. */
+function formatHeading(deg: number): string {
+  return `${String(Math.round(deg) % 360).padStart(3, '0')}°`;
+}
 
-  const preview = () => {
+export function PushbackPanel() {
+  const dispatch = useAppDispatch();
+  const form = useAppSelector((state) => state.pushback);
+
+  const { data: manifest, isError: manifestFailed } = useGetPushbackManifestQuery();
+  const gate = pushbackGate(manifest, manifestFailed);
+
+  // `skipToken` rather than a `skip` flag and a throwaway argument: there is no request
+  // to describe when nothing is staged, and this way the types say so.
+  const {
+    data: preview,
+    error: previewError,
+    isFetching: previewing,
+  } = usePreviewPushbackQuery(
+    form.staged !== null && gate.open ? form.staged : skipToken,
+  );
+
+  const [
+    executePushback,
+    { data: result, error: executeError, isLoading: executing, reset: resetExecute },
+  ] = useExecutePushbackMutation();
+
+  // A refused preview is the one the instructor is acting on right now, so it wins the
+  // slot; a stale execute failure would otherwise sit under a fresh, valid preview.
+  const refusal =
+    previewError !== undefined
+      ? describePushbackRefusal(previewError)
+      : executeError !== undefined
+        ? describePushbackRefusal(executeError)
+        : null;
+
+  // Only a capability answer takes the controls away. "Airborne" is a wait, not a wall,
+  // and neither is a dropped connection.
+  const blocked = !gate.open || disablesPushback(refusal);
+  const armed = form.staged !== null && preview !== undefined && !previewing;
+
+  const onPreview = () => {
+    // Drop the previous push's outcome: a refusal from the last Execute must not sit on
+    // screen under a preview that has just succeeded, and last push's "Pushed back" line
+    // is not what the instructor is being told about now.
+    resetExecute();
     dispatch(previewStaged());
-    onPreview(toRequest(form));
   };
 
-  const execute = () => {
-    if (form.staged !== null) {
-      onExecute(form.staged);
+  const onExecute = () => {
+    if (form.staged === null) {
+      return;
     }
+    void executePushback(form.staged)
+      .unwrap()
+      // Not idempotent: make the instructor preview again rather than leave a second
+      // push one tap away. A failure keeps the staging so the request can be retried.
+      .then(() => dispatch(stagedDiscarded()))
+      .catch(() => undefined);
   };
-
-  const describeStaged = (request: PushbackRequest) =>
-    request.direction === 'straight'
-      ? `straight back, ${String(request.distance_m)} m`
-      : `nose ${request.direction}, ${String(request.distance_m)} m, ${String(request.angle_deg)}°`;
 
   return (
     <section className="panel pushback-panel" aria-labelledby="pushback-heading">
@@ -84,28 +120,72 @@ export function PushbackPanel({
         </p>
       )}
 
+      {refusal !== null && (
+        <p
+          className={
+            refusal.kind === 'not-on-ground'
+              ? 'pushback-refusal pushback-refusal--transient'
+              : 'pushback-refusal'
+          }
+          role="status"
+        >
+          {refusal.message}
+          {refusal.kind === 'not-on-ground' && (
+            <span className="pushback-refusal__note">
+              {' '}
+              This is the aircraft&apos;s state right now, not a limit of the simulator —
+              preview again once it is back on the ground.
+            </span>
+          )}
+        </p>
+      )}
+
       <PushbackControls
         direction={form.direction}
         distanceM={form.distanceM}
         angleDeg={form.angleDeg}
-        maxDistanceM={PUSHBACK_MAX_DISTANCE_M}
-        maxAngleDeg={PUSHBACK_MAX_ANGLE_DEG}
-        disabled={!gate.open}
+        maxDistanceM={gate.maxDistanceM}
+        maxAngleDeg={gate.maxAngleDeg}
+        disabled={blocked}
         onDirectionSelected={(direction) => dispatch(directionSelected(direction))}
-        onDistanceChanged={(distanceM) => dispatch(distanceChanged(distanceM))}
-        onAngleChanged={(angleDeg) => dispatch(angleChanged(angleDeg))}
+        onDistanceChanged={(value) => {
+          dispatch(distanceChanged({ value, max: gate.maxDistanceM }));
+        }}
+        onAngleChanged={(value) => {
+          dispatch(angleChanged({ value, max: gate.maxAngleDeg }));
+        }}
       />
 
       <PathPreview
         direction={form.direction}
         distanceM={form.distanceM}
         angleDeg={form.angleDeg}
+        preview={preview}
       />
+
+      {preview !== undefined && (
+        <dl className="pushback-facts">
+          <div className="pushback-facts__row">
+            <dt>Heading</dt>
+            <dd>
+              {formatHeading(preview.current_heading_deg)} →{' '}
+              {formatHeading(preview.target.heading_deg)}
+            </dd>
+          </div>
+          <div className="pushback-facts__row">
+            <dt>Target</dt>
+            <dd>
+              {preview.target.position.latitude.toFixed(6)},{' '}
+              {preview.target.position.longitude.toFixed(6)}
+            </dd>
+          </div>
+        </dl>
+      )}
 
       <div className="pushback-actions">
         {form.staged !== null ? (
           <p className="pushback-actions__staged" role="status">
-            Staged: {describeStaged(form.staged)}. Nothing moves until you press Execute.
+            Staged: {describeRequest(form.staged)}. Nothing moves until you press Execute.
           </p>
         ) : (
           <p className="panel__empty">
@@ -113,20 +193,26 @@ export function PushbackPanel({
             Execute.
           </p>
         )}
+        {result !== undefined && form.staged === null && (
+          <p className="pushback-actions__result" role="status">
+            Pushed back — now heading {formatHeading(result.state.heading_deg)} at{' '}
+            {result.state.latitude.toFixed(6)}, {result.state.longitude.toFixed(6)}.
+          </p>
+        )}
         <div className="pushback-actions__buttons">
           <button
             type="button"
             className="pushback-actions__preview"
-            disabled={!gate.open}
-            onClick={preview}
+            disabled={blocked}
+            onClick={onPreview}
           >
             Preview
           </button>
           <button
             type="button"
             className="pushback-actions__execute"
-            disabled={!gate.open || form.staged === null}
-            onClick={execute}
+            disabled={blocked || !armed || executing}
+            onClick={onExecute}
           >
             Execute pushback
           </button>

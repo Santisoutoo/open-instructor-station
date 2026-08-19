@@ -9,6 +9,7 @@ import landingReducer from '../features/landing/landingSlice';
 import mapReducer from '../features/map/mapSlice';
 import positionReducer from '../features/position/positionSlice';
 import profilesReducer from '../features/profiles/profilesSlice';
+import pushbackReducer from '../features/pushback/pushbackSlice';
 import scenariosReducer from '../features/scenarios/scenariosSlice';
 import telemetryReducer from '../features/telemetry/telemetrySlice';
 import trafficReducer from '../features/traffic/trafficSlice';
@@ -35,6 +36,7 @@ const reducerMap = {
   map: mapReducer,
   landing: landingReducer,
   traffic: trafficReducer,
+  pushback: pushbackReducer,
   [instructorApi.reducerPath]: instructorApi.reducer,
 };
 

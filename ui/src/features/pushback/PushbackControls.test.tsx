@@ -8,7 +8,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import { PushbackControls } from './PushbackControls';
-import type { PushbackDirection } from './types.mock';
+import type { PushbackDirection } from '../../api/models';
 
 function renderControls(
   overrides: Partial<{
