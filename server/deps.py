@@ -18,6 +18,7 @@ from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from core.camera.store import CameraPositionStore, app_data_camera_positions_dir
 from core.models import AirframeInfo
 from core.navdata.provider import NavdataProvider
 from core.profiles.paths import default_profiles_root
@@ -28,11 +29,13 @@ __all__ = [
     "Settings",
     "get_adapter",
     "get_airframe_info",
+    "get_camera_position_store",
     "get_navdata",
     "get_profile_store",
     "get_settings",
     "load_airframe_info",
     "reset_adapter",
+    "reset_camera_position_store",
     "reset_navdata",
     "reset_profile_store",
 ]
@@ -56,6 +59,12 @@ class Settings(BaseSettings):
     #: (``core.profiles.paths.default_profiles_root``) — the same override
     #: convention ``navdata_root`` uses for navdata autodetection.
     profiles_root: str | None = None
+    #: Where saved camera positions are stored. ``None`` uses the per-OS
+    #: default (``core.camera.store.app_data_camera_positions_dir``). A
+    #: separate setting from ``profiles_root`` because the two stores are
+    #: independent managers (camera-manager.md D8), not one directory with two
+    #: tenants.
+    camera_positions_root: str | None = None
     # Bound to all interfaces on purpose: using the station from a tablet on
     # the same LAN is a first-class scenario.
     host: str = "0.0.0.0"
@@ -200,19 +209,42 @@ def get_profile_store() -> ProfileStore:
     return _build_profile_store(get_settings())
 
 
-def reset_adapter() -> None:
-    """Drop the cached settings, adapter, navdata provider, profile store and airframe.
+def _build_camera_position_store(settings: Settings) -> CameraPositionStore:
+    """Construct the saved-camera-position store. Performs no I/O.
 
-    All of them together: the first four are read from the same ``Settings``
-    object, so a test that reconfigures one and leaves another cached would be
-    running against a mismatched pair — and the airframe was read from the
-    adapter being dropped, so keeping it would serve the old simulator's
-    aircraft against the new one.
+    Same composition-root reasoning as :func:`_build_profile_store`:
+    constructing a :class:`~core.camera.store.CameraPositionStore` never
+    creates its directory, so resolving the root here only decides *where* it
+    would write.
+    """
+    root = (
+        Path(settings.camera_positions_root)
+        if settings.camera_positions_root
+        else app_data_camera_positions_dir()
+    )
+    return CameraPositionStore(root)
+
+
+@lru_cache(maxsize=1)
+def get_camera_position_store() -> CameraPositionStore:
+    """Return the process-wide saved-camera-position store singleton."""
+    return _build_camera_position_store(get_settings())
+
+
+def reset_adapter() -> None:
+    """Drop every cached singleton — settings, adapter, navdata, both stores, airframe.
+
+    All of them together: each store and provider is built from the same
+    ``Settings`` object, so a test that reconfigures one and leaves another
+    cached would be running against a mismatched pair — and the airframe was
+    read from the adapter being dropped, so keeping it would serve the old
+    simulator's aircraft against the new one.
     """
     global _airframe_info
     get_adapter.cache_clear()
     get_navdata.cache_clear()
     get_profile_store.cache_clear()
+    get_camera_position_store.cache_clear()
     get_settings.cache_clear()
     _airframe_info = AirframeInfo()
 
@@ -225,3 +257,8 @@ def reset_navdata() -> None:
 def reset_profile_store() -> None:
     """Drop only the cached profile store. The ``reset_navdata()`` pattern, for tests."""
     get_profile_store.cache_clear()
+
+
+def reset_camera_position_store() -> None:
+    """Drop only the cached camera-position store. The ``reset_navdata()`` pattern, for tests."""
+    get_camera_position_store.cache_clear()
