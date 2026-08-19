@@ -1574,7 +1574,10 @@ export interface components {
          *     dataclass so that it is served verbatim by ``GET /api/capabilities`` and
          *     lands in the OpenAPI schema the UI client is generated from.
          *
-         *     Immutable — an adapter's capabilities never change at runtime.
+         *     Immutable — an adapter's capabilities are fixed for the lifetime of a
+         *     connection, resolved once at ``connect()`` and never mutated afterwards
+         *     (ai-traffic.md D3/D4: a connect-time probe may decide a flag, but nothing
+         *     moves it mid-session).
          */
         Capabilities: {
             /**
