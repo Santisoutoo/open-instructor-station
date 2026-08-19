@@ -252,6 +252,16 @@ class TestCapabilityRefusal:
         assert response.status_code == 200
         assert response.json()["contacts"] == []
 
+    def test_the_websocket_still_streams_an_empty_picture(
+        self, no_traffic_client: TestClient
+    ) -> None:
+        """``WS /ws/traffic`` is never gated either (§2.1): the Instructor Map
+        iterates it unconditionally, exactly as it does ``/ws/state``, and an
+        adapter without ``can_spawn_traffic`` pushes ``[]`` rather than closing
+        or refusing the handshake."""
+        with no_traffic_client, no_traffic_client.websocket_connect("/ws/traffic") as socket:
+            assert socket.receive_json() == []
+
 
 # ---------------------------------------------------------------------------
 # Capacity (§2.1, D6)
