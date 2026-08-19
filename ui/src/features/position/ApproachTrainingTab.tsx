@@ -17,7 +17,12 @@ import { CircuitDiagram } from './CircuitDiagram';
 import { FactRow } from './FactRow';
 import { FINAL_LABELS, FINAL_ORDER } from './finals';
 import { formatAltitudeFt, formatDistanceNm, formatHeadingTrue } from './format';
-import { isFinalMarker, markerDistanceNm, markerLabel } from './markers';
+import {
+  isDownwindMarker,
+  isFinalMarker,
+  markerDistanceNm,
+  markerLabel,
+} from './markers';
 import {
   finalPlacementSelected,
   markerSelected,
@@ -97,7 +102,7 @@ export function ApproachTrainingTab() {
         )}
 
         <FactRow
-          label="Distance"
+          label={isDownwindMarker(selectedMarker) ? 'Abeam offset' : 'Distance'}
           value={formatDistanceNm(markerDistanceNm(selectedMarker, finalPlacement))}
         />
         <FactRow

@@ -69,6 +69,15 @@ export function isFinalMarker(id: MarkerId): boolean {
 }
 
 /**
+ * True for the two downwind markers, whose distance is measured **abeam** the threshold and
+ * not along the approach — the only pair on the diagram the footnote's "from the threshold"
+ * does not describe.
+ */
+export function isDownwindMarker(id: MarkerId): boolean {
+  return id === 'downwind-left' || id === 'downwind-right';
+}
+
+/**
  * How far from the threshold this marker places, in NM.
  *
  * The two final markers answer with the tab's selected final rather than with the dot they

@@ -589,14 +589,6 @@
   color: var(--pos-caution);
 }
 
-.pos-factrow__value--accent {
-  color: var(--pos-accent);
-}
-
-.pos-factrow__tag {
-  font-size: 0.7rem;
-  color: var(--pos-t3);
-}
 
 /* -------------------------------------------------------- approach tab */
 

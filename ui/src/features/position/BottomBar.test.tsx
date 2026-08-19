@@ -6,7 +6,7 @@ import { setupStore, type RootState } from '../../store';
 import { BottomBar } from './BottomBar';
 import { initialPositionDesignState } from './positionDesignSlice';
 import { callsTo, stubApi } from './testApi';
-import { CAPABILITIES, ICAO, positionRoutes } from './testFixtures';
+import { AIRBORNE_PREVIEW, CAPABILITIES, ICAO, positionRoutes } from './testFixtures';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -43,12 +43,63 @@ describe('the configuration fields', () => {
       'Gear down',
       'Flaps',
       'Override altitude',
-      'Heading',
       'Course',
       'ILS frequency',
     ]) {
       expect(await screen.findByLabelText(label)).toBeInTheDocument();
     }
+  });
+
+  it('offers no "Heading" switch — nothing it could do', async () => {
+    // `Placement.to_setup()` sets `heading_deg` on every placement and `execute_placement`
+    // writes it regardless, so the switch could only copy the preview's own heading back
+    // over itself and tag the rail's Heading row "overridden" for nothing.
+    stubApi(positionRoutes());
+    const store = renderBar();
+
+    await screen.findByLabelText('Gear down');
+    expect(screen.queryByLabelText('Heading')).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(store.getState().position.staged).not.toBeNull();
+    });
+    expect(store.getState().position.setupOverrides.heading_deg).toBeUndefined();
+  });
+
+  it('ticks "Flaps" for the flaps the placement itself resolved', async () => {
+    // The fixture preview lands 50 % of flap on a 3 NM final. The box means "will flaps be
+    // set", exactly as the Gear down box does — not "did the instructor override flaps".
+    stubApi(positionRoutes());
+    renderBar();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Flaps')).toBeChecked();
+    });
+    expect(screen.getByLabelText('Flaps %')).toHaveValue(50);
+  });
+
+  it('unticking "Flaps" commands flaps up rather than silently changing nothing', async () => {
+    stubApi(positionRoutes());
+    const store = renderBar();
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Flaps')).toBeChecked();
+    });
+    await userEvent.click(screen.getByLabelText('Flaps'));
+
+    expect(screen.getByLabelText('Flaps')).not.toBeChecked();
+    await waitFor(() => {
+      expect(store.getState().position.setupOverrides.flaps_ratio).toBe(0);
+    });
+  });
+
+  it('says nothing about an ILS while the lookup is still in flight', () => {
+    // `useIls` is deliberately tri-state; collapsing it to `ils !== null` told the
+    // instructor an ILS runway had none for as long as the request took.
+    stubApi(positionRoutes());
+    renderBar();
+
+    expect(screen.getByLabelText(/ILS frequency/)).toBeDisabled();
+    expect(screen.queryByText('n/a')).not.toBeInTheDocument();
   });
 
   it('shows the preview’s own speed and gear rather than a hard-coded default', async () => {
@@ -66,11 +117,13 @@ describe('the configuration fields', () => {
     stubApi(positionRoutes());
     renderBar({ positionDesign: designState({ selectedRunway: '22L' }) });
 
+    // "n/a" is the assertion that matters: `disabled` is also true while the lookup is in
+    // flight, so waiting on the text is what proves the 404 landed and was believed.
     await waitFor(() => {
-      expect(screen.getByLabelText(/ILS frequency/)).toBeDisabled();
+      expect(screen.getAllByText('n/a')).toHaveLength(2);
     });
+    expect(screen.getByLabelText(/ILS frequency/)).toBeDisabled();
     expect(screen.getByLabelText(/Course/)).toBeDisabled();
-    expect(screen.getAllByText('n/a').length).toBe(2);
   });
 
   it('enables them on a runway that does', async () => {
@@ -81,6 +134,56 @@ describe('the configuration fields', () => {
       expect(screen.getByLabelText(/ILS frequency/)).not.toBeDisabled();
     });
     expect(screen.queryByText('n/a')).not.toBeInTheDocument();
+  });
+});
+
+describe('the airborne speed gate', () => {
+  /** The Airwork tab at FL100: a coordinate placement, and so 0 kt unless one is stated. */
+  function airworkState() {
+    return designState({
+      activeTab: 'airwork' as const,
+      airworkLevel: 'FL100' as const,
+    });
+  }
+
+  it('refuses to place an airborne aircraft at 0 kt, and says why', async () => {
+    // CLAUDE.md's placement-speed note: a perfect 10 NM final at 0 kt is in the terrain
+    // seconds later, and it took four days to find once already.
+    stubApi(positionRoutes({ 'position/preview': { body: AIRBORNE_PREVIEW } }));
+    renderBar({ positionDesign: airworkState() });
+
+    expect(
+      await screen.findByText(/would arrive at 0 kt\. State an IAS of at least 60 kt/),
+    ).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Set position/ })).toBeDisabled();
+  });
+
+  it('opens as soon as the instructor states a speed that will fly', async () => {
+    stubApi(positionRoutes({ 'position/preview': { body: AIRBORNE_PREVIEW } }));
+    renderBar({
+      positionDesign: {
+        ...airworkState(),
+        config: { ...initialPositionDesignState.config, iasKt: 220 },
+      },
+    });
+
+    const button = await screen.findByRole('button', { name: /Set position/ });
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+    expect(screen.queryByText(/State an IAS/)).not.toBeInTheDocument();
+  });
+
+  it('never blocks a placement that resolved its own speed', async () => {
+    // The 3 NM final fixture: 121 kt, below the flight-level figure and entirely correct.
+    stubApi(positionRoutes());
+    renderBar();
+
+    const button = await screen.findByRole('button', { name: /Set position/ });
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+    expect(screen.queryByText(/State an IAS/)).not.toBeInTheDocument();
   });
 });
 
@@ -99,6 +202,37 @@ describe('staging onto the shared positionSlice', () => {
     });
   });
 
+  it('clears the slice when the screen resolves to nothing', async () => {
+    // Otherwise a placement the screen has stopped showing survives, and
+    // `profiles/SaveProfileForm` offers to save the final the instructor moved off.
+    stubApi(positionRoutes());
+    const store = renderBar({
+      positionDesign: designState({
+        activeTab: 'sidstar',
+        procedure: { ident: 'BADO8A', transition: null, sequence: null },
+      }),
+      position: {
+        selectedIcao: ICAO,
+        selectedRunwayIdent: '04R',
+        activeTab: 'pattern',
+        openProcedure: null,
+        staged: {
+          type: 'runway',
+          airport_icao: ICAO,
+          runway_ident: '04R',
+          placement: 'final_10nm',
+        },
+        setupOverrides: { ias_kt: 90 },
+        recentIcaos: [ICAO],
+      },
+    });
+
+    await waitFor(() => {
+      expect(store.getState().position.staged).toBeNull();
+    });
+    expect(store.getState().position.setupOverrides).toEqual({});
+  });
+
   it('mirrors the instructor’s edits as sparse setup overrides', async () => {
     stubApi(positionRoutes());
     const store = renderBar({
@@ -115,11 +249,13 @@ describe('staging onto the shared positionSlice', () => {
 
 describe('Set position', () => {
   it('posts the placement and only the fields the instructor changed', async () => {
+    // 22L publishes no ILS, so the two "sent with the position" switches add nothing and
+    // the body is the instructor's single edit. No switch has to be turned off to see it.
     const { calls } = stubApi(positionRoutes());
     renderBar({
       positionDesign: designState({
+        selectedRunway: '22L',
         config: { ...initialPositionDesignState.config, iasKt: 90 },
-        send: { heading: false, course: false, ilsFrequency: false },
       }),
     });
 
@@ -136,7 +272,7 @@ describe('Set position', () => {
       placement: {
         type: 'runway',
         airport_icao: ICAO,
-        runway_ident: '04R',
+        runway_ident: '22L',
         placement: 'final_3nm',
       },
       setup: { ias_kt: 90 },

@@ -5,10 +5,15 @@
  * Two things happen here that the rest of the screen depends on.
  *
  * **The staged placement is mirrored onto `positionSlice`.** That slice is the shared
- * server-intent contract: `features/map`'s "send to Position tab" hand-off reads it, and
- * `features/profiles`' Save button is disabled until `staged !== null`. Staging is not a
- * commit — nothing moves until the button is pressed — so the mirror runs whenever the
- * screen resolves to a placement.
+ * server-intent contract: `features/profiles`' Save button is disabled until
+ * `staged !== null`. Staging is not a commit — nothing moves until the button is pressed —
+ * so the mirror runs whenever the screen resolves to a placement, and **clears the slice
+ * when it resolves to nothing**. Leaving the last placement behind is how Profiles ends up
+ * offering to save a 10 NM final on a screen that is showing an unpicked procedure.
+ *
+ * The mirror cannot clobber the Map's hand-off, because the hand-off is *adopted* into the
+ * Custom location tab before this ever runs (`coordinateHandoffReceived`): what the screen
+ * resolves to is the handed-over coordinate itself.
  *
  * **Every configuration field defaults to the preview's own value and is only sent when the
  * instructor changes it.** An empty IAS box does not mean 0 kt; it means "whatever the
@@ -34,24 +39,43 @@ import {
   situationReset,
   type AircraftConfigState,
 } from './positionDesignSlice';
-import { placementStaged, setupOverridden } from './positionSlice';
+import { placementStaged, setupOverridden, staleCleared } from './positionSlice';
 import { overridesOrNull } from './setup';
-import { useIls, useSelectedRunway, useStagedPlacement } from './usePositionData';
+import { unflyableReason } from './speed';
+import {
+  useGroundElevationFt,
+  useIls,
+  useSelectedRunway,
+  useStagedPlacement,
+} from './usePositionData';
 
 /** How long the confirmation stays up after a successful commit. MOTION is dialled low. */
 const FLASH_MS = 2400;
+
+/**
+ * What ticking "Flaps" means when the placement resolved none.
+ *
+ * The tick has to name a setting — a merge cannot say "some flaps" — and this is the one
+ * number on this screen the instructor's own act invents rather than the server resolving
+ * it. The % box beside the checkbox is where it gets corrected, and the rail prints the
+ * result before anything is applied.
+ */
+const FLAPS_ON_DEFAULT_PERCENT = 25;
 
 export function BottomBar() {
   const dispatch = useAppDispatch();
   const config = useAppSelector((state) => state.positionDesign.config);
   const send = useAppSelector((state) => state.positionDesign.send);
   const runway = useSelectedRunway();
-  const { ils } = useIls(runway?.ident ?? null);
-  const hasIls = ils !== null;
+  // Tri-state on purpose: `null` while the lookup is in flight. Collapsing it to a boolean
+  // is what made the bar tell an instructor an ILS runway had none for a frame.
+  const { hasIls } = useIls(runway?.ident ?? null);
+  const ilsKnown = hasIls === true;
 
   const { request, preview, merged, setup, isFetching } = useStagedPlacement();
   const { data: capabilities, isError: capabilitiesFailed } = useGetCapabilitiesQuery();
   const gate = commitGate(capabilities, capabilitiesFailed);
+  const groundElevationFt = useGroundElevationFt();
 
   const [applyPlacement, applyState] = useApplyPlacementMutation();
   const [flash, setFlash] = useState<string | null>(null);
@@ -63,6 +87,7 @@ export function BottomBar() {
   // ordering would depend on where it is declared.
   useEffect(() => {
     if (request === null) {
+      dispatch(staleCleared());
       return;
     }
     dispatch(placementStaged(request));
@@ -110,12 +135,21 @@ export function BottomBar() {
   const pitchValue =
     config.pitchDeg ?? (merged.pitch_deg == null ? '' : Math.round(merged.pitch_deg));
   const gearValue = config.gearDown ?? merged.gear_down ?? false;
-  const flapsOn = config.flapsPercent !== null;
+  // What will actually be applied, the same way the Gear row reads — not "did the
+  // instructor override flaps", which rendered the box unchecked while the rail beside it
+  // said "Flaps 50 %".
   const flapsValue =
     config.flapsPercent ??
     (merged.flaps_ratio == null ? 0 : Math.round(merged.flaps_ratio * 100));
+  const flapsOn = flapsValue > 0;
 
-  const blocked = !gate.open || request === null;
+  const speedReason = unflyableReason({
+    altitudeFt: merged.altitude_ft ?? preview?.placement.position.altitude_ft ?? null,
+    groundElevationFt,
+    iasKt: merged.ias_kt ?? preview?.placement.ias_kt ?? null,
+  });
+
+  const blocked = !gate.open || request === null || speedReason !== null;
 
   return (
     <div className="pos-bottombar">
@@ -169,7 +203,16 @@ export function BottomBar() {
             className="pos-checkbox__input"
             checked={flapsOn}
             onChange={(event) => {
-              setConfig('flapsPercent', event.target.checked ? flapsValue : null);
+              // Unticking is a real instruction — flaps up — since the server merges and
+              // cannot unset. Ticking with nothing resolved has to name a setting.
+              setConfig(
+                'flapsPercent',
+                event.target.checked
+                  ? flapsValue > 0
+                    ? flapsValue
+                    : FLAPS_ON_DEFAULT_PERCENT
+                  : 0,
+              );
             }}
           />
           <span className="pos-checkbox__box" aria-hidden="true" />
@@ -217,49 +260,37 @@ export function BottomBar() {
 
       <fieldset className="pos-bottombar__group">
         <legend className="pos-bottombar__group-title">Sent with the position</legend>
-        <label className="pos-checkbox">
-          <input
-            type="checkbox"
-            className="pos-checkbox__input"
-            checked={send.heading}
-            onChange={() => {
-              dispatch(sendToggled('heading'));
-            }}
-          />
-          <span className="pos-checkbox__box" aria-hidden="true" />
-          Heading
-        </label>
         <label
-          className={hasIls ? 'pos-checkbox' : 'pos-checkbox pos-checkbox--disabled'}
+          className={ilsKnown ? 'pos-checkbox' : 'pos-checkbox pos-checkbox--disabled'}
         >
           <input
             type="checkbox"
             className="pos-checkbox__input"
             checked={send.course}
-            disabled={!hasIls}
+            disabled={!ilsKnown}
             onChange={() => {
               dispatch(sendToggled('course'));
             }}
           />
           <span className="pos-checkbox__box" aria-hidden="true" />
           Course
-          {!hasIls && <span className="pos-mono pos-bottombar__na"> n/a</span>}
+          {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
         </label>
         <label
-          className={hasIls ? 'pos-checkbox' : 'pos-checkbox pos-checkbox--disabled'}
+          className={ilsKnown ? 'pos-checkbox' : 'pos-checkbox pos-checkbox--disabled'}
         >
           <input
             type="checkbox"
             className="pos-checkbox__input"
             checked={send.ilsFrequency}
-            disabled={!hasIls}
+            disabled={!ilsKnown}
             onChange={() => {
               dispatch(sendToggled('ilsFrequency'));
             }}
           />
           <span className="pos-checkbox__box" aria-hidden="true" />
           ILS frequency
-          {!hasIls && <span className="pos-mono pos-bottombar__na"> n/a</span>}
+          {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
         </label>
       </fieldset>
 
@@ -273,7 +304,7 @@ export function BottomBar() {
             dispatch(moduleTabSelected('map'));
           }}
         >
-          Show on map
+          Open map
         </button>
         <div className="pos-bottombar__commit">
           {!gate.open && <p className="pos-bottombar__blocked">{gate.reason}</p>}
@@ -281,6 +312,9 @@ export function BottomBar() {
             <p className="pos-bottombar__blocked">
               Nothing to place yet — load an airport and pick a start position.
             </p>
+          )}
+          {speedReason !== null && gate.open && request !== null && (
+            <p className="pos-bottombar__blocked">{speedReason}</p>
           )}
           {applyState.isError && (
             <p className="pos-bottombar__error">

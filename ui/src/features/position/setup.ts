@@ -6,7 +6,7 @@
  * geometry resolved. It cannot unset anything, and this module does not pretend it can:
  * an untouched field is simply absent, and the preview's value stands.
  *
- * That asymmetry is also what the three "sent with the position" switches mean. A final
+ * That asymmetry is also what the "sent with the position" switches mean. A final
  * already arrives with NAV1 and the OBS tuned (`Placement.to_setup()` does it from the
  * runway's published ILS, so no caller can place an aircraft on an approach with cold
  * radios). Ticking "ILS frequency" is what tunes them for the placements that do *not* get
@@ -27,14 +27,12 @@ export interface InstructorSetup {
 /**
  * Build the sparse override from the bottom bar's state.
  *
- * `preview` and `ils` are read but never *derived from*: the heading that "send heading"
- * transmits is the preview's own resolved heading, and the frequency is the one navdata
+ * `ils` is read but never *derived from*: the frequency and the course are the ones navdata
  * published. Nothing in this file computes a value the server could have computed.
  */
 export function instructorSetup(
   config: AircraftConfigState,
   send: SendWithPositionState,
-  preview: PlacementPreview | undefined,
   ils: Ils | null,
 ): InstructorSetup {
   const overrides: AircraftSetup = {};
@@ -53,9 +51,6 @@ export function instructorSetup(
   }
   if (config.altitudeOverride) {
     overrides.altitude_ft = config.altitudeOverrideFt;
-  }
-  if (send.heading && preview !== undefined) {
-    overrides.heading_deg = preview.placement.heading_deg;
   }
   // The OBS is a MAGNETIC course (AircraftSetup.obs1_deg says so), and the only magnetic
   // course on this screen is the one the ILS publishes. A runway's true bearing is not it,
