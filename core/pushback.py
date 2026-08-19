@@ -204,9 +204,7 @@ def pushback_target(
             request.distance_m, signed_angle_deg, back_bearing_deg, fraction
         )
         path.append(
-            point_at_distance_and_bearing(
-                origin, chord_m / METRES_PER_NAUTICAL_MILE, bearing_deg
-            )
+            point_at_distance_and_bearing(origin, chord_m / METRES_PER_NAUTICAL_MILE, bearing_deg)
         )
 
     return PushbackTarget(
