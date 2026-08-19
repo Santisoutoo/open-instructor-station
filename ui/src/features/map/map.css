@@ -347,6 +347,18 @@
   outline-offset: 2px;
 }
 
+.map-staging__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Why the commit is disabled — the gate's reason, verbatim. */
+.map-staging__blocked {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
 /* ------------------------------------------------------------- narrow */
 
 @media (max-width: 860px) {
