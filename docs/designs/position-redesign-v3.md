@@ -21,6 +21,9 @@ What the wiring phase changed, against this document:
 | Check 7, "Position inside the LFMN CTR", always passes | Deleted. There is no airspace source; a check that always passes teaches an instructor to stop reading the list. |
 | "Set position" is inert and `state.position.staged` stays `null` | The button applies, and the resolved placement is mirrored onto `positionSlice` so the Map hand-off and Profiles' Save work again. |
 | The Custom tab offers "relative to the runway landing point" | Offered and **disabled with the reason**: the placement union has no bearing-and-distance member, and resolving one here would be geodesy in the browser. |
+| The Map's "Send to Position tab" hand-off is only mirrored onto `positionSlice` | **Consumed.** `coordinateHandoffReceived` adopts the coordinate into the Custom location tab and opens it, with or without a loaded airport — a latitude and a longitude are a whole `CoordinatePlacementRequest`. `instructor-map.md` D5 makes the hand-off one of the two commit paths, so a screen that answered "type an ICAO code" was dropping it. |
+| The bottom bar has a "Heading" switch | Gone. `Placement.to_setup()` sets `heading_deg` on every placement and `execute_placement` writes it regardless, so the switch could only copy the preview's own heading back over itself — while tagging the rail's Heading row "overridden" on a screen where nothing was. |
+| A coordinate placement is committable at whatever speed it resolved | **Gated.** `core.geodesy.coordinate_placement` defaults to `GROUND_IAS_KT`, so both coordinate tabs resolve to 0 kt; an airborne one below `MINIMUM_AIRBORNE_IAS_KT` cannot be committed until the instructor states an IAS (`speed.ts`). The rail's fourth check is about the *placement*, not about which tab is open. |
 
 This doc supersedes §15 of `docs/designs/position-manager.md` for everything about the
 **panel's UI**; §15's API/model sections (endpoints, `PlacementRequest`, `AircraftSetup`,
@@ -614,6 +617,23 @@ weaken a test or the tsconfig to get green.
   author, not application UI. Don't replicate it.
 - METAR/wind/QNH/AIRAC are frozen sample values, visibly tagged "sample data" in the rail, per
   the source design's own label.
+
+### Placement coverage the redesign does not reach
+
+The panel this screen replaced could build **15** of the runway placement names plus a
+`waypoint` placement. The v3 diagram's nine markers do not cover all of them, and these are
+**accepted gaps, not oversights** — they are listed here so that "unreachable" is a decision
+on the record rather than something a reader has to discover by diffing two panels.
+
+| Unreachable now | What it was | Why it is accepted |
+|---|---|---|
+| `left_upwind`, `right_upwind` | The climb-out leg, offset from the extended centreline past the departure end | The v3 circuit draws one take-off marker on the threshold and no upwind dots. A departure position is served, approximately, by the threshold marker plus a climb; nothing in Phase 1's exit criteria needs it. |
+| `left_crosswind`, `right_crosswind` | The turn from upwind onto downwind | Same: no dot on the diagram, and the downwind marker one leg later is the position an instructor actually asks for. |
+| `waypoint` (`WaypointPlacementRequest`) | "Over a named fix", by ident, with an altitude | **The whole placement type has no surface at all.** The SID & STAR tab reaches a fix only as a *leg of a published procedure*; an arbitrary en-route fix cannot be typed anywhere on this screen. This is the largest of the four, and the one worth restoring first. |
+
+Restoring them is out of scope for the redesign: the first four want two more marker pairs on
+the diagram, and `waypoint` wants a fix search — an ident type-ahead against navdata, which is
+a design of its own, not a control to be squeezed into the Custom location tab.
 
 ## Verification
 
