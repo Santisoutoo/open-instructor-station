@@ -1,80 +1,143 @@
 /**
- * The 340×262 airport diagram in the Start-at popover: two runway strips, a taxiway line,
- * three terminal blocks, and one absolutely-positioned clickable square per stand.
+ * The 340×262 airport diagram in the Start-at popover — drawn from the airport's own
+ * navdata: every runway strip between the two thresholds navdata publishes for it, and one
+ * clickable square per parking stand at the stand's own coordinate.
+ *
+ * The projection is in `standProjection.ts` and is pure, so the fitting can be tested
+ * without rendering anything. Nothing computed here ever crosses the wire: clicking a
+ * square sends the stand's **name**, and the server resolves the position. Nothing here
+ * steps a distance along a bearing either — a strip is drawn between two coordinates
+ * navdata already published, or it is not drawn at all.
+ *
+ * The v3 mockup's three shaded terminal blocks are not drawn. `apt.dat` publishes runways,
+ * taxiways and parking positions; it does not publish terminal buildings, and three
+ * rectangles invented to look like Nice would be decoration masquerading as an aerodrome
+ * chart.
  */
 
-import { STANDS } from './sampleData';
+import type { ParkingStand, Runway } from '../../api/models';
+import {
+  DIAGRAM_HEIGHT,
+  DIAGRAM_WIDTH,
+  diagramBounds,
+  projectLatLon,
+  type LatLon,
+} from './standProjection';
 
-const WIDTH = 340;
-const HEIGHT = 262;
+/** One physical strip: the two ends navdata publishes for it, paired once. */
+interface Strip {
+  readonly key: string;
+  readonly from: Runway;
+  readonly to: Runway;
+}
+
+/**
+ * Pair each runway end with its opposite, once.
+ *
+ * `opposite_ident` is navdata's own answer to "the other end of this strip", so the pairing
+ * never has to guess from the numbers. An end whose opposite is not in the index yields no
+ * strip: its threshold is still labelled, but no line is invented for it.
+ */
+function runwayStrips(runways: readonly Runway[]): readonly Strip[] {
+  const byIdent = new Map(runways.map((runway) => [runway.ident, runway]));
+  const seen = new Set<string>();
+  const result: Strip[] = [];
+  for (const runway of runways) {
+    const opposite =
+      runway.opposite_ident == null ? undefined : byIdent.get(runway.opposite_ident);
+    if (opposite === undefined) {
+      continue;
+    }
+    const key = [runway.ident, opposite.ident].sort().join('/');
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push({ key, from: runway, to: opposite });
+  }
+  return result;
+}
 
 export function AirportDiagram({
+  stands,
+  runways,
   selectedStand,
   onSelect,
 }: {
+  readonly stands: readonly ParkingStand[];
+  readonly runways: readonly Runway[];
   readonly selectedStand: string | null;
-  readonly onSelect: (id: string) => void;
+  readonly onSelect: (name: string) => void;
 }) {
+  const strips = runwayStrips(runways);
+  const points: readonly LatLon[] = [
+    ...stands.map((stand) => stand.position),
+    ...runways.map((runway) => runway.threshold),
+  ];
+  const bounds = diagramBounds(points);
+
   return (
-    <div className="pos-diagram" style={{ width: WIDTH, height: HEIGHT }}>
+    <div className="pos-diagram" style={{ width: DIAGRAM_WIDTH, height: DIAGRAM_HEIGHT }}>
       <svg
-        viewBox={`0 0 ${String(WIDTH)} ${String(HEIGHT)}`}
-        width={WIDTH}
-        height={HEIGHT}
+        viewBox={`0 0 ${String(DIAGRAM_WIDTH)} ${String(DIAGRAM_HEIGHT)}`}
+        width={DIAGRAM_WIDTH}
+        height={DIAGRAM_HEIGHT}
         className="pos-diagram__svg"
         role="img"
         aria-label="Airport diagram"
       >
-        <rect x={24} y={86} width={150} height={36} className="pos-diagram__terminal" />
-        <text x={99} y={107} textAnchor="middle" className="pos-diagram__terminal-label">
-          Terminal 1
-        </text>
-        <rect x={24} y={158} width={130} height={36} className="pos-diagram__terminal" />
-        <text x={89} y={179} textAnchor="middle" className="pos-diagram__terminal-label">
-          Terminal 2
-        </text>
-        <rect
-          x={178}
-          y={130}
-          width={44}
-          height={40}
-          className="pos-diagram__terminal pos-diagram__terminal--ga"
-        />
-        <text x={200} y={186} textAnchor="middle" className="pos-diagram__terminal-label">
-          General aviation
-        </text>
-
-        <line x1={30} y1={230} x2={250} y2={230} className="pos-diagram__taxiway" />
-
-        <rect x={260} y={16} width={16} height={226} className="pos-diagram__runway" />
-        <rect x={286} y={16} width={16} height={226} className="pos-diagram__runway" />
-        <text x={268} y={254} textAnchor="middle" className="pos-diagram__runway-label">
-          04L
-        </text>
-        <text x={294} y={254} textAnchor="middle" className="pos-diagram__runway-label">
-          04R
-        </text>
+        {strips.map((strip) => {
+          const a = projectLatLon(strip.from.threshold, bounds);
+          const b = projectLatLon(strip.to.threshold, bounds);
+          return (
+            <line
+              key={strip.key}
+              x1={a.x}
+              y1={a.y}
+              x2={b.x}
+              y2={b.y}
+              className="pos-diagram__runway-line"
+            />
+          );
+        })}
+        {runways.map((runway) => {
+          const point = projectLatLon(runway.threshold, bounds);
+          return (
+            <text
+              key={runway.ident}
+              x={point.x}
+              y={point.y}
+              textAnchor="middle"
+              className="pos-diagram__runway-label"
+            >
+              {runway.ident}
+            </text>
+          );
+        })}
       </svg>
 
-      {STANDS.map((stand) => (
-        <button
-          key={stand.id}
-          type="button"
-          className={
-            stand.id === selectedStand
-              ? 'pos-diagram__stand pos-diagram__stand--selected'
-              : 'pos-diagram__stand'
-          }
-          style={{ left: stand.x, top: stand.y }}
-          aria-pressed={stand.id === selectedStand}
-          aria-label={`Stand ${stand.id}`}
-          onClick={() => {
-            onSelect(stand.id);
-          }}
-        >
-          <span className="pos-diagram__stand-dot" aria-hidden="true" />
-        </button>
-      ))}
+      {stands.map((stand) => {
+        const point = projectLatLon(stand.position, bounds);
+        return (
+          <button
+            key={stand.name}
+            type="button"
+            className={
+              stand.name === selectedStand
+                ? 'pos-diagram__stand pos-diagram__stand--selected'
+                : 'pos-diagram__stand'
+            }
+            style={{ left: point.x, top: point.y }}
+            aria-pressed={stand.name === selectedStand}
+            aria-label={`Stand ${stand.name}`}
+            onClick={() => {
+              onSelect(stand.name);
+            }}
+          >
+            <span className="pos-diagram__stand-dot" aria-hidden="true" />
+          </button>
+        );
+      })}
     </div>
   );
 }

@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   formatAltitudeFt,
   formatDistanceNm,
-  formatFlightLevel,
-  formatHeadingM,
+  formatDegrees,
+  formatHeadingTrue,
   formatIlsFrequency,
+  formatLatitude,
+  formatLongitude,
   formatRunwayLength,
   formatSpeedKt,
+  formatSurface,
 } from './format';
 
 describe('formatAltitudeFt', () => {
@@ -49,17 +52,6 @@ describe('formatIlsFrequency', () => {
   });
 });
 
-describe('formatFlightLevel', () => {
-  it('zero-pads below FL100', () => {
-    expect(formatFlightLevel(50)).toBe('FL050');
-  });
-
-  it('leaves three-digit levels alone', () => {
-    expect(formatFlightLevel(300)).toBe('FL300');
-    expect(formatFlightLevel(100)).toBe('FL100');
-  });
-});
-
 describe('formatDistanceNm', () => {
   it('keeps one decimal', () => {
     expect(formatDistanceNm(3)).toBe('3.0 NM');
@@ -67,14 +59,46 @@ describe('formatDistanceNm', () => {
   });
 });
 
-describe('formatHeadingM', () => {
-  it('zero-pads to 3 digits', () => {
-    expect(formatHeadingM(40)).toBe('040°M');
-    expect(formatHeadingM(5)).toBe('005°M');
+describe('formatHeadingTrue', () => {
+  it('zero-pads to 3 digits and says the degrees are TRUE', () => {
+    expect(formatHeadingTrue(40)).toBe('040°T');
+    expect(formatHeadingTrue(5)).toBe('005°T');
   });
 
   it('normalises out-of-range and negative headings', () => {
-    expect(formatHeadingM(370)).toBe('010°M');
-    expect(formatHeadingM(-10)).toBe('350°M');
+    expect(formatHeadingTrue(370)).toBe('010°T');
+    expect(formatHeadingTrue(-10)).toBe('350°T');
+    expect(formatHeadingTrue(360)).toBe('000°T');
+  });
+});
+
+describe('formatDegrees', () => {
+  it('is the bare figure, without a unit', () => {
+    expect(formatDegrees(40)).toBe('040');
+    expect(formatDegrees(359.6)).toBe('000');
+  });
+});
+
+describe('formatLatitude / formatLongitude', () => {
+  it('prints degrees, minutes and seconds the way a chart does', () => {
+    expect(formatLatitude(43.6584)).toBe('43° 39\' 30.24" N');
+    expect(formatLongitude(7.2159)).toBe('007° 12\' 57.24" E');
+  });
+
+  it('flips the hemisphere rather than printing a minus', () => {
+    expect(formatLatitude(-33.5)).toBe('33° 30\' 0.00" S');
+    expect(formatLongitude(-3.5677)).toBe('003° 34\' 3.72" W');
+  });
+});
+
+describe('formatSurface', () => {
+  it('reads the enum back in words', () => {
+    expect(formatSurface('asphalt')).toBe('Asphalt');
+    expect(formatSurface('dry_lakebed')).toBe('Dry lakebed');
+  });
+
+  it('says so when the source publishes nothing, rather than guessing asphalt', () => {
+    expect(formatSurface(null)).toBe('not published');
+    expect(formatSurface('unknown')).toBe('not published');
   });
 });

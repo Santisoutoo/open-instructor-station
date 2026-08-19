@@ -1,13 +1,21 @@
 /**
- * The Position screen v3 replica's root: composes the 5 bands (header, runway strip, tab
- * strip + active tab body, right rail, bottom bar) inside the `.pos` scope class. The
- * `data-theme` attribute the CSS reads (`[data-theme='light'] .pos { … }`) is already
- * maintained on `<html>` by `uiSync` — nothing extra to wire here.
+ * The Position screen's root: header, runway strip, tab strip + active tab body, right rail,
+ * bottom bar, inside the `.pos` scope class. The `data-theme` attribute the CSS reads
+ * (`[data-theme='light'] .pos { … }`) is already maintained on `<html>` by `uiSync`.
  *
- * Static replica: local design state only, no RTK Query. See
- * `docs/designs/position-redesign-v3.md`.
+ * **The body is gated on the navigation data, and the gate fails closed.** There is no point
+ * offering an airport search over an index that does not exist, so while it is missing or
+ * building the screen says so and offers to build it — the same contract the panel had
+ * before the redesign, reinstated here rather than reinvented. The header stays visible
+ * through the gate on purpose: this screen is full-bleed, so its screen menu is the only way
+ * off it.
  */
 
+import {
+  instructorApi,
+  useBuildNavdataIndexMutation,
+  useGetNavdataStatusQuery,
+} from '../../api/instructorApi';
 import { useAppSelector } from '../../store';
 import { AirworkTab } from './AirworkTab';
 import { ApplyRail } from './ApplyRail';
@@ -18,26 +26,106 @@ import { PositionHeaderBar } from './PositionHeaderBar';
 import { PositionTabs } from './PositionTabs';
 import { RunwayStrip } from './RunwayStrip';
 import { SidStarTab } from './SidStarTab';
+import { navdataGate } from './gate';
 import './position.css';
+
+/** How often to re-read the status while an index build is running. */
+const BUILD_POLL_MS = 1000;
+
+/** Read the cached navdata status without subscribing to it or issuing a request. */
+const useGetNavdataStatusState = instructorApi.endpoints.getNavdataStatus.useQueryState;
+
+function NavdataCard({
+  reason,
+  canBuild,
+  fraction,
+}: {
+  readonly reason: string;
+  readonly canBuild: boolean;
+  readonly fraction: number | null;
+}) {
+  const [buildIndex, buildState] = useBuildNavdataIndexMutation();
+  return (
+    <div className="pos-navdata">
+      <p className="pos-navdata__reason">{reason}</p>
+      {fraction !== null && (
+        <div
+          className="pos-navdata__bar"
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(fraction * 100)}
+        >
+          <span style={{ width: `${String(Math.round(fraction * 100))}%` }} />
+        </div>
+      )}
+      {canBuild && (
+        <button
+          type="button"
+          className="pos-navdata__build"
+          disabled={buildState.isLoading}
+          onClick={() => {
+            void buildIndex();
+          }}
+        >
+          {buildState.isLoading ? 'Starting…' : 'Build index'}
+        </button>
+      )}
+    </div>
+  );
+}
 
 export function PositionPanel() {
   const activeTab = useAppSelector((state) => state.positionDesign.activeTab);
+  const loadedIcao = useAppSelector((state) => state.positionDesign.loadedIcao);
+
+  // Polled **only while a build is running**, which is what `BUILD_POLL_MS` says it is for.
+  // A ready index does not change under the screen, and a station left open on one for a
+  // lesson would otherwise ask the same question once a second, over the LAN, of the process
+  // that is also flying the aeroplane. The interval has to be decided before the query that
+  // answers it, hence reading the cache first: `useQueryState` is the same cache entry,
+  // without a second subscription or a second request.
+  const cached = useGetNavdataStatusState();
+  const { data: status, isError } = useGetNavdataStatusQuery(undefined, {
+    pollingInterval: cached.data?.state === 'building' ? BUILD_POLL_MS : 0,
+    skipPollingIfUnfocused: true,
+  });
+  const gate = navdataGate(status, isError);
 
   return (
     <div className="pos">
       <PositionHeaderBar />
-      <RunwayStrip />
-      <PositionTabs />
-      <div className="pos-body">
-        <div className="pos-main">
-          {activeTab === 'approach' && <ApproachTrainingTab />}
-          {activeTab === 'sidstar' && <SidStarTab />}
-          {activeTab === 'airwork' && <AirworkTab />}
-          {activeTab === 'custom' && <CustomLocationTab />}
-        </div>
-        <ApplyRail />
-      </div>
-      <BottomBar />
+
+      {gate.kind === 'loading' && <p className="pos-empty">{gate.reason}</p>}
+      {gate.kind === 'blocked' && (
+        <NavdataCard reason={gate.reason} canBuild={gate.canBuild} fraction={null} />
+      )}
+      {gate.kind === 'building' && (
+        <NavdataCard reason={gate.reason} canBuild={false} fraction={gate.fraction} />
+      )}
+
+      {gate.kind === 'ready' &&
+        (loadedIcao === '' ? (
+          <p className="pos-empty">
+            Type an ICAO code and press Load. Every airport in the simulator&apos;s
+            navigation data is available.
+          </p>
+        ) : (
+          <>
+            <RunwayStrip />
+            <PositionTabs />
+            <div className="pos-body">
+              <div className="pos-main">
+                {activeTab === 'approach' && <ApproachTrainingTab />}
+                {activeTab === 'sidstar' && <SidStarTab />}
+                {activeTab === 'airwork' && <AirworkTab />}
+                {activeTab === 'custom' && <CustomLocationTab />}
+              </div>
+              <ApplyRail />
+            </div>
+            <BottomBar />
+          </>
+        ))}
     </div>
   );
 }

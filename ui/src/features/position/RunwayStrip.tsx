@@ -1,109 +1,148 @@
 /**
- * One tab per runway end (04R, 22L, 04L, 22R, Heli), each showing its own computed wind, a
- * facts row for the selected end, and the shared Wind/QNH readouts.
+ * One tab per runway end of the loaded airport, each showing its own computed wind, a facts
+ * row for the selected end, and the commanded Wind/QNH readouts.
  *
- * Selecting a runway here is one of the two places the replica mirrors onto the **legacy**
- * `positionSlice` (design doc, "The hard constraint"): `runwaySelected(ident)` is dispatched
- * alongside the design slice's own `startRunwaySelected`, guarded so re-selecting the same
- * end is a no-op on the legacy slice (it wipes staged placements/overrides otherwise).
+ * Selecting a runway here is one of the two places the screen mirrors onto the shared
+ * `positionSlice`: `runwaySelected(ident)` is dispatched alongside the design slice's own
+ * `startRunwaySelected`, guarded so re-selecting the same end is a no-op on the shared slice
+ * (it wipes staged placements and overrides otherwise).
+ *
+ * There is no helipad tab. The v3 mockup had one because its sample airport table invented
+ * one; `GET …/runways` publishes runway ends, and until navdata serves helipads there is
+ * nothing behind such a tab but a label.
  */
 
-import { FactRow } from './FactRow';
-import { formatIlsFrequency, formatRunwayLength } from './format';
-import {
-  RUNWAY_IDS,
-  startRunwaySelected,
-  type RunwayId,
-} from './positionDesignSlice';
-import { runwaySelected } from './positionSlice';
-import { RUNWAYS, SAMPLE_QNH_HPA, SAMPLE_WIND } from './sampleData';
+import { useEffect } from 'react';
 import { useAppDispatch, useAppSelector } from '../../store';
+import { FactRow } from './FactRow';
+import {
+  formatDegrees,
+  formatIlsFrequency,
+  formatRunwayLength,
+  formatSurface,
+} from './format';
+import { startRunwaySelected } from './positionDesignSlice';
+import { runwaySelected } from './positionSlice';
+import { useIls, useRunways, useSelectedRunway, useWeather } from './usePositionData';
 import { runwayWind } from './wind';
 
 export function RunwayStrip() {
   const dispatch = useAppDispatch();
   const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
+  const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
   const legacyRunwayIdent = useAppSelector((state) => state.position.selectedRunwayIdent);
 
-  function selectRunway(id: RunwayId) {
-    dispatch(startRunwaySelected(id));
-    if (legacyRunwayIdent !== id) {
-      dispatch(runwaySelected(id));
+  const { runways, isError } = useRunways();
+  const active = useSelectedRunway();
+  const { ils, hasIls } = useIls(active?.ident ?? null);
+  const { wind, qnhHpa, supported } = useWeather();
+
+  const first = runways[0];
+
+  // A runway end is the anchor for everything on the Approach tab, so the screen picks the
+  // first one the index publishes rather than opening on an empty diagram. It only fires
+  // when nothing is selected and no stand is chosen — re-selecting would fight the
+  // instructor, and clearing would fight the Start-at popover.
+  useEffect(() => {
+    if (selectedRunway === null && selectedStand === null && first !== undefined) {
+      dispatch(startRunwaySelected(first.ident));
+      if (legacyRunwayIdent !== first.ident) {
+        dispatch(runwaySelected(first.ident));
+      }
+    }
+  }, [dispatch, selectedRunway, selectedStand, first, legacyRunwayIdent]);
+
+  function selectRunway(ident: string) {
+    dispatch(startRunwaySelected(ident));
+    if (legacyRunwayIdent !== ident) {
+      dispatch(runwaySelected(ident));
     }
   }
 
-  const active = selectedRunway !== null ? RUNWAYS[selectedRunway] : null;
-
   return (
-    <section className="pos-runwaystrip" aria-label="Runway and helipad">
-      <div className="pos-runwaystrip__tabs" role="tablist" aria-label="Runway or helipad">
-        {RUNWAY_IDS.map((id) => {
-          const runway = RUNWAYS[id];
-          const wind =
-            runway.kind === 'runway'
-              ? runwayWind(SAMPLE_WIND.directionDeg, SAMPLE_WIND.speedKt, runway.courseDeg)
-              : null;
-          const isSelected = id === selectedRunway;
+    <section className="pos-runwaystrip" aria-label="Runway">
+      <div className="pos-runwaystrip__tabs" role="tablist" aria-label="Runway end">
+        {runways.map((runway) => {
+          const runwayWindText =
+            wind === null
+              ? null
+              : runwayWind(wind.directionDeg, wind.speedKt, runway.true_bearing_deg);
+          const isSelected = runway.ident === selectedRunway;
           return (
             <button
-              key={id}
+              key={runway.ident}
               type="button"
               role="tab"
               aria-selected={isSelected}
-              aria-label={id}
+              aria-label={runway.ident}
               className={
                 isSelected
                   ? 'pos-runwaystrip__tab pos-runwaystrip__tab--selected'
                   : 'pos-runwaystrip__tab'
               }
               onClick={() => {
-                selectRunway(id);
+                selectRunway(runway.ident);
               }}
             >
-              <span className="pos-mono pos-runwaystrip__ident">{id}</span>
-              {wind !== null && (
+              <span className="pos-mono pos-runwaystrip__ident">{runway.ident}</span>
+              {runwayWindText !== null && (
                 <span
                   className={
-                    wind.caution
+                    runwayWindText.caution
                       ? 'pos-runwaystrip__wind pos-runwaystrip__wind--caution'
                       : 'pos-runwaystrip__wind'
                   }
                 >
-                  {wind.text}
+                  {runwayWindText.text}
                 </span>
               )}
             </button>
           );
         })}
+        {isError && (
+          <p className="pos-runwaystrip__empty">
+            The runways of this airport could not be read.
+          </p>
+        )}
       </div>
 
       {active !== null && (
         <div className="pos-runwaystrip__facts">
-          {active.kind === 'runway' ? (
-            <>
-              <FactRow label="Length" value={formatRunwayLength(active.lengthFt * 0.3048)} />
-              <FactRow label="Surface" value={active.surface} />
-              <FactRow label="Elevation" value={`${String(active.elevationFt)} ft`} />
-              <FactRow label="Course" value={`${String(active.courseDeg).padStart(3, '0')}°`} />
-              <FactRow
-                label="ILS"
-                value={
-                  active.ils !== null ? formatIlsFrequency(active.ils.frequencyKhz) : 'not available'
-                }
-              />
-            </>
-          ) : (
-            <>
-              <FactRow label="Type" value={active.type} />
-              <FactRow label="Elevation" value={`${String(active.elevationFt)} ft`} />
-            </>
-          )}
+          <FactRow label="Length" value={formatRunwayLength(active.length_m)} />
+          <FactRow label="Surface" value={formatSurface(active.surface)} />
+          <FactRow
+            label="Elevation"
+            value={`${String(Math.round(active.elevation_ft))} ft`}
+          />
+          <FactRow label="Course" value={`${formatDegrees(active.true_bearing_deg)}°T`} />
+          <FactRow
+            label="ILS"
+            value={
+              ils !== null
+                ? formatIlsFrequency(ils.frequency_khz)
+                : hasIls === null
+                  ? 'reading…'
+                  : 'not available'
+            }
+          />
         </div>
       )}
 
       <div className="pos-runwaystrip__readouts">
-        <FactRow label="Wind" value={`${String(SAMPLE_WIND.directionDeg)}° ${String(SAMPLE_WIND.speedKt)} kt`} />
-        <FactRow label="QNH" value={`${String(SAMPLE_QNH_HPA)} hPa`} />
+        <FactRow
+          label="Wind"
+          value={
+            wind === null
+              ? supported === false
+                ? 'not available'
+                : 'reading…'
+              : `${formatDegrees(wind.directionDeg)}° ${String(Math.round(wind.speedKt))} kt`
+          }
+        />
+        <FactRow
+          label="QNH"
+          value={qnhHpa === null ? '—' : `${String(Math.round(qnhHpa))} hPa`}
+        />
       </div>
     </section>
   );

@@ -1043,8 +1043,9 @@ handler.
 > "Structure", "State", "Visual system") has been superseded by
 > [`docs/designs/position-redesign-v3.md`](position-redesign-v3.md), a static visual replica
 > of an approved "v3" redesign. §15.5 (Gating) and §15.6 (What is not in the panel) — the
-> API/model contract — are unaffected and still accurate; the redesign phase deliberately
-> does not wire the panel to them yet.
+> API/model contract — are unaffected and still accurate, and the redesigned screen is now
+> wired to them: the navdata gate, the placement union, `AircraftSetup` merging and the
+> capability gate on commit all work exactly as this section describes.
 
 ### 15.1 Shell
 

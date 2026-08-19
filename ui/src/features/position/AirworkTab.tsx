@@ -1,17 +1,40 @@
-import { FactRow } from './FactRow';
-import { formatHeadingM, formatSpeedKt } from './format';
-import { AIRWORK_LEVELS, airworkLevelSelected } from './positionDesignSlice';
-import { AIRPORT_POSITION_LABEL, AIRWORK_LEVEL_FEET, AIRWORK_TICK_WIDTH_PX, RUNWAYS } from './sampleData';
+/**
+ * Airwork: overhead the loaded airport, at one of four levels.
+ *
+ * The position is the airport's own coordinate out of navdata, sent as a
+ * `CoordinatePlacementRequest`; the level is the one thing this screen decides, because a
+ * flight level is a flight level. Heading follows the selected runway's course so the
+ * aircraft starts pointing somewhere sensible rather than at true north.
+ */
+
 import { useAppDispatch, useAppSelector } from '../../store';
+import { FactRow } from './FactRow';
+import {
+  AIRWORK_LEVEL_FEET,
+  AIRWORK_MINIMUM_IAS_KT,
+  AIRWORK_TICK_WIDTH_PX,
+} from './airwork';
+import {
+  formatHeadingTrue,
+  formatLatitude,
+  formatLongitude,
+  formatSpeedKt,
+} from './format';
+import { AIRWORK_LEVELS, airworkLevelSelected } from './positionDesignSlice';
+import { useAirport, useSelectedRunway, useStagedPlacement } from './usePositionData';
 
 export function AirworkTab() {
   const dispatch = useAppDispatch();
   const airworkLevel = useAppSelector((state) => state.positionDesign.airworkLevel);
-  const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
-  const iasKt = useAppSelector((state) => state.positionDesign.config.iasKt);
+  const { airport } = useAirport();
+  const runway = useSelectedRunway();
+  const { merged, preview } = useStagedPlacement();
 
-  const runway = selectedRunway !== null ? RUNWAYS[selectedRunway] : null;
-  const courseDeg = runway !== null && runway.kind === 'runway' ? runway.courseDeg : 0;
+  const iasKt = merged.ias_kt ?? preview?.placement.ias_kt ?? null;
+  const position =
+    airport === undefined
+      ? null
+      : `${formatLatitude(airport.position.latitude)} / ${formatLongitude(airport.position.longitude)}`;
 
   return (
     <div
@@ -20,7 +43,11 @@ export function AirworkTab() {
       aria-labelledby="pos-tab-airwork"
       className="pos-airworktab"
     >
-      <div className="pos-airworktab__ladder" role="radiogroup" aria-label="Airwork level">
+      <div
+        className="pos-airworktab__ladder"
+        role="radiogroup"
+        aria-label="Airwork level"
+      >
         {AIRWORK_LEVELS.map((level) => (
           <button
             key={level}
@@ -49,10 +76,28 @@ export function AirworkTab() {
       </div>
 
       <div className="pos-airworktab__facts">
-        <FactRow label="Position" value={`Overhead LFMN · ${AIRPORT_POSITION_LABEL}`} />
+        <FactRow
+          label="Position"
+          value={
+            position === null
+              ? 'no airport loaded'
+              : `Overhead ${airport?.icao ?? ''} · ${position}`
+          }
+        />
         <FactRow label="Level" value={airworkLevel} />
-        <FactRow label="IAS" value={formatSpeedKt(iasKt)} caution={iasKt < 150} />
-        <FactRow label="Heading" value={formatHeadingM(courseDeg)} />
+        <FactRow
+          label="IAS"
+          value={iasKt === null ? 'not resolved' : formatSpeedKt(iasKt)}
+          caution={iasKt !== null && iasKt < AIRWORK_MINIMUM_IAS_KT}
+        />
+        <FactRow
+          label="Heading"
+          value={
+            runway === null
+              ? 'no runway selected'
+              : formatHeadingTrue(runway.true_bearing_deg)
+          }
+        />
       </div>
     </div>
   );

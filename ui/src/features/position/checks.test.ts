@@ -1,204 +1,194 @@
 /**
- * The right rail's Checks list — the highest-value suite in this feature. Every assertion
- * is against the **full ordered array** the rail actually renders, never membership: the
- * rules fire in a fixed order and a reorder is as much a bug as a missing rule.
+ * The right rail's Checks list — the highest-value suite in this feature. Every assertion is
+ * against the **full ordered array** the rail actually renders, never membership: the rules
+ * fire in a fixed order and a reorder is as much a bug as a missing rule.
+ *
+ * The v3 mockup's seventh, always-passing "inside the LFMN CTR" check is deliberately gone,
+ * and the last test here is what keeps it gone.
  */
 
 import { describe, expect, it } from 'vitest';
-import { checks } from './checks';
-import {
-  initialPositionDesignState,
-  type PositionDesignState,
-} from './positionDesignSlice';
+import { checks, type CheckInputs } from './checks';
 
-function state(overrides: Partial<PositionDesignState> = {}): PositionDesignState {
-  return { ...initialPositionDesignState, ...overrides };
+/** A placement with nothing wrong with it: headwind, gear down, ILS present. */
+function inputs(overrides: Partial<CheckInputs> = {}): CheckInputs {
+  return {
+    runwayIdent: '04R',
+    reciprocalIdent: '22L',
+    tailwindKt: 0,
+    hasIls: true,
+    sendIls: true,
+    standName: null,
+    activeTab: 'approach',
+    marker: 'final-3nm',
+    finalPlacement: 'final_3nm',
+    gearDown: true,
+    iasKt: 121,
+    airworkLevel: 'FL100',
+    altitudeOverride: false,
+    altitudeOverrideFt: 0,
+    ...overrides,
+  };
 }
 
-const CTR_PASS = {
-  dot: 'accent',
-  text: 'Position inside the LFMN CTR',
-  note: 'Terrain and airspace check passed with sample data',
-};
+describe('a clean placement', () => {
+  it('has nothing to flag', () => {
+    expect(checks(inputs())).toEqual([]);
+  });
+});
 
 describe('rule 1 — tailwind on the selected runway', () => {
-  it('fires when the tailwind is 3 kt or more and no stand is selected', () => {
-    // 04R (course 40°) is 160° off the sample 240°/12 kt wind — an 11 kt tailwind.
-    expect(checks(state({ selectedRunway: null }))).not.toContainEqual(
-      expect.objectContaining({ text: expect.stringContaining('Tailwind') as unknown }),
-    );
-    const result = checks(state({ selectedRunway: '04R' }));
-    expect(result[0]).toEqual({
-      dot: 'caution',
-      text: 'Tailwind 11 kt on 04R',
-      note: '22L is the favoured runway for this wind',
-    });
-  });
-
-  it('does not fire when the runway has a headwind', () => {
-    // 22L (course 220°) is 20° off the same wind — an 11 kt headwind, no tailwind.
-    const result = checks(
-      state({
-        selectedRunway: '22L',
-        config: { ...initialPositionDesignState.config, gearDown: true },
-      }),
-    );
-    expect(result.some((c) => c.text.includes('Tailwind'))).toBe(false);
-  });
-});
-
-describe('rule 2 — gear up on a final/base/vectors marker', () => {
-  it('fires on the Approach tab with no stand selected and gear up', () => {
-    const result = checks(state({ selectedRunway: null }));
-    expect(result).toEqual([
-      {
-        dot: 'caution',
-        text: 'Gear up 3.0 NM from the threshold',
-        note: 'Tick "Gear down" to spawn configured for landing',
-      },
-      CTR_PASS,
-    ]);
-  });
-
-  it('does not fire once gear is down', () => {
-    const result = checks(
-      state({
-        selectedRunway: null,
-        config: { ...initialPositionDesignState.config, gearDown: true },
-      }),
-    );
-    expect(result).toEqual([CTR_PASS]);
-  });
-});
-
-describe('rule 3 — ILS toggle on, no ILS on the selected runway', () => {
-  it('fires when the toggle is on and the runway has no ILS', () => {
-    const result = checks(
-      state({
-        selectedRunway: '22L',
-        config: { ...initialPositionDesignState.config, gearDown: true },
-      }),
-    );
-    expect(result).toEqual([
-      {
-        dot: 'info',
-        text: 'No ILS on 22L',
-        note: 'The frequency will be skipped when the position is set',
-      },
-      CTR_PASS,
-    ]);
-  });
-
-  it('does not fire when the toggle is off', () => {
-    const result = checks(
-      state({
-        selectedRunway: '22L',
-        config: { ...initialPositionDesignState.config, gearDown: true },
-        send: { ...initialPositionDesignState.send, ilsFrequency: false },
-      }),
-    );
-    expect(result).toEqual([CTR_PASS]);
-  });
-});
-
-describe('rule 4 — low IAS on the Airwork tab', () => {
-  it('fires below 150 kt', () => {
-    const result = checks(state({ selectedRunway: null, activeTab: 'airwork' }));
-    expect(result).toEqual([
-      {
-        dot: 'caution',
-        text: '60 kt IAS at FL100',
-        note: 'Below a sustainable speed at that level for most aircraft',
-      },
-      CTR_PASS,
-    ]);
-  });
-
-  it('does not fire at or above 150 kt', () => {
-    const result = checks(
-      state({
-        selectedRunway: null,
-        activeTab: 'airwork',
-        config: { ...initialPositionDesignState.config, iasKt: 200 },
-      }),
-    );
-    expect(result).toEqual([CTR_PASS]);
-  });
-});
-
-describe('rule 5 — altitude override active', () => {
-  it('fires when the override checkbox is on', () => {
-    const result = checks(
-      state({
-        selectedRunway: null,
-        activeTab: 'custom',
-        config: { ...initialPositionDesignState.config, altitudeOverride: true },
-      }),
-    );
-    expect(result).toEqual([
-      {
-        dot: 'caution',
-        text: 'Altitude override active',
-        note: 'Replaces the computed 0 ft',
-      },
-      CTR_PASS,
-    ]);
-  });
-
-  it('does not fire when the override checkbox is off', () => {
-    const result = checks(state({ selectedRunway: null, activeTab: 'custom' }));
-    expect(result).toEqual([CTR_PASS]);
-  });
-});
-
-describe('rule 6 — a stand is selected', () => {
-  it('fires and names the stand', () => {
-    const result = checks(
-      state({ selectedRunway: null, selectedStand: 'A3', activeTab: 'custom' }),
-    );
-    expect(result).toEqual([
-      {
-        dot: 'info',
-        text: 'Starting from stand A3',
-        note: 'Circuit and procedure positions are ignored while a stand is selected',
-      },
-      CTR_PASS,
-    ]);
-  });
-
-  it('does not fire when no stand is selected', () => {
-    const result = checks(state({ selectedRunway: null, activeTab: 'custom' }));
-    expect(result.some((c) => c.text.startsWith('Starting from stand'))).toBe(false);
-  });
-});
-
-describe('rule 7 — CTR pass', () => {
-  it('is always last and always present', () => {
-    for (const overrides of [
-      {},
-      { activeTab: 'airwork' as const },
-      { selectedStand: 'A3', selectedRunway: null },
-    ]) {
-      const result = checks(state(overrides));
-      expect(result[result.length - 1]).toEqual(CTR_PASS);
-    }
-  });
-});
-
-describe('default state', () => {
-  it('produces the full ordered array: tailwind, gear up, CTR pass', () => {
-    expect(checks(initialPositionDesignState)).toEqual([
+  it('fires at 3 kt and names the reciprocal', () => {
+    expect(checks(inputs({ tailwindKt: 11 }))).toEqual([
       {
         dot: 'caution',
         text: 'Tailwind 11 kt on 04R',
         note: '22L is the favoured runway for this wind',
       },
+    ]);
+  });
+
+  it('falls back to a generic note when navdata publishes no reciprocal', () => {
+    expect(checks(inputs({ tailwindKt: 5, reciprocalIdent: null }))[0]?.note).toBe(
+      'Check the wind before starting',
+    );
+  });
+
+  it('does not fire below the threshold, or with no wind at all', () => {
+    expect(checks(inputs({ tailwindKt: 2 }))).toEqual([]);
+    expect(checks(inputs({ tailwindKt: null }))).toEqual([]);
+  });
+
+  it('does not fire while a stand is selected', () => {
+    const result = checks(inputs({ tailwindKt: 11, standName: 'A3' }));
+    expect(result.some((check) => check.text.startsWith('Tailwind'))).toBe(false);
+  });
+});
+
+describe('rule 2 — gear up on a final/base/vectors marker', () => {
+  it('fires on the Approach tab with the gear up, quoting the selected final', () => {
+    expect(checks(inputs({ gearDown: false, finalPlacement: 'final_10nm' }))).toEqual([
       {
         dot: 'caution',
-        text: 'Gear up 3.0 NM from the threshold',
+        text: 'Gear up 10.0 NM from the threshold',
         note: 'Tick "Gear down" to spawn configured for landing',
       },
-      CTR_PASS,
     ]);
+  });
+
+  it('fires on a circuit leg at that leg’s own distance', () => {
+    expect(checks(inputs({ gearDown: false, marker: 'base-left' }))[0]?.text).toBe(
+      'Gear up 6.0 NM from the threshold',
+    );
+  });
+
+  it('does not fire on the threshold or downwind', () => {
+    expect(checks(inputs({ gearDown: false, marker: 'takeoff' }))).toEqual([]);
+    expect(checks(inputs({ gearDown: false, marker: 'downwind-left' }))).toEqual([]);
+  });
+
+  it('does not fire once the gear is down, or before the gear is known', () => {
+    expect(checks(inputs({ gearDown: true }))).toEqual([]);
+    expect(checks(inputs({ gearDown: null }))).toEqual([]);
+  });
+});
+
+describe('rule 3 — ILS switch on, no ILS on the selected runway', () => {
+  it('fires when the runway publishes none', () => {
+    expect(checks(inputs({ runwayIdent: '22L', hasIls: false }))).toEqual([
+      {
+        dot: 'info',
+        text: 'No ILS on 22L',
+        note: 'The frequency will be skipped when the position is set',
+      },
+    ]);
+  });
+
+  it('does not fire while the lookup is still in flight', () => {
+    expect(checks(inputs({ runwayIdent: '22L', hasIls: null }))).toEqual([]);
+  });
+
+  it('does not fire when the switch is off', () => {
+    expect(checks(inputs({ runwayIdent: '22L', hasIls: false, sendIls: false }))).toEqual(
+      [],
+    );
+  });
+});
+
+describe('rule 4 — low IAS on the Airwork tab', () => {
+  it('fires below 150 kt', () => {
+    expect(checks(inputs({ activeTab: 'airwork', iasKt: 60 }))).toEqual([
+      {
+        dot: 'caution',
+        text: '60 kt IAS at FL100',
+        note: 'Below a sustainable speed at that level for most aircraft',
+      },
+    ]);
+  });
+
+  it('does not fire at or above 150 kt, nor on another tab', () => {
+    expect(checks(inputs({ activeTab: 'airwork', iasKt: 200 }))).toEqual([]);
+    expect(checks(inputs({ activeTab: 'approach', iasKt: 60 }))).toEqual([]);
+  });
+});
+
+describe('rule 5 — altitude override active', () => {
+  it('fires and names the figure that replaces the computed one', () => {
+    expect(checks(inputs({ altitudeOverride: true, altitudeOverrideFt: 5500 }))).toEqual([
+      {
+        dot: 'caution',
+        text: 'Altitude override active',
+        note: 'Replaces the altitude the placement resolved, with 5,500 ft',
+      },
+    ]);
+  });
+});
+
+describe('rule 6 — a stand is selected', () => {
+  it('fires and names the stand', () => {
+    expect(checks(inputs({ standName: 'A3' }))).toEqual([
+      {
+        dot: 'info',
+        text: 'Starting from stand A3',
+        note: 'Circuit and procedure positions are ignored while a stand is selected',
+      },
+    ]);
+  });
+});
+
+describe('the whole ordered list', () => {
+  it('fires every rule at once, in order', () => {
+    expect(
+      checks(
+        inputs({
+          runwayIdent: '22L',
+          reciprocalIdent: '04R',
+          tailwindKt: 7,
+          hasIls: false,
+          gearDown: false,
+          marker: 'base-right',
+          activeTab: 'approach',
+          altitudeOverride: true,
+          altitudeOverrideFt: 2000,
+        }),
+      ).map((check) => check.text),
+    ).toEqual([
+      'Tailwind 7 kt on 22L',
+      'Gear up 6.0 NM from the threshold',
+      'No ILS on 22L',
+      'Altitude override active',
+    ]);
+  });
+
+  it('never invents an always-passing airspace check', () => {
+    // The mockup's "Position inside the LFMN CTR" passed unconditionally on sample data.
+    // There is no airspace source behind this station; a check that always passes teaches
+    // an instructor to stop reading the list.
+    for (const overrides of [{}, { standName: 'A3' }, { tailwindKt: 11 }]) {
+      for (const check of checks(inputs(overrides))) {
+        expect(check.text).not.toContain('CTR');
+        expect(check.dot).not.toBe('accent');
+      }
+    }
   });
 });

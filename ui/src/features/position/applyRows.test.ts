@@ -1,15 +1,29 @@
 import { describe, expect, it } from 'vitest';
-import { applyRows } from './applyRows';
-import { initialPositionDesignState, type PositionDesignState } from './positionDesignSlice';
+import type { AircraftSetup } from '../../api/models';
+import { applyRows, type ApplyRowInputs } from './applyRows';
+import { mergedSetup } from './setup';
+import { PREVIEW } from './testFixtures';
 
-function state(overrides: Partial<PositionDesignState> = {}): PositionDesignState {
-  return { ...initialPositionDesignState, ...overrides };
+function rows(overrides: AircraftSetup = {}, preview = PREVIEW) {
+  const inputs: ApplyRowInputs = {
+    preview,
+    merged: mergedSetup(preview, overrides),
+    overridden: new Set(Object.keys(overrides) as (keyof AircraftSetup)[]),
+  };
+  return applyRows(inputs);
+}
+
+function valueOf(list: readonly { label: string; value: string }[], label: string) {
+  return list.find((row) => row.label === label)?.value;
+}
+
+function tagOf(list: readonly { label: string; tag: string }[], label: string) {
+  return list.find((row) => row.label === label)?.tag;
 }
 
 describe('applyRows', () => {
-  it('returns the 7 rows in order for the default state', () => {
-    const rows = applyRows(initialPositionDesignState);
-    expect(rows.map((r) => r.label)).toEqual([
+  it('returns the 7 rows in order', () => {
+    expect(rows().map((row) => row.label)).toEqual([
       'Start position',
       'Altitude',
       'Heading',
@@ -20,71 +34,82 @@ describe('applyRows', () => {
     ]);
   });
 
-  it('tags the default rows correctly', () => {
-    const rows = applyRows(initialPositionDesignState);
-    const tag = (label: string) => rows.find((r) => r.label === label)?.tag;
-    expect(tag('Start position')).toBe('navdata');
-    expect(tag('Altitude')).toBe('computed');
-    expect(tag('Heading')).toBe('computed');
-    expect(tag('IAS')).toBe('editable');
-    expect(tag('Landing gear')).toBe('editable');
-    expect(tag('Flaps')).toBe('editable');
-    expect(tag('Nav radios')).toBe('from navdata');
+  it('shows the server’s own label, altitude, heading and speed', () => {
+    const list = rows();
+    expect(valueOf(list, 'Start position')).toBe('LFMN 04R 3 NM final');
+    expect(valueOf(list, 'Altitude')).toBe('968 ft');
+    expect(valueOf(list, 'Heading')).toBe('040°T');
+    expect(valueOf(list, 'IAS')).toBe('121 kt');
+    expect(valueOf(list, 'Landing gear')).toBe('down');
+    expect(valueOf(list, 'Flaps')).toBe('50 %');
+    expect(valueOf(list, 'Nav radios')).toBe('ILS 110.70 · CRS 040');
   });
 
-  it('resolves the start position name from the selected circuit marker', () => {
-    const rows = applyRows(initialPositionDesignState);
-    expect(rows[0]?.value).toBe('3 NM final');
+  it('tags everything the placement resolved as computed', () => {
+    const list = rows();
+    expect(tagOf(list, 'Start position')).toBe('navdata');
+    for (const label of ['Altitude', 'Heading', 'IAS', 'Landing gear', 'Flaps']) {
+      expect(tagOf(list, label)).toBe('computed');
+    }
   });
 
-  it('flips Altitude from computed to overridden', () => {
-    const overridden = applyRows(
-      state({
-        config: {
-          ...initialPositionDesignState.config,
-          altitudeOverride: true,
-          altitudeOverrideFt: 5500,
-        },
-      }),
-    );
-    const row = overridden.find((r) => r.label === 'Altitude');
+  it('flips Altitude from computed to overridden, in caution colour', () => {
+    const list = rows({ altitude_ft: 5500 });
+    const row = list.find((entry) => entry.label === 'Altitude');
+    expect(row?.value).toBe('5,500 ft');
     expect(row?.tag).toBe('overridden');
     expect(row?.colour).toBe('caution');
-    expect(row?.value).toBe('5,500 ft');
   });
 
-  it('flips Nav radios from-navdata to unavailable when the runway has no ILS', () => {
-    const rows = applyRows(state({ selectedRunway: '22L' }));
-    const row = rows.find((r) => r.label === 'Nav radios');
-    expect(row?.value).toBe('not available');
-    expect(row?.tag).toBe('unavailable');
-    expect(row?.colour).toBe('caution');
+  it('flips IAS and gear to overridden when the instructor edits them', () => {
+    const list = rows({ ias_kt: 90, gear_down: false });
+    expect(tagOf(list, 'IAS')).toBe('overridden');
+    expect(valueOf(list, 'IAS')).toBe('90 kt');
+    const gear = list.find((entry) => entry.label === 'Landing gear');
+    expect(gear?.value).toBe('up');
+    expect(gear?.colour).toBe('caution');
+    expect(gear?.tag).toBe('overridden');
   });
 
-  it('flips Nav radios to not sent when the toggle is off, even with ILS available', () => {
-    const rows = applyRows(
-      state({ send: { ...initialPositionDesignState.send, ilsFrequency: false } }),
-    );
-    const row = rows.find((r) => r.label === 'Nav radios');
+  it('says nothing is resolved yet before the preview answers', () => {
+    const list = applyRows({ preview: undefined, merged: {}, overridden: new Set() });
+    expect(valueOf(list, 'Start position')).toBe('not resolved');
+    expect(valueOf(list, 'Altitude')).toBe('not resolved');
+    expect(valueOf(list, 'Heading')).toBe('not resolved');
+    expect(valueOf(list, 'IAS')).toBe('not resolved');
+    expect(valueOf(list, 'Landing gear')).toBe('unchanged');
+    expect(valueOf(list, 'Flaps')).toBe('unchanged');
+  });
+
+  it('says "not sent" when the merged setup tunes no radio', () => {
+    const bare = {
+      ...PREVIEW,
+      setup: {
+        ...PREVIEW.setup,
+        nav1_freq_khz: null,
+        ils_freq_khz: null,
+        obs1_deg: null,
+      },
+    };
+    const row = rows({}, bare).find((entry) => entry.label === 'Nav radios');
     expect(row?.value).toBe('not sent');
-    expect(row?.tag).toBe('from navdata');
+    expect(row?.tag).toBe('unavailable');
   });
 
-  it('shows the ILS frequency and course when available and sent', () => {
-    const rows = applyRows(initialPositionDesignState);
-    const row = rows.find((r) => r.label === 'Nav radios');
+  it('credits navdata when the frequency came from the instructor’s switch', () => {
+    const bare = {
+      ...PREVIEW,
+      setup: {
+        ...PREVIEW.setup,
+        nav1_freq_khz: null,
+        ils_freq_khz: null,
+        obs1_deg: null,
+      },
+    };
+    const row = rows({ nav1_freq_khz: 110700, obs1_deg: 40 }, bare).find(
+      (entry) => entry.label === 'Nav radios',
+    );
     expect(row?.value).toBe('ILS 110.70 · CRS 040');
-  });
-
-  it('flips Landing gear to caution when up', () => {
-    const up = applyRows(initialPositionDesignState).find((r) => r.label === 'Landing gear');
-    expect(up?.value).toBe('up');
-    expect(up?.colour).toBe('caution');
-
-    const down = applyRows(
-      state({ config: { ...initialPositionDesignState.config, gearDown: true } }),
-    ).find((r) => r.label === 'Landing gear');
-    expect(down?.value).toBe('down');
-    expect(down?.colour).toBe('default');
+    expect(row?.tag).toBe('from navdata');
   });
 });

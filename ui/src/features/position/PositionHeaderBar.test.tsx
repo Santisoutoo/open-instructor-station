@@ -1,9 +1,17 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
-import { describe, expect, it } from 'vitest';
-import { setupStore, type RootState } from '../../store';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { TABS } from '../../components/tabs';
+import { setupStore, type RootState } from '../../store';
 import { PositionHeaderBar } from './PositionHeaderBar';
+import { initialPositionDesignState } from './positionDesignSlice';
+import { callsTo, stubApi } from './testApi';
+import { ICAO, positionRoutes } from './testFixtures';
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
 
 function renderHeader(preloadedState: Partial<RootState> = {}) {
   const store = setupStore(preloadedState);
@@ -15,52 +23,83 @@ function renderHeader(preloadedState: Partial<RootState> = {}) {
   return store;
 }
 
-describe('PositionHeaderBar', () => {
-  it('opening the screen menu lists all 10 TABS labels', () => {
+describe('the screen menu', () => {
+  it('lists every module tab', async () => {
+    stubApi(positionRoutes());
     renderHeader();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Position/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Position/ }));
 
     for (const tab of TABS) {
       expect(screen.getByRole('menuitem', { name: tab.label })).toBeInTheDocument();
     }
   });
 
-  it('clicking Weather in the screen menu switches the module tab', () => {
+  it('switches the module tab — it is the only way off a full-bleed screen', async () => {
+    stubApi(positionRoutes());
     const store = renderHeader();
 
-    fireEvent.click(screen.getByRole('button', { name: /^Position/ }));
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Weather' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Position/ }));
+    await userEvent.click(screen.getByRole('menuitem', { name: 'Weather' }));
 
     expect(store.getState().ui.activeTab).toBe('weather');
   });
+});
 
-  it('the theme toggle flips the theme', () => {
+describe('the theme toggle', () => {
+  it('flips the theme', async () => {
+    stubApi(positionRoutes());
     const store = renderHeader();
     const before = store.getState().ui.theme;
 
-    fireEvent.click(screen.getByRole('button', { name: before === 'dark' ? 'Light' : 'Dark' }));
+    await userEvent.click(
+      screen.getByRole('button', { name: before === 'dark' ? 'Light' : 'Dark' }),
+    );
 
     expect(store.getState().ui.theme).not.toBe(before);
   });
+});
 
-  it('Load with a changed ICAO sets the legacy selectedIcao', () => {
-    const store = renderHeader();
+describe('loading an airport', () => {
+  it('resolves the name through the airport search', async () => {
+    const { calls } = stubApi(positionRoutes());
+    renderHeader({
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: ICAO,
+        loadedIcao: ICAO,
+      },
+    });
 
-    const icaoInput = screen.getByLabelText('Airport ICAO code');
-    fireEvent.change(icaoInput, { target: { value: 'lemd' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Load' }));
-
-    expect(store.getState().position.selectedIcao).toBe('LEMD');
+    expect(await screen.findByText("Nice / Côte d'Azur")).toBeInTheDocument();
+    expect(callsTo(calls, 'navdata/airports').length).toBeGreaterThan(0);
   });
 
-  it('Load with the same ICAO does not re-dispatch (staged survives)', () => {
-    // The design slice's `icaoInput` defaults to 'LFMN' — preload the legacy slice with the
-    // same ICAO already selected and something staged, so a same-value Load is a genuine
-    // no-op rather than the very first selection.
+  it('mirrors a changed ICAO onto the shared positionSlice', async () => {
+    stubApi(positionRoutes());
+    const store = renderHeader();
+
+    fireEvent.change(screen.getByLabelText('Airport ICAO code'), {
+      target: { value: 'lemd' },
+    });
+    await userEvent.click(screen.getByRole('button', { name: 'Load' }));
+
+    expect(store.getState().position.selectedIcao).toBe('LEMD');
+    expect(store.getState().positionDesign.loadedIcao).toBe('LEMD');
+  });
+
+  it('does not re-dispatch for the same ICAO, so a staged placement survives', async () => {
+    // `airportSelected` is destructive: it wipes the staged placement, the overrides and
+    // the whole Weather panel through its extraReducers.
+    stubApi(positionRoutes());
     const store = renderHeader({
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: ICAO,
+        loadedIcao: ICAO,
+      },
       position: {
-        selectedIcao: 'LFMN',
+        selectedIcao: ICAO,
         selectedRunwayIdent: null,
         activeTab: 'pattern',
         openProcedure: null,
@@ -71,12 +110,27 @@ describe('PositionHeaderBar', () => {
           ias_kt: 0,
         },
         setupOverrides: {},
-        recentIcaos: ['LFMN'],
+        recentIcaos: [ICAO],
       },
     });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Load' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Load' }));
 
     expect(store.getState().position.staged).not.toBeNull();
+  });
+
+  it('says so when the code is not in the index, rather than showing a blank name', async () => {
+    stubApi(positionRoutes({ 'navdata/airports': { body: [] } }));
+    renderHeader({
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: 'ZZZZ',
+        loadedIcao: 'ZZZZ',
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('not in navdata')).toBeInTheDocument();
+    });
   });
 });

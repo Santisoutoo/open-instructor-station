@@ -1,32 +1,147 @@
+/**
+ * SID, STAR and approach procedures, and the leg the aircraft is placed on.
+ *
+ * **Unpositionable legs are shown, not hidden.** A `CA` leg ends at an altitude rather than
+ * at a fix, so it has no defensible coordinate — but an instructor reading a SID needs to
+ * see the climb leg to make sense of the ones around it. Those rows render disabled with
+ * the server's own `unpositionable_reason` beside them. Nothing here knows ARINC 424:
+ * `is_positionable` and the reason are both computed by the navdata provider.
+ */
+
 import { useRef } from 'react';
+import { useGetProcedureQuery, useGetProceduresQuery } from '../../api/instructorApi';
+import type { Procedure, ProcedureLeg } from '../../api/models';
+import { useAppDispatch, useAppSelector } from '../../store';
 import { FactRow } from './FactRow';
 import { Popover } from './Popover';
 import {
-  PROCEDURE_KINDS,
-  procedureIdentSelected,
-  procedureKindSelected,
+  PROCEDURE_FAMILIES,
+  procedureFamilySelected,
+  procedureLegSelected,
   procedureMenuToggled,
-  type ProcedureKind,
+  procedureSelected,
+  type ProcedureFamily,
 } from './positionDesignSlice';
-import { PROCEDURE_IDENTS, splitProcedureIdent } from './sampleData';
-import { useAppDispatch, useAppSelector } from '../../store';
+import {
+  procedureFamilyMatches,
+  procedureKindOf,
+  useLoadedIcao,
+  useSelectedRunway,
+} from './usePositionData';
 
-const KIND_LABEL: Record<ProcedureKind, string> = {
+const FAMILY_LABEL: Record<ProcedureFamily, string> = {
   sid: 'Departure · SID',
   star: 'Arrival · STAR',
   apptr: 'Approach transition · APPTR',
   final: 'Final approach · FINAL',
 };
 
+function LegRow({
+  leg,
+  selected,
+  onSelect,
+}: {
+  readonly leg: ProcedureLeg;
+  readonly selected: boolean;
+  readonly onSelect: (sequence: number) => void;
+}) {
+  const fix = leg.fix?.ident ?? leg.fix_ref?.ident ?? '—';
+  if (!leg.is_positionable) {
+    return (
+      <li className="pos-legs__row pos-legs__row--unpositionable">
+        <span className="pos-mono">{leg.sequence}</span>
+        <span className="pos-mono">{leg.path_terminator}</span>
+        <span className="pos-mono">{fix}</span>
+        <span className="pos-legs__reason">{leg.unpositionable_reason}</span>
+      </li>
+    );
+  }
+  return (
+    <li className="pos-legs__row">
+      <button
+        type="button"
+        className={
+          selected ? 'pos-legs__pick pos-legs__pick--selected' : 'pos-legs__pick'
+        }
+        aria-pressed={selected}
+        onClick={() => {
+          onSelect(leg.sequence);
+        }}
+      >
+        <span className="pos-mono">{leg.sequence}</span>
+        <span className="pos-mono">{leg.path_terminator}</span>
+        <span className="pos-mono">{fix}</span>
+        <span className="pos-legs__altitude">{leg.altitude?.display ?? '—'}</span>
+      </button>
+    </li>
+  );
+}
+
+/** The legs of the open procedure, and the facts read off the leg that is selected. */
+function ProcedureBody({
+  procedure,
+  sequence,
+  onSelectLeg,
+}: {
+  readonly procedure: Procedure;
+  readonly sequence: number | null;
+  readonly onSelectLeg: (sequence: number) => void;
+}) {
+  const chosen = procedure.legs.find((leg) => leg.sequence === sequence);
+  const firstPositionable = procedure.legs.find((leg) => leg.is_positionable);
+  const shown = chosen ?? firstPositionable;
+
+  return (
+    <>
+      <ul className="pos-legs">
+        {procedure.legs.map((leg) => (
+          <LegRow
+            key={leg.sequence}
+            leg={leg}
+            selected={leg.sequence === sequence}
+            onSelect={onSelectLeg}
+          />
+        ))}
+      </ul>
+      <div className="pos-sidstartab__facts">
+        <FactRow label="Transition" value={procedure.transition ?? 'common route'} />
+        <FactRow label="First waypoint" value={shown?.fix?.ident ?? '—'} />
+        <FactRow
+          label="Altitude restriction"
+          value={shown?.altitude?.display ?? 'not in navdata'}
+        />
+      </div>
+    </>
+  );
+}
+
 export function SidStarTab() {
   const dispatch = useAppDispatch();
-  const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
-  const procedureKind = useAppSelector((state) => state.positionDesign.procedureKind);
-  const procedureIdent = useAppSelector((state) => state.positionDesign.procedureIdent);
+  const icao = useLoadedIcao();
+  const family = useAppSelector((state) => state.positionDesign.procedureFamily);
+  const selection = useAppSelector((state) => state.positionDesign.procedure);
   const menuOpen = useAppSelector((state) => state.positionDesign.procedureMenuOpen);
+  const runway = useSelectedRunway();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
-  const breadcrumb = splitProcedureIdent(procedureIdent);
+  const kind = procedureKindOf(family);
+  const { data: procedures, isError } = useGetProceduresQuery(
+    { icao, kind },
+    { skip: icao === '' },
+  );
+  const matching = (procedures ?? []).filter((procedure) =>
+    procedureFamilyMatches(family, procedure.transition),
+  );
+
+  const { data: procedure } = useGetProcedureQuery(
+    {
+      icao,
+      kind,
+      ident: selection?.ident ?? '',
+      transition: selection?.transition ?? null,
+    },
+    { skip: selection === null },
+  );
 
   return (
     <div
@@ -36,18 +151,18 @@ export function SidStarTab() {
       className="pos-sidstartab"
     >
       <div className="pos-sidstartab__kind" role="radiogroup" aria-label="Procedure type">
-        {PROCEDURE_KINDS.map((kind) => (
+        {PROCEDURE_FAMILIES.map((option) => (
           <button
-            key={kind}
+            key={option}
             type="button"
             role="radio"
-            aria-checked={kind === procedureKind}
-            className={kind === procedureKind ? 'pos-chip pos-chip--selected' : 'pos-chip'}
+            aria-checked={option === family}
+            className={option === family ? 'pos-chip pos-chip--selected' : 'pos-chip'}
             onClick={() => {
-              dispatch(procedureKindSelected(kind));
+              dispatch(procedureFamilySelected(option));
             }}
           >
-            {KIND_LABEL[kind]}
+            {FAMILY_LABEL[option]}
           </button>
         ))}
       </div>
@@ -64,10 +179,10 @@ export function SidStarTab() {
             dispatch(procedureMenuToggled());
           }}
         >
-          {procedureIdent}
+          {selection?.ident ?? 'Choose a procedure'}
         </button>
         <span className="pos-sidstartab__ident-count">
-          {String(PROCEDURE_IDENTS.length)} in navdata
+          {String(matching.length)} in navdata
         </span>
         <Popover
           id="pos-procedure-ident-menu"
@@ -78,40 +193,74 @@ export function SidStarTab() {
           triggerRef={triggerRef}
           className="pos-popover pos-sidstartab__ident-menu"
         >
-          <ul className="pos-sidstartab__ident-list" role="listbox" aria-label="Procedure ident">
-            {PROCEDURE_IDENTS.map((entry) => (
-              <li key={entry.ident}>
-                <button
-                  type="button"
-                  role="option"
-                  aria-selected={entry.ident === procedureIdent}
-                  className="pos-sidstartab__ident-option pos-mono"
-                  onClick={() => {
-                    dispatch(procedureIdentSelected(entry.ident));
-                  }}
-                >
-                  {entry.ident}
-                  <span className="pos-sidstartab__ident-via">via {entry.via}</span>
-                </button>
+          <ul
+            className="pos-sidstartab__ident-list"
+            role="listbox"
+            aria-label="Procedure ident"
+          >
+            {matching.map((entry) => {
+              const transition = entry.transition ?? null;
+              return (
+                <li key={`${entry.ident}-${transition ?? ''}`}>
+                  <button
+                    type="button"
+                    role="option"
+                    aria-selected={
+                      entry.ident === selection?.ident &&
+                      transition === (selection.transition ?? null)
+                    }
+                    className="pos-sidstartab__ident-option pos-mono"
+                    onClick={() => {
+                      dispatch(procedureSelected({ ident: entry.ident, transition }));
+                    }}
+                  >
+                    {entry.ident}
+                    <span className="pos-sidstartab__ident-via">
+                      {transition ?? 'common route'} ·{' '}
+                      {String(entry.positionable_leg_count)}/{String(entry.leg_count)}{' '}
+                      placeable
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+            {matching.length === 0 && (
+              <li className="pos-sidstartab__ident-empty">
+                {isError
+                  ? 'The procedures of this airport could not be read.'
+                  : 'No procedure of this type in the navigation data.'}
               </li>
-            ))}
+            )}
           </ul>
         </Popover>
       </div>
 
       <div className="pos-sidstartab__breadcrumb pos-mono">
-        <span>LFMN/{selectedRunway ?? '—'}</span>
+        <span>
+          {icao === '' ? '—' : icao}/{runway?.ident ?? '—'}
+        </span>
         <span aria-hidden="true">→</span>
-        <span>{breadcrumb.short}</span>
+        <span>{selection?.ident ?? '—'}</span>
         <span aria-hidden="true">→</span>
-        <span>{breadcrumb.waypoint}</span>
+        <span>
+          {procedure?.legs.find((leg) => leg.is_positionable)?.fix?.ident ?? '—'}
+        </span>
       </div>
 
-      <div className="pos-sidstartab__facts">
-        <FactRow label="Transition" value={breadcrumb.transition} />
-        <FactRow label="First waypoint" value={breadcrumb.waypoint} />
-        <FactRow label="Altitude restriction" value="not in navdata" />
-      </div>
+      {procedure === undefined ? (
+        <p className="pos-sidstartab__empty">
+          Pick a procedure, then the leg to start on. Only legs that carry a resolved fix
+          can be placed on.
+        </p>
+      ) : (
+        <ProcedureBody
+          procedure={procedure}
+          sequence={selection?.sequence ?? null}
+          onSelectLeg={(sequence) => {
+            dispatch(procedureLegSelected(sequence));
+          }}
+        />
+      )}
     </div>
   );
 }

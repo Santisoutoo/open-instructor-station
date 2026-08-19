@@ -1,21 +1,28 @@
 /**
- * The 64px header: screen-menu trigger, ICAO input + airport name + Load/Search/Random,
- * Start-at trigger, connection dot, theme toggle.
+ * The 64px header: screen-menu trigger, ICAO input + airport name + Load/Search, Start-at
+ * trigger, connection dot, theme toggle.
  *
- * "Load" is the other place (with the runway strip / Start-at popover) the design doc's
- * mirrored dispatch happens: `airportSelected(icao)` fires on the legacy `positionSlice`
- * only when the ICAO actually changed, since it wipes the staged placement, overrides and
- * the whole Weather panel via its `extraReducers`.
+ * "Load" is one of the two places (with the runway strip / Start-at popover) the mirrored
+ * dispatch happens: `airportSelected(icao)` fires on the shared `positionSlice` only when
+ * the ICAO actually changed, since it wipes the staged placement, the overrides and the
+ * whole Weather panel via its `extraReducers`.
  */
 
 import { useRef } from 'react';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { themeToggled } from '../../store/uiSlice';
+import { AirportMenu } from './AirportMenu';
 import { ScreenMenu } from './ScreenMenu';
 import { StartAtPopover } from './StartAtPopover';
-import { AIRPORT_NAME } from './sampleData';
-import { airportLoaded, icaoTyped, screenMenuToggled, startAtToggled } from './positionDesignSlice';
+import {
+  airportLoaded,
+  airportMenuOpened,
+  icaoTyped,
+  screenMenuToggled,
+  startAtToggled,
+} from './positionDesignSlice';
 import { airportSelected } from './positionSlice';
+import { useAirport } from './usePositionData';
 
 export function PositionHeaderBar() {
   const dispatch = useAppDispatch();
@@ -24,16 +31,23 @@ export function PositionHeaderBar() {
   const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
   const screenMenuOpen = useAppSelector((state) => state.positionDesign.screenMenuOpen);
   const startAtOpen = useAppSelector((state) => state.positionDesign.startAtOpen);
+  const airportMenuOpen = useAppSelector((state) => state.positionDesign.airportMenuOpen);
   const connectionStatus = useAppSelector((state) => state.connection.status);
   const demoFeed = useAppSelector((state) => state.ui.demoFeed);
   const theme = useAppSelector((state) => state.ui.theme);
   const legacyIcao = useAppSelector((state) => state.position.selectedIcao);
 
+  const { airport, isFetching, isError } = useAirport();
+
   const screenMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const startAtTriggerRef = useRef<HTMLButtonElement>(null);
+  const icaoInputRef = useRef<HTMLInputElement>(null);
 
-  function handleLoad() {
-    const icao = icaoInput.toUpperCase();
+  function load(raw: string) {
+    const icao = raw.toUpperCase();
+    if (icao === '') {
+      return;
+    }
     dispatch(airportLoaded(icao));
     if (legacyIcao !== icao) {
       dispatch(airportSelected(icao));
@@ -47,6 +61,10 @@ export function PositionHeaderBar() {
       : selectedRunway !== null
         ? `Runway ${selectedRunway}`
         : 'Not set';
+
+  const airportName = isError
+    ? 'airport lookup failed'
+    : (airport?.name ?? (isFetching ? 'reading navdata…' : 'not in navdata'));
 
   return (
     <header className="pos-header">
@@ -67,24 +85,43 @@ export function PositionHeaderBar() {
 
       <div className="pos-header__airport">
         <input
+          ref={icaoInputRef}
           className="pos-header__icao pos-mono"
           value={icaoInput}
           maxLength={4}
           aria-label="Airport ICAO code"
+          aria-expanded={airportMenuOpen}
+          aria-controls="pos-airport-menu"
           onChange={(event) => {
             dispatch(icaoTyped(event.target.value.toUpperCase()));
           }}
+          onKeyDown={(event) => {
+            if (event.key === 'Enter') {
+              load(icaoInput);
+            }
+          }}
         />
-        <span className="pos-header__airport-name">{AIRPORT_NAME}</span>
-        <button type="button" className="pos-header__load" onClick={handleLoad}>
+        <span className="pos-header__airport-name">{airportName}</span>
+        <button
+          type="button"
+          className="pos-header__load"
+          onClick={() => {
+            load(icaoInput);
+          }}
+        >
           Load
         </button>
-        <button type="button" className="pos-textaction">
+        <button
+          type="button"
+          className="pos-textaction"
+          onClick={() => {
+            dispatch(airportMenuOpened());
+            icaoInputRef.current?.focus();
+          }}
+        >
           Search
         </button>
-        <button type="button" className="pos-textaction">
-          Random
-        </button>
+        <AirportMenu triggerRef={icaoInputRef} onChoose={load} />
       </div>
 
       <button

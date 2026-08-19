@@ -14,11 +14,11 @@
   --pos-hair: oklch(0.26 0.012 250);
   --pos-t1: oklch(0.97 0.005 250);
   --pos-t2: oklch(0.76 0.008 250);
-  --pos-t3: oklch(0.58 0.010 250);
+  --pos-t3: oklch(0.58 0.01 250);
   --pos-hover: oklch(0.25 0.013 250);
   --pos-accent: oklch(0.72 0.16 145);
   --pos-on-accent: oklch(0.17 0.03 145);
-  --pos-caution: oklch(0.80 0.13 78);
+  --pos-caution: oklch(0.8 0.13 78);
   --pos-alert: oklch(0.68 0.17 25);
   --pos-focus: var(--pos-accent);
 
@@ -38,15 +38,15 @@
   --pos-panel: oklch(0.995 0.002 250);
   --pos-rail: oklch(0.975 0.003 250);
   --pos-line: oklch(0.84 0.006 250);
-  --pos-hair: oklch(0.90 0.005 250);
+  --pos-hair: oklch(0.9 0.005 250);
   --pos-t1: oklch(0.22 0.012 250);
   --pos-t2: oklch(0.38 0.012 250);
   --pos-t3: oklch(0.53 0.012 250);
   --pos-hover: oklch(0.94 0.005 250);
-  --pos-accent: oklch(0.50 0.13 145);
+  --pos-accent: oklch(0.5 0.13 145);
   --pos-on-accent: oklch(0.99 0.005 145);
   --pos-caution: oklch(0.56 0.14 65);
-  --pos-alert: oklch(0.50 0.18 25);
+  --pos-alert: oklch(0.5 0.18 25);
 }
 
 .pos-mono {
@@ -374,25 +374,17 @@
   display: block;
 }
 
-.pos-diagram__terminal {
-  fill: var(--pos-hover);
-  stroke: var(--pos-line);
-}
-
-.pos-diagram__terminal-label {
-  fill: var(--pos-t3);
-  font-size: 8px;
-  font-family: 'Schibsted Grotesk', sans-serif;
-}
-
-.pos-diagram__taxiway {
-  stroke: var(--pos-line);
-  stroke-width: 2;
-}
-
-.pos-diagram__runway {
-  fill: var(--pos-t3);
-  opacity: 0.5;
+/*
+ * One line per physical strip, drawn between the two thresholds navdata publishes. The
+ * mockup's terminal blocks and taxiway are gone with the sample data: apt.dat publishes no
+ * terminal buildings, and inventing three rectangles would be decoration pretending to be
+ * an aerodrome chart.
+ */
+.pos-diagram__runway-line {
+  stroke: var(--pos-t3);
+  stroke-width: 6;
+  stroke-linecap: round;
+  opacity: 0.55;
 }
 
 .pos-diagram__runway-label {
@@ -1113,4 +1105,264 @@
 
 .pos-checkbox--disabled .pos-checkbox__input {
   cursor: not-allowed;
+}
+
+/* ------------------------------------------------------- gates and states */
+
+/*
+ * The navdata gate's card, and the "nothing loaded yet" prompt. Both replace the screen
+ * body while the header stays put — this screen is full-bleed, so its screen menu is the
+ * only way off it and must never be gated away.
+ */
+.pos-navdata {
+  margin: 2rem auto;
+  max-width: 34rem;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  background: var(--pos-panel);
+  border: 1px solid var(--pos-line);
+  border-radius: 10px;
+}
+
+.pos-navdata__reason {
+  margin: 0;
+  color: var(--pos-t2);
+}
+
+.pos-navdata__bar {
+  height: 6px;
+  background: var(--pos-hover);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.pos-navdata__bar span {
+  display: block;
+  height: 100%;
+  background: var(--pos-accent);
+}
+
+.pos-navdata__build {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--pos-accent);
+  color: var(--pos-on-accent);
+  border: 0;
+  border-radius: 8px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.pos-empty,
+.pos-startat__empty,
+.pos-runwaystrip__empty,
+.pos-sidstartab__empty {
+  margin: 1rem auto;
+  color: var(--pos-t3);
+  font-size: 0.86rem;
+}
+
+.pos-empty {
+  margin: 3rem auto;
+  max-width: 34rem;
+  text-align: center;
+  font-size: 0.95rem;
+}
+
+/* ------------------------------------------------------------ airport menu */
+
+.pos-airportmenu {
+  width: 30rem;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding: 0.5rem;
+}
+
+.pos-airportmenu__hint,
+.pos-airportmenu__error {
+  margin: 0;
+  padding: 0.5rem;
+  color: var(--pos-t3);
+  font-size: 0.82rem;
+}
+
+.pos-airportmenu__error {
+  color: var(--pos-alert);
+}
+
+.pos-airportmenu__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pos-airportmenu__result {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  background: transparent;
+  border: 0;
+  color: var(--pos-t1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pos-airportmenu__result:hover {
+  background: var(--pos-hover);
+}
+
+.pos-airportmenu__result-name {
+  flex: 1;
+  color: var(--pos-t2);
+}
+
+.pos-airportmenu__result-meta {
+  color: var(--pos-t3);
+  font-size: 0.78rem;
+}
+
+/* ------------------------------------------------- the final-distance rail */
+
+.pos-approachtab__finals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0.5rem 0 0.75rem;
+}
+
+/* --------------------------------------------------------- procedure legs */
+
+.pos-legs {
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+  max-height: 16rem;
+  overflow-y: auto;
+  border: 1px solid var(--pos-hair);
+  border-radius: 8px;
+}
+
+.pos-legs__row {
+  border-bottom: 1px solid var(--pos-hair);
+}
+
+.pos-legs__row:last-child {
+  border-bottom: 0;
+}
+
+.pos-legs__row--unpositionable {
+  display: grid;
+  grid-template-columns: 3rem 3rem 6rem 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  color: var(--pos-t3);
+}
+
+.pos-legs__pick {
+  display: grid;
+  grid-template-columns: 3rem 3rem 6rem 1fr;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  border: 0;
+  color: var(--pos-t1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pos-legs__pick:hover {
+  background: var(--pos-hover);
+}
+
+.pos-legs__pick--selected {
+  background: color-mix(in oklch, var(--pos-accent) 16%, transparent);
+}
+
+.pos-legs__reason,
+.pos-legs__altitude {
+  font-size: 0.78rem;
+  color: var(--pos-t3);
+}
+
+/* ----------------------------------------------------- rail notes / errors */
+
+.pos-rail__notes {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.pos-rail__note {
+  color: var(--pos-t3);
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+.pos-rail__error {
+  margin: 0.5rem 0;
+  color: var(--pos-alert);
+  font-size: 0.84rem;
+}
+
+.pos-rail__row-value--dim {
+  color: var(--pos-t3);
+}
+
+/* ------------------------------------------------------- bottom bar states */
+
+.pos-bottombar__blocked,
+.pos-bottombar__error,
+.pos-bottombar__flash {
+  margin: 0 0 0.35rem;
+  font-size: 0.78rem;
+  max-width: 22rem;
+}
+
+.pos-bottombar__blocked {
+  color: var(--pos-t3);
+}
+
+.pos-bottombar__error {
+  color: var(--pos-alert);
+}
+
+.pos-bottombar__flash {
+  color: var(--pos-accent);
+}
+
+.pos-bottombar__set:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* --------------------------------------------- unavailable custom-tab origin */
+
+.pos-radio--disabled {
+  opacity: 0.55;
+}
+
+.pos-radio--disabled input {
+  cursor: not-allowed;
+}
+
+.pos-customtab__unavailable {
+  color: var(--pos-t3);
+  font-size: 0.75rem;
 }

@@ -1,10 +1,30 @@
 # Position screen — replicate the "v3" redesign (static phase)
 
-Status: approved, in progress on `feature/position-redesign`. This doc is the implementation
-spec for that branch — read it fully before touching code. It supersedes §15 of
-`docs/designs/position-manager.md` for everything about the **panel's UI**; §15's API/model
-sections (endpoints, `PlacementRequest`, `AircraftSetup`, gating) are still correct and are
-deliberately **not** used by this phase (see "Scope" below).
+Status: the static phase described below is **done and superseded**. Commit 22b8d8d landed
+the replica; the commit after it wired the screen to the real backend, so everything this
+doc says about sample data, local-only state and an inert "Set position" button is now
+history. What survives is the **visual system and the screen's structure** (sections
+"Visual system", "Layout, top to bottom", the `positionSlice` constraint and the full-bleed
+`App.tsx` shell) — those are still the spec.
+
+What the wiring phase changed, against this document:
+
+| This doc says | Now |
+|---|---|
+| `sampleData.ts` holds LFMN's runways, stands, procedures, wind, QNH, METAR, AIRAC | Deleted. Everything comes from `navdata`/`weather` through RTK Query. |
+| `RunwayId` is `'04R'｜'22L'｜'04L'｜'22R'｜'HELI'` | A runway **ident string** from navdata. The `HELI` pseudo-runway is gone — the runways endpoint publishes runway ends, not helipads. |
+| `RECIPROCAL_RUNWAY` is a hard-coded map | `Runway.opposite_ident`, from navdata. |
+| The 9 circuit markers carry an altitude and a heading | They carry `(u, v)` and nothing else. Altitude, heading and speed are the preview's. |
+| The final markers are fixed at 3 NM and 8 NM | The final marker gains a **distance selector** over the server's seven finals, driven by the generated enum. The dots stay as illustration. |
+| The parking filter is "gate heavy / gate medium / misc / tie-down" | The server's own `ParkingKind`: gates, tie-downs, hangars, other. `apt.dat` makes no heavy/medium distinction. |
+| The airport diagram places stands at hand-picked `x/y` | A pure, tested projection of real stand and threshold coordinates (`standProjection.ts`). The three terminal blocks are gone: `apt.dat` publishes no buildings. |
+| Check 7, "Position inside the LFMN CTR", always passes | Deleted. There is no airspace source; a check that always passes teaches an instructor to stop reading the list. |
+| "Set position" is inert and `state.position.staged` stays `null` | The button applies, and the resolved placement is mirrored onto `positionSlice` so the Map hand-off and Profiles' Save work again. |
+| The Custom tab offers "relative to the runway landing point" | Offered and **disabled with the reason**: the placement union has no bearing-and-distance member, and resolving one here would be geodesy in the browser. |
+
+This doc supersedes §15 of `docs/designs/position-manager.md` for everything about the
+**panel's UI**; §15's API/model sections (endpoints, `PlacementRequest`, `AircraftSetup`,
+gating) are correct and are what the wiring phase consumes.
 
 ## Scope
 

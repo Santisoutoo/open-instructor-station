@@ -51,8 +51,9 @@ export function CircuitDiagram({
 }: {
   readonly courseDeg: number;
   readonly runwayIdent: string;
-  readonly windDeg: number;
-  readonly windKt: number;
+  /** `null` when the commanded weather is unknown or unsupported — no arrow is drawn. */
+  readonly windDeg: number | null;
+  readonly windKt: number | null;
   readonly selectedMarker: MarkerId;
   readonly onSelectMarker: (id: MarkerId) => void;
 }) {
@@ -62,7 +63,7 @@ export function CircuitDiagram({
   const threshold = place(0, 0, 0);
   const centrelineFar = place(TICK_FROM_NM, 0, 0);
   const centrelineNear = place(TICK_TO_NM, 0, 0);
-  const windRotation = windArrowRotation(windDeg);
+  const windRotation = windDeg === null ? null : windArrowRotation(windDeg);
 
   return (
     <div className="pos-circuit">
@@ -84,7 +85,9 @@ export function CircuitDiagram({
           />
           {ticks.map((nm) => {
             const p = place(nm, 0, 0);
-            return <circle key={nm} cx={p.x} cy={p.y} r={2} className="pos-circuit__tick" />;
+            return (
+              <circle key={nm} cx={p.x} cy={p.y} r={2} className="pos-circuit__tick" />
+            );
           })}
           <line
             x1={place(-1, -4, 0).x}
@@ -107,7 +110,12 @@ export function CircuitDiagram({
             y2={runwayFar.y}
             className="pos-circuit__runway"
           />
-          <circle cx={threshold.x} cy={threshold.y} r={5} className="pos-circuit__threshold" />
+          <circle
+            cx={threshold.x}
+            cy={threshold.y}
+            r={5}
+            className="pos-circuit__threshold"
+          />
 
           {MARKER_IDS.map((id) => {
             const marker = CIRCUIT_MARKERS[id];
@@ -121,7 +129,9 @@ export function CircuitDiagram({
                   cy={p.y}
                   r={selected ? 7 : 5}
                   className={
-                    selected ? 'pos-circuit__marker-dot pos-circuit__marker-dot--selected' : 'pos-circuit__marker-dot'
+                    selected
+                      ? 'pos-circuit__marker-dot pos-circuit__marker-dot--selected'
+                      : 'pos-circuit__marker-dot'
                   }
                 />
                 <text
@@ -137,21 +147,40 @@ export function CircuitDiagram({
           })}
         </g>
 
-        <g
-          transform={`rotate(${String(windRotation)} ${String(WIND_ANCHOR.x)} ${String(WIND_ANCHOR.y)})`}
-          className="pos-circuit__wind-arrow"
-        >
-          <line x1={WIND_ANCHOR.x} y1={WIND_ANCHOR.y - 22} x2={WIND_ANCHOR.x} y2={WIND_ANCHOR.y + 22} />
-          <polygon
-            points={`${String(WIND_ANCHOR.x - 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x + 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x)},${String(WIND_ANCHOR.y - 24)}`}
-          />
-        </g>
-        <text x={WIND_ANCHOR.x} y={WIND_ANCHOR.y + 40} textAnchor="middle" className="pos-circuit__wind-label">
-          {windDeg}°/{windKt} kt
-        </text>
+        {windRotation !== null && windDeg !== null && windKt !== null && (
+          <>
+            <g
+              transform={`rotate(${String(windRotation)} ${String(WIND_ANCHOR.x)} ${String(WIND_ANCHOR.y)})`}
+              className="pos-circuit__wind-arrow"
+            >
+              <line
+                x1={WIND_ANCHOR.x}
+                y1={WIND_ANCHOR.y - 22}
+                x2={WIND_ANCHOR.x}
+                y2={WIND_ANCHOR.y + 22}
+              />
+              <polygon
+                points={`${String(WIND_ANCHOR.x - 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x + 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x)},${String(WIND_ANCHOR.y - 24)}`}
+              />
+            </g>
+            <text
+              x={WIND_ANCHOR.x}
+              y={WIND_ANCHOR.y + 40}
+              textAnchor="middle"
+              className="pos-circuit__wind-label"
+            >
+              {String(Math.round(windDeg)).padStart(3, '0')}°/{Math.round(windKt)} kt
+            </text>
+          </>
+        )}
 
         <g className="pos-circuit__north">
-          <line x1={NORTH_ANCHOR.x} y1={NORTH_ANCHOR.y} x2={NORTH_ANCHOR.x} y2={NORTH_ANCHOR.y - 24} />
+          <line
+            x1={NORTH_ANCHOR.x}
+            y1={NORTH_ANCHOR.y}
+            x2={NORTH_ANCHOR.x}
+            y2={NORTH_ANCHOR.y - 24}
+          />
           <text x={NORTH_ANCHOR.x} y={NORTH_ANCHOR.y + 14} textAnchor="middle">
             N
           </text>

@@ -1,37 +1,66 @@
 /**
- * Client state for the Position screen "v3" replica — and nothing else.
+ * Client state for the Position screen — and nothing else.
  *
  * This is deliberately a **separate** slice from `positionSlice.ts`. That slice's shape is
  * the server-intent contract three other features read (`features/map`, `features/weather`,
  * `features/profiles`); nothing here should collide with it, or force those consumers to
- * change. Everything the replica's own screen needs — which tab, which marker, which popover
- * is open, the sample-data-driven form fields — lives here instead, registered under
- * `state.positionDesign`.
+ * change. Everything the screen's own chrome needs — which tab, which marker, which popover
+ * is open, the instructor's edits to the configuration — lives here instead, registered
+ * under `state.positionDesign`.
  *
- * Popover open/close state (`screenMenuOpen`, `startAtOpen`, `procedureMenuOpen`) is kept in
- * this slice rather than component `useState` on purpose: `screenMenuOpen` and `startAtOpen`
+ * **Nothing here is navdata.** Runways, stands, procedures, wind and the placement geometry
+ * are server state and live in RTK Query. What this slice stores about them is only the
+ * *identity* of what the instructor picked: a runway ident string, a stand name, a
+ * procedure ident. That is why `RunwayId` is a plain ident and not a closed union — the
+ * closed union belonged to the frozen sample airport, and there is no such thing now.
+ *
+ * The configuration fields are `| null` on purpose: `null` means "whatever the server's
+ * preview resolved", a number or a boolean means "the instructor overrode it". A placement
+ * on a 10 NM final that shipped a hard-coded 60 kt would be the exact bug CLAUDE.md's
+ * "a placement now commands its own speed" note exists to prevent, only from the other
+ * direction.
+ *
+ * Popover open/close state (`screenMenuOpen`, `startAtOpen`, `procedureMenuOpen`,
+ * `airportMenuOpen`) is kept here rather than in component `useState`: several of them
  * close each other when one opens, which is easiest to guarantee from one reducer.
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import type { ParkingKind } from '../../api/models';
+import { DEFAULT_FINAL, type FinalPlacementName } from './finals';
 
 export const DESIGN_TAB_IDS = ['approach', 'sidstar', 'airwork', 'custom'] as const;
 export type DesignTabId = (typeof DESIGN_TAB_IDS)[number];
 
-export const RUNWAY_IDS = ['04R', '22L', '04L', '22R', 'HELI'] as const;
-export type RunwayId = (typeof RUNWAY_IDS)[number];
+/**
+ * A runway **end** ident exactly as navdata publishes it — `"04R"`, `"22L"`, `"18"`.
+ *
+ * An alias rather than a bare `string` so every site that means "a runway end" says so;
+ * it is emphatically not a closed set, because which ends exist is the airport's business.
+ */
+export type RunwayId = string;
+
+/** The parking sidebar's filter: the server's own `ParkingKind`s, plus "everything". */
+export type ParkingFilter = 'all' | ParkingKind;
 
 export const PARKING_FILTERS = [
   'all',
-  'gate-heavy',
-  'gate-medium',
+  'gate',
+  'tie_down',
+  'hangar',
   'misc',
-  'tie-down',
-] as const;
-export type ParkingFilter = (typeof PARKING_FILTERS)[number];
+] as const satisfies readonly ParkingFilter[];
 
-export const PROCEDURE_KINDS = ['sid', 'star', 'apptr', 'final'] as const;
-export type ProcedureKind = (typeof PROCEDURE_KINDS)[number];
+/**
+ * The four procedure chips the screen offers, which are **not** the server's three kinds.
+ *
+ * `sid` and `star` map one-to-one. The other two split the server's `approach` kind on
+ * something the data really does publish: an approach with a named transition is an
+ * approach transition (`apptr`), and one without is the common final route (`final`).
+ * See `procedureFamilyMatches`.
+ */
+export const PROCEDURE_FAMILIES = ['sid', 'star', 'apptr', 'final'] as const;
+export type ProcedureFamily = (typeof PROCEDURE_FAMILIES)[number];
 
 export const AIRWORK_LEVELS = ['FL300', 'FL200', 'FL100', 'FL050'] as const;
 export type AirworkLevel = (typeof AIRWORK_LEVELS)[number];
@@ -52,26 +81,50 @@ export const MARKER_IDS = [
 ] as const;
 export type MarkerId = (typeof MARKER_IDS)[number];
 
-export interface CustomLocationState {
-  altitudeFt: number;
-  headingDeg: number;
-  origin: CustomOrigin;
-  bearingDeg: number;
-  distanceNm: number;
-  latitude: number;
-  longitude: number;
+/** Which procedure the SID & STAR tab has open, and which of its legs is the placement. */
+export interface ProcedureSelection {
+  readonly ident: string;
+  readonly transition: string | null;
+  /** The leg's own sequence number, or `null` before one is picked. */
+  readonly sequence: number | null;
 }
 
+export interface CustomLocationState {
+  /** `null` = fall back to the loaded airport's elevation. */
+  altitudeFt: number | null;
+  /** `null` = fall back to the selected runway's course. */
+  headingDeg: number | null;
+  origin: CustomOrigin;
+  /** `null` = fall back to the loaded airport's own position. */
+  latitude: number | null;
+  longitude: number | null;
+}
+
+/**
+ * The instructor's edits to the configuration the placement will be applied with.
+ *
+ * Every field is `null` until they touch it, and a `null` field is simply not sent — the
+ * preview's own `setup` governs. `altitudeOverride` is the one exception: an altitude is
+ * always resolved by the geometry, so overriding it is an explicit act with its own switch.
+ */
 export interface AircraftConfigState {
-  iasKt: number;
-  pitchDeg: number;
-  gearDown: boolean;
-  flapsOn: boolean;
-  flapsPercent: number;
+  iasKt: number | null;
+  pitchDeg: number | null;
+  gearDown: boolean | null;
+  /** `null` = leave the preview's flap setting alone. */
+  flapsPercent: number | null;
   altitudeOverride: boolean;
   altitudeOverrideFt: number;
 }
 
+/**
+ * The three "sent with the position" switches.
+ *
+ * They **add** to what the placement already carries; they cannot subtract from it. The
+ * server merges an override over the preview's setup field by field with `exclude_none`,
+ * so there is no way to say "unset this" on the wire, and pretending otherwise would put a
+ * lie on screen. Off therefore means "do not add it"; the rail shows the merged result.
+ */
 export interface SendWithPositionState {
   heading: boolean;
   course: boolean;
@@ -81,18 +134,21 @@ export interface SendWithPositionState {
 export interface PositionDesignState {
   /** The header's editable ICAO text field. */
   icaoInput: string;
-  /** What "Load" last committed. */
+  /** What "Load" last committed. Empty before the first load. */
   loadedIcao: string;
   screenMenuOpen: boolean;
   startAtOpen: boolean;
+  airportMenuOpen: boolean;
   parkingFilter: ParkingFilter;
   /** Mutually exclusive with `selectedStand`. */
   selectedRunway: RunwayId | null;
   selectedStand: string | null;
   activeTab: DesignTabId;
   selectedMarker: MarkerId;
-  procedureKind: ProcedureKind;
-  procedureIdent: string;
+  /** Which of the server's seven finals the two final markers place on. */
+  finalPlacement: FinalPlacementName;
+  procedureFamily: ProcedureFamily;
+  procedure: ProcedureSelection | null;
   procedureMenuOpen: boolean;
   airworkLevel: AirworkLevel;
   custom: CustomLocationState;
@@ -100,40 +156,52 @@ export interface PositionDesignState {
   send: SendWithPositionState;
 }
 
+const initialCustom: CustomLocationState = {
+  altitudeFt: null,
+  headingDeg: null,
+  origin: 'coordinates',
+  latitude: null,
+  longitude: null,
+};
+
+const initialConfig: AircraftConfigState = {
+  iasKt: null,
+  pitchDeg: null,
+  gearDown: null,
+  flapsPercent: null,
+  altitudeOverride: false,
+  altitudeOverrideFt: 0,
+};
+
 export const initialPositionDesignState: PositionDesignState = {
-  icaoInput: 'LFMN',
-  loadedIcao: 'LFMN',
+  icaoInput: '',
+  loadedIcao: '',
   screenMenuOpen: false,
   startAtOpen: false,
+  airportMenuOpen: false,
   parkingFilter: 'all',
-  selectedRunway: '04R',
+  selectedRunway: null,
   selectedStand: null,
   activeTab: 'approach',
   selectedMarker: 'final-3nm',
-  procedureKind: 'sid',
-  procedureIdent: 'BADO8A.04B.BADOD',
+  finalPlacement: DEFAULT_FINAL,
+  procedureFamily: 'sid',
+  procedure: null,
   procedureMenuOpen: false,
   airworkLevel: 'FL100',
-  custom: {
-    altitudeFt: 0,
-    headingDeg: 0,
-    origin: 'runway-relative',
-    bearingDeg: 0,
-    distanceNm: 0,
-    latitude: 0,
-    longitude: 0,
-  },
-  config: {
-    iasKt: 60,
-    pitchDeg: 0,
-    gearDown: false,
-    flapsOn: true,
-    flapsPercent: 25,
-    altitudeOverride: false,
-    altitudeOverrideFt: 0,
-  },
+  custom: initialCustom,
+  config: initialConfig,
   send: { heading: true, course: true, ilsFrequency: true },
 };
+
+/** Everything that is only meaningful at one airport, cleared when another is loaded. */
+function clearAirportScopedState(state: PositionDesignState) {
+  state.selectedRunway = null;
+  state.selectedStand = null;
+  state.procedure = null;
+  state.custom = initialCustom;
+  state.config = initialConfig;
+}
 
 const positionDesignSlice = createSlice({
   name: 'positionDesign',
@@ -142,22 +210,41 @@ const positionDesignSlice = createSlice({
     icaoTyped(state, action: PayloadAction<string>) {
       state.icaoInput = action.payload;
     },
-    /** Only updates `loadedIcao` — mirroring `airportSelected` onto `positionSlice` is the
+    /**
+     * Commit the typed ICAO. Mirroring `airportSelected` onto `positionSlice` is the
      * calling component's job, so the same-ICAO no-op guard lives at the one place that
-     * knows about both slices. */
+     * knows about both slices.
+     */
     airportLoaded(state, action: PayloadAction<string>) {
-      state.loadedIcao = action.payload.toUpperCase();
+      const icao = action.payload.toUpperCase();
+      state.icaoInput = icao;
+      state.airportMenuOpen = false;
+      if (icao === state.loadedIcao) {
+        return;
+      }
+      state.loadedIcao = icao;
+      clearAirportScopedState(state);
+    },
+    airportMenuOpened(state) {
+      state.airportMenuOpen = true;
+      state.screenMenuOpen = false;
+      state.startAtOpen = false;
+    },
+    airportMenuClosed(state) {
+      state.airportMenuOpen = false;
     },
     screenMenuToggled(state) {
       state.screenMenuOpen = !state.screenMenuOpen;
       if (state.screenMenuOpen) {
         state.startAtOpen = false;
+        state.airportMenuOpen = false;
       }
     },
     startAtToggled(state) {
       state.startAtOpen = !state.startAtOpen;
       if (state.startAtOpen) {
         state.screenMenuOpen = false;
+        state.airportMenuOpen = false;
       }
     },
     parkingFilterSelected(state, action: PayloadAction<ParkingFilter>) {
@@ -177,12 +264,26 @@ const positionDesignSlice = createSlice({
     markerSelected(state, action: PayloadAction<MarkerId>) {
       state.selectedMarker = action.payload;
     },
-    procedureKindSelected(state, action: PayloadAction<ProcedureKind>) {
-      state.procedureKind = action.payload;
+    finalPlacementSelected(state, action: PayloadAction<FinalPlacementName>) {
+      state.finalPlacement = action.payload;
     },
-    procedureIdentSelected(state, action: PayloadAction<string>) {
-      state.procedureIdent = action.payload;
+    procedureFamilySelected(state, action: PayloadAction<ProcedureFamily>) {
+      state.procedureFamily = action.payload;
+      state.procedure = null;
+    },
+    /** Open a procedure. Its leg is not chosen yet — `sequence` starts `null`. */
+    procedureSelected(
+      state,
+      action: PayloadAction<{ ident: string; transition: string | null }>,
+    ) {
+      state.procedure = { ...action.payload, sequence: null };
       state.procedureMenuOpen = false;
+    },
+    /** Pick the leg to place on. Only legs the server marks positionable get here. */
+    procedureLegSelected(state, action: PayloadAction<number>) {
+      if (state.procedure !== null) {
+        state.procedure = { ...state.procedure, sequence: action.payload };
+      }
     },
     procedureMenuToggled(state) {
       state.procedureMenuOpen = !state.procedureMenuOpen;
@@ -196,20 +297,22 @@ const positionDesignSlice = createSlice({
     /**
      * `field` covers every key of `custom`, including `origin` — but `origin` is switched
      * by `customOriginSelected`, never by a numeric field edit, so this reducer never
-     * actually receives it. `Object.assign` (the same idiom `setupOverridden` and
-     * `overrideSet` use) writes the one field without needing a heterogeneous indexed
-     * assignment to type-check.
+     * actually receives it. `Object.assign` (the same idiom `setupOverridden` uses) writes
+     * the one field without needing a heterogeneous indexed assignment to type-check.
      */
     customFieldChanged(
       state,
-      action: PayloadAction<{ field: keyof CustomLocationState; value: number }>,
+      action: PayloadAction<{ field: keyof CustomLocationState; value: number | null }>,
     ) {
       const { field, value } = action.payload;
       Object.assign(state.custom, { [field]: value });
     },
     configChanged(
       state,
-      action: PayloadAction<{ field: keyof AircraftConfigState; value: number | boolean }>,
+      action: PayloadAction<{
+        field: keyof AircraftConfigState;
+        value: number | boolean | null;
+      }>,
     ) {
       const { field, value } = action.payload;
       Object.assign(state.config, { [field]: value });
@@ -217,8 +320,13 @@ const positionDesignSlice = createSlice({
     sendToggled(state, action: PayloadAction<keyof SendWithPositionState>) {
       state.send[action.payload] = !state.send[action.payload];
     },
-    situationReset() {
-      return initialPositionDesignState;
+    /** "Reset situation": back to a blank screen, keeping the loaded airport. */
+    situationReset(state) {
+      return {
+        ...initialPositionDesignState,
+        icaoInput: state.icaoInput,
+        loadedIcao: state.loadedIcao,
+      };
     },
   },
 });
@@ -226,6 +334,8 @@ const positionDesignSlice = createSlice({
 export const {
   icaoTyped,
   airportLoaded,
+  airportMenuOpened,
+  airportMenuClosed,
   screenMenuToggled,
   startAtToggled,
   parkingFilterSelected,
@@ -233,8 +343,10 @@ export const {
   startStandSelected,
   designTabSelected,
   markerSelected,
-  procedureKindSelected,
-  procedureIdentSelected,
+  finalPlacementSelected,
+  procedureFamilySelected,
+  procedureSelected,
+  procedureLegSelected,
   procedureMenuToggled,
   airworkLevelSelected,
   customOriginSelected,
