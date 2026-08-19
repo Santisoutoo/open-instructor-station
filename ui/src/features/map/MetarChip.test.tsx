@@ -64,6 +64,7 @@ function stubApi(
     capabilities?: Capabilities;
     capabilitiesStatus?: number;
     weatherStatus?: number;
+    weather?: WeatherState;
   } = {},
 ) {
   calls = [];
@@ -82,7 +83,7 @@ function stubApi(
       if (url.includes('/weather')) {
         const status = options.weatherStatus ?? 200;
         return status === 200
-          ? json(COMMANDED)
+          ? json(options.weather ?? COMMANDED)
           : json({ detail: 'Unavailable' }, status);
       }
       return json({});
@@ -90,11 +91,11 @@ function stubApi(
   );
 }
 
-function renderChip() {
+function renderChip(fieldElevationFt: number | null = null) {
   const store = setupStore();
   const { container } = render(
     <Provider store={store}>
-      <MetarChip />
+      <MetarChip fieldElevationFt={fieldElevationFt} />
     </Provider>,
   );
   return { container, store };
@@ -113,6 +114,28 @@ describe('MetarChip', () => {
     expect(screen.getByRole('note', { name: 'Commanded weather' })).toHaveTextContent(
       'commanded weather — not a live observation',
     );
+  });
+
+  it('renders cloud bases AGL when the reference airport elevation is passed', async () => {
+    stubApi({
+      weather: {
+        ...COMMANDED,
+        cloud_layers: [
+          {
+            base_ft: 2500,
+            tops_ft: 5000,
+            coverage_ratio: 0.75,
+            cloud_type: 'stratus',
+          },
+        ],
+      },
+    });
+    renderChip(1500);
+
+    // 2500 ft MSL over a 1500 ft field reads as a 1000 ft ceiling.
+    expect(
+      await screen.findByText('27005KT 9999 BKN010 19/07 Q1016'),
+    ).toBeInTheDocument();
   });
 
   it('renders a DISABLED chip with the reason without can_set_weather, and never asks for the weather', async () => {
