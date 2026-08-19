@@ -9,7 +9,7 @@
  * as in `features/telemetry/format.ts` — identical readouts on tablet, desktop and CI.
  */
 
-import type { TrafficContact, TrafficKind } from './types.mock';
+import type { TrafficContact, TrafficKind } from '../../api/models';
 
 const INTEGER = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
 
@@ -26,6 +26,12 @@ interface ContactListProps {
   disabled: boolean;
   /** True while the `/ws/traffic` stream is delivering frames. */
   connected: boolean;
+  /**
+   * The adapter's advertised slot count, or `null` when unknown or unbounded. Shown
+   * beside the count because the limit is enforced as a transient 409 (design D6) — the
+   * instructor gets to see it coming rather than to discover it by being refused.
+   */
+  capacity: number | null;
   onDespawn: (trafficId: string) => void;
   onClearAll: () => void;
 }
@@ -34,6 +40,7 @@ export function ContactList({
   contacts,
   disabled,
   connected,
+  capacity,
   onDespawn,
   onClearAll,
 }: ContactListProps) {
@@ -42,7 +49,11 @@ export function ContactList({
       <div className="traffic-contacts__head">
         <span className="traffic-contacts__title">
           Active traffic
-          <span className="traffic-contacts__count">{contacts.length}</span>
+          <span className="traffic-contacts__count">
+            {capacity === null
+              ? contacts.length
+              : `${String(contacts.length)} / ${String(capacity)}`}
+          </span>
         </span>
         <button
           type="button"

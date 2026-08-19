@@ -4,13 +4,14 @@
  *
  * The distances are a repeatable list defaulting to `APPROACH_SEQUENCE_DEFAULT_
  * DISTANCES_NM` (12, 8, 4 — design §6.1), each row removable, capped at the request
- * model's own `max_length=8`. As with the incursion form, the runway picker reuse
- * waits for the wiring wave; plain ICAO + ident inputs carry the same fields.
+ * model's own `max_length=8`. As with the incursion form, plain ICAO + ident inputs name
+ * the runway while the Position Manager's selector is being rewritten elsewhere; they
+ * carry exactly the fields the request does.
  */
 
 import { useRef, useState } from 'react';
 import { DEFAULT_DISTANCES_NM, MAX_DISTANCES } from './presets';
-import type { ApproachSequenceSpawnRequest, TrafficApproachCategory } from './types.mock';
+import type { ApproachSequenceSpawnRequest, TrafficApproachCategory } from '../../api/models';
 
 const CATEGORIES: TrafficApproachCategory[] = ['A', 'B', 'C', 'D', 'E'];
 

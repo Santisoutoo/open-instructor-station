@@ -8,7 +8,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { ContactList } from './ContactList';
-import type { TrafficContact } from './types.mock';
+import type { TrafficContact } from '../../api/models';
 
 function contact(overrides: Partial<TrafficContact> = {}): TrafficContact {
   return {
@@ -32,6 +32,7 @@ interface Overrides {
   contacts?: TrafficContact[];
   disabled?: boolean;
   connected?: boolean;
+  capacity?: number | null;
 }
 
 function renderList(overrides: Overrides = {}) {
@@ -42,6 +43,7 @@ function renderList(overrides: Overrides = {}) {
       contacts={overrides.contacts ?? []}
       disabled={overrides.disabled ?? false}
       connected={overrides.connected ?? true}
+      capacity={overrides.capacity ?? null}
       onDespawn={onDespawn}
       onClearAll={onClearAll}
     />,
@@ -113,5 +115,17 @@ describe('ContactList', () => {
     renderList({ connected: false });
 
     expect(screen.queryByText(/may be stale/i)).toBeNull();
+  });
+
+  it('shows the count against the adapter capacity when one is advertised', () => {
+    renderList({ contacts: [contact()], capacity: 19 });
+
+    expect(screen.getByText('1 / 19')).toBeInTheDocument();
+  });
+
+  it('shows a bare count when the adapter advertises no capacity', () => {
+    renderList({ contacts: [contact()], capacity: null });
+
+    expect(screen.getByText('1')).toBeInTheDocument();
   });
 });

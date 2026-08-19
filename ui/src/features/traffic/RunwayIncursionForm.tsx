@@ -2,14 +2,17 @@
  * Spawn a runway incursion: a vehicle or aircraft crossing the runway, timed against
  * the user's own closing speed (design §7.1).
  *
- * The design asks this form to reuse the Position Manager's airport/runway selector;
- * that reuse needs the live navdata endpoints and belongs to the wiring wave, so for
- * the pure-logic slice the runway is named by plain ICAO + ident inputs — the exact
- * fields the request carries. Every field of the body is sent explicitly (design §8.6).
+ * The design asks this form to reuse the Position Manager's airport/runway selector.
+ * That component is being rewritten on a concurrent branch, so the runway is named here
+ * by plain ICAO + ident inputs — the exact two fields the request carries, and the exact
+ * two the server resolves against the navdata index (a 404 with the runway named comes
+ * back if it does not resolve). Swapping the inputs for the selector is a one-component
+ * change once that branch lands; it is not a change to what is sent.
+ * Every field of the body is sent explicitly (design §8.6).
  */
 
 import { useState } from 'react';
-import type { RunwayIncursionSpawnRequest, TrafficKind } from './types.mock';
+import type { RunwayIncursionSpawnRequest, TrafficKind } from '../../api/models';
 
 const KINDS: TrafficKind[] = ['ground_vehicle', 'aircraft'];
 

@@ -4,10 +4,12 @@
  * wants component files to export components).
  *
  * The numbers restate `core/traffic.py`'s constants as the design fixes them
- * (docs/designs/ai-traffic.md §3.3, §6.1) and must move with them at wiring time.
+ * (docs/designs/ai-traffic.md §3.3, §6.1); the request *shapes* are generated from the
+ * OpenAPI schema, but these display sentences and defaults are not, so they must move
+ * with `core/traffic.py`.
  */
 
-import type { TcasSeverity } from './types.mock';
+import type { TcasSeverity } from '../../api/models';
 
 /**
  * What each TCAS preset does, in plain language (design §7.1) — the seconds and feet

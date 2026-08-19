@@ -8,6 +8,7 @@ import { ThemeToggle } from './components/ThemeToggle';
 import { TABS } from './components/tabs';
 import { useMockTelemetryFeed } from './features/telemetry/useMockTelemetryFeed';
 import { useTelemetrySocket } from './features/telemetry/useTelemetrySocket';
+import { useTrafficSocket } from './features/traffic/useTrafficSocket';
 import { useAppDispatch, useAppSelector } from './store';
 import { drawerToggled, type TabId } from './store/uiSlice';
 
@@ -33,6 +34,10 @@ export default function App() {
   // beside it and stays inert whenever the real link is up.
   useTelemetrySocket();
   useMockTelemetryFeed();
+  // Traffic is a second app-wide stream, not a panel-scoped one: the Instructor Map is
+  // its primary consumer and lives on a different tab from the Traffic panel. Never
+  // gated — an adapter with no bridge streams an empty sky rather than an error.
+  useTrafficSocket();
 
   const dispatch = useAppDispatch();
   const activeTab = useAppSelector((state) => state.ui.activeTab);

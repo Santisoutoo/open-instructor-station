@@ -10,7 +10,7 @@
 
 import { useRef, useState } from 'react';
 import { MAX_ROUTE_POINTS, MIN_ROUTE_POINTS } from './presets';
-import type { TaxiTrafficSpawnRequest, TrafficKind } from './types.mock';
+import type { TaxiTrafficSpawnRequest, TrafficKind } from '../../api/models';
 
 const KINDS: TrafficKind[] = ['aircraft', 'ground_vehicle'];
 

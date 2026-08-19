@@ -7,12 +7,12 @@
  * frame is kept on screen and the panel labels it stale rather than pretending an empty
  * sky. `selectedShape` is client-only: which spawn form tab is open.
  *
- * The WebSocket wiring itself lands with the RTK Query wave (design Track C, second
- * slice); until then nothing dispatches `trafficFrameReceived` outside the tests.
+ * `useTrafficSocket` is what dispatches into it; the writes themselves live in
+ * `trafficApi.ts`, because server state belongs to RTK Query and never to a slice.
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { TrafficContact, TrafficScenarioShape } from './types.mock';
+import type { TrafficContact, TrafficScenarioShape } from '../../api/models';
 
 export interface TrafficState {
   /** Replaced wholesale on every `/ws/traffic` frame. */

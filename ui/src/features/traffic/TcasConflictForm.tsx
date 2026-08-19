@@ -8,13 +8,13 @@
  * the student before they tap Spawn. Every field of the request body is sent explicitly:
  * no picker silently defaults a field (design §8.6).
  *
- * Emits the request through `onSpawn`; the RTK Query mutation arrives with the wiring
- * wave.
+ * Emits the request through `onSpawn`, which `TrafficPanel` hands to the `spawnTraffic`
+ * mutation — the form itself knows nothing about HTTP.
  */
 
 import { useState } from 'react';
 import { SEVERITY_LABELS, SEVERITY_SENTENCES } from './presets';
-import type { TcasConflictSpawnRequest, TcasSeverity, TrafficKind } from './types.mock';
+import type { TcasConflictSpawnRequest, TcasSeverity, TrafficKind } from '../../api/models';
 
 const SEVERITIES: TcasSeverity[] = ['head_on_ra', 'crossing_ra', 'ta_only'];
 const KINDS: TrafficKind[] = ['aircraft', 'ground_vehicle', 'bird'];

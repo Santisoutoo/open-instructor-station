@@ -12,7 +12,7 @@ import reducer, {
   trafficFrameReceived,
   trafficStreamDisconnected,
 } from './trafficSlice';
-import type { TrafficContact } from './types.mock';
+import type { TrafficContact } from '../../api/models';
 
 function contact(overrides: Partial<TrafficContact> = {}): TrafficContact {
   return {
