@@ -9,11 +9,7 @@
 
 import { useAppDispatch, useAppSelector } from '../../store';
 import { FactRow } from './FactRow';
-import {
-  AIRWORK_LEVEL_FEET,
-  AIRWORK_MINIMUM_IAS_KT,
-  AIRWORK_TICK_WIDTH_PX,
-} from './airwork';
+import { AIRWORK_LEVEL_FEET, AIRWORK_TICK_WIDTH_PX } from './airwork';
 import {
   formatHeadingTrue,
   formatLatitude,
@@ -21,6 +17,7 @@ import {
   formatSpeedKt,
 } from './format';
 import { AIRWORK_LEVELS, airworkLevelSelected } from './positionDesignSlice';
+import { sustainableIasKt } from './speed';
 import { useAirport, useSelectedRunway, useStagedPlacement } from './usePositionData';
 
 export function AirworkTab() {
@@ -88,7 +85,9 @@ export function AirworkTab() {
         <FactRow
           label="IAS"
           value={iasKt === null ? 'not resolved' : formatSpeedKt(iasKt)}
-          caution={iasKt !== null && iasKt < AIRWORK_MINIMUM_IAS_KT}
+          caution={
+            iasKt !== null && iasKt < sustainableIasKt(AIRWORK_LEVEL_FEET[airworkLevel])
+          }
         />
         <FactRow
           label="Heading"

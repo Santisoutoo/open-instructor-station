@@ -28,6 +28,3 @@ export const AIRWORK_TICK_WIDTH_PX: Record<AirworkLevel, number> = {
   FL100: 30,
   FL050: 18,
 };
-
-/** Below this, most training aircraft cannot hold the level — the rail says so. */
-export const AIRWORK_MINIMUM_IAS_KT = 150;

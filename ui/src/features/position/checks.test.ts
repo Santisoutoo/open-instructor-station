@@ -24,7 +24,8 @@ function inputs(overrides: Partial<CheckInputs> = {}): CheckInputs {
     finalPlacement: 'final_3nm',
     gearDown: true,
     iasKt: 121,
-    airworkLevel: 'FL100',
+    altitudeFt: 968,
+    groundElevationFt: 12,
     altitudeOverride: false,
     altitudeOverrideFt: 0,
     ...overrides,
@@ -115,20 +116,59 @@ describe('rule 3 — ILS switch on, no ILS on the selected runway', () => {
   });
 });
 
-describe('rule 4 — low IAS on the Airwork tab', () => {
-  it('fires below 150 kt', () => {
-    expect(checks(inputs({ activeTab: 'airwork', iasKt: 60 }))).toEqual([
+describe('rule 4 — an airborne placement below a sustainable speed', () => {
+  it('fires at a flight level below 150 kt, whatever the tab', () => {
+    expect(
+      checks(inputs({ activeTab: 'airwork', altitudeFt: 10000, iasKt: 60 })),
+    ).toEqual([
       {
         dot: 'caution',
-        text: '60 kt IAS at FL100',
-        note: 'Below a sustainable speed at that level for most aircraft',
+        text: '60 kt IAS at 10,000 ft',
+        note: 'Below a sustainable speed at that altitude for most aircraft',
       },
     ]);
   });
 
-  it('does not fire at or above 150 kt, nor on another tab', () => {
-    expect(checks(inputs({ activeTab: 'airwork', iasKt: 200 }))).toEqual([]);
-    expect(checks(inputs({ activeTab: 'approach', iasKt: 60 }))).toEqual([]);
+  it('fires on the Custom tab too — a coordinate resolves to 0 kt unless one is stated', () => {
+    // core.geodesy.coordinate_placement defaults to GROUND_IAS_KT, so a Custom placement at
+    // 5,000 ft arrives stationary. The old rule was scoped to the Airwork tab and said
+    // nothing about this one.
+    expect(
+      checks(inputs({ activeTab: 'custom', altitudeFt: 5000, iasKt: 0 }))[0],
+    ).toEqual({
+      dot: 'caution',
+      text: '0 kt IAS at 5,000 ft',
+      note: 'Below a sustainable speed at that altitude for most aircraft',
+    });
+  });
+
+  it('stays quiet on a stabilised final at approach-category speed', () => {
+    // 121 kt at 968 ft is the fixture's 3 NM final: correct, and 150 kt would be wrong.
+    expect(checks(inputs())).toEqual([]);
+  });
+
+  it('does not fire on the ground, at any speed', () => {
+    expect(
+      checks(
+        inputs({ marker: 'takeoff', altitudeFt: 12, groundElevationFt: 12, iasKt: 0 }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('does not fire at or above the sustainable speed', () => {
+    expect(checks(inputs({ altitudeFt: 10000, iasKt: 200 }))).toEqual([]);
+    expect(checks(inputs({ altitudeFt: 5000, iasKt: 90 }))).toEqual([]);
+  });
+
+  it('treats an unknown field elevation as sea level rather than guessing', () => {
+    // A map hand-off carries no airport: 0 ft at an unknown field is a ground placement,
+    // 5,000 ft is not.
+    expect(checks(inputs({ altitudeFt: 0, groundElevationFt: null, iasKt: 0 }))).toEqual(
+      [],
+    );
+    expect(
+      checks(inputs({ altitudeFt: 5000, groundElevationFt: null, iasKt: 0 })),
+    ).toHaveLength(1);
   });
 });
 
@@ -168,6 +208,8 @@ describe('the whole ordered list', () => {
           gearDown: false,
           marker: 'base-right',
           activeTab: 'approach',
+          altitudeFt: 10000,
+          iasKt: 60,
           altitudeOverride: true,
           altitudeOverrideFt: 2000,
         }),
@@ -176,6 +218,7 @@ describe('the whole ordered list', () => {
       'Tailwind 7 kt on 22L',
       'Gear up 6.0 NM from the threshold',
       'No ILS on 22L',
+      '60 kt IAS at 10,000 ft',
       'Altitude override active',
     ]);
   });

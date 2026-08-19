@@ -15,6 +15,7 @@ import { checks } from './checks';
 import { errorMessage } from './errors';
 import { formatMetar } from '../map/metar';
 import {
+  useGroundElevationFt,
   useIls,
   useLoadedIcao,
   useSelectedRunway,
@@ -32,6 +33,7 @@ export function ApplyRail() {
   const { wind, weather } = useWeather();
   const { preview, merged, setup, isError, error, isFetching } = useStagedPlacement();
   const { data: status } = useGetNavdataStatusQuery();
+  const groundElevationFt = useGroundElevationFt();
 
   const rows = applyRows({ preview, merged, overridden: setup.overridden });
   const checkList = checks({
@@ -46,7 +48,8 @@ export function ApplyRail() {
     finalPlacement: design.finalPlacement,
     gearDown: merged.gear_down ?? null,
     iasKt: merged.ias_kt ?? preview?.placement.ias_kt ?? null,
-    airworkLevel: design.airworkLevel,
+    altitudeFt: merged.altitude_ft ?? preview?.placement.position.altitude_ft ?? null,
+    groundElevationFt,
     altitudeOverride: design.config.altitudeOverride,
     altitudeOverrideFt: design.config.altitudeOverrideFt,
   });

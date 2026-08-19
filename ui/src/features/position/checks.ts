@@ -13,11 +13,11 @@
  * Pure — every input arrives as an argument, so this is testable without a store or a fetch.
  */
 
-import { AIRWORK_MINIMUM_IAS_KT } from './airwork';
-import { formatAltitudeFt, formatDistanceNm } from './format';
+import { formatAltitudeFt, formatDistanceNm, formatSpeedKt } from './format';
 import type { FinalPlacementName } from './finals';
 import { markerDistanceNm } from './markers';
-import type { AirworkLevel, DesignTabId, MarkerId } from './positionDesignSlice';
+import type { DesignTabId, MarkerId } from './positionDesignSlice';
+import { isAirborne, sustainableIasKt } from './speed';
 
 export type CheckDot = 'caution' | 'info' | 'accent';
 
@@ -56,7 +56,10 @@ export interface CheckInputs {
   readonly gearDown: boolean | null;
   /** The speed as it will actually be applied. */
   readonly iasKt: number | null;
-  readonly airworkLevel: AirworkLevel;
+  /** The altitude as it will actually be applied, feet MSL. */
+  readonly altitudeFt: number | null;
+  /** Field elevation under the placement, feet MSL, when an airport is loaded. */
+  readonly groundElevationFt: number | null;
   readonly altitudeOverride: boolean;
   readonly altitudeOverrideFt: number;
 }
@@ -105,16 +108,22 @@ export function checks(inputs: CheckInputs): readonly Check[] {
     });
   }
 
-  // 4. Low IAS on the Airwork tab.
+  // 4. An airborne placement below a sustainable speed — on any tab.
+  //
+  // Not tab-scoped, and it must not be: the two placements that resolve to 0 kt are the two
+  // *coordinate* ones, and the Custom location tab sends one of those as readily as Airwork
+  // does. A final or a circuit leg arrives with the speed `Placement.to_setup()` worked out
+  // from the aircraft's approach category, so this stays quiet on them.
   if (
-    inputs.activeTab === 'airwork' &&
     inputs.iasKt !== null &&
-    inputs.iasKt < AIRWORK_MINIMUM_IAS_KT
+    inputs.altitudeFt !== null &&
+    isAirborne(inputs) &&
+    inputs.iasKt < sustainableIasKt(inputs.altitudeFt)
   ) {
     result.push({
       dot: 'caution',
-      text: `${String(Math.round(inputs.iasKt))} kt IAS at ${inputs.airworkLevel}`,
-      note: 'Below a sustainable speed at that level for most aircraft',
+      text: `${formatSpeedKt(inputs.iasKt)} IAS at ${formatAltitudeFt(inputs.altitudeFt)}`,
+      note: 'Below a sustainable speed at that altitude for most aircraft',
     });
   }
 

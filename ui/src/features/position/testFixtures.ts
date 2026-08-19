@@ -166,6 +166,34 @@ export const PREVIEW: PlacementPreview = {
   notes: ['Altitude from a 3.0° glidepath, 3.0 NM from the threshold.'],
 };
 
+/**
+ * What a coordinate placement really comes back as when the caller states no speed.
+ *
+ * `core.geodesy.coordinate_placement` defaults to `GROUND_IAS_KT` — 0 kt, profile
+ * `"ground"` — whatever altitude it is handed, so FL100 overhead the field resolves
+ * stationary. This is not a contrived fixture: it is what both of this screen's coordinate
+ * tabs get today, and it is the placement the commit gate exists to refuse.
+ */
+export const AIRBORNE_PREVIEW: PlacementPreview = {
+  request: {
+    type: 'coordinate',
+    position: { latitude: 43.6584, longitude: 7.2159, altitude_ft: 10000 },
+    heading_deg: 40,
+  },
+  placement: {
+    position: { latitude: 43.6584, longitude: 7.2159, altitude_ft: 10000 },
+    heading_deg: 40,
+    ias_kt: 0,
+    label: 'Coordinate 43.6584 / 7.2159',
+    profile: 'ground',
+    ils: null,
+    glideslope_deg: null,
+  },
+  setup: { altitude_ft: 10000, heading_deg: 40, ias_kt: 0 },
+  schematic: { points: [] },
+  notes: ['No speed was requested, so the placement is stationary.'],
+};
+
 export const APPLY_RESULT: PlacementResult = {
   placement: PREVIEW.placement,
   applied: PREVIEW.setup,
