@@ -1,859 +1,1116 @@
 /*
- * Position Manager styles.
- *
- * A file of its own rather than more of `index.css`, because CLAUDE.md asks that adding a
- * manager not require touching the others — and because this surface is denser than the
- * rest of the app on purpose. It is an operator panel, not a settings page: identifiers
- * are monospaced, every number is tabular so a changing altitude does not shuffle its
- * neighbours, and rows are tight. Touch targets still stay at 44 px where density would
- * argue otherwise; the tablet wins that argument.
- *
- * Only the shell layout lives in `index.css`. Everything below is scoped to this panel.
+ * Position screen v3 replica — every rule scoped under `.pos`, per the design doc. This is
+ * a from-scratch visual system, not a reuse of the app-wide tokens in `index.css`: its own
+ * colour tokens, its own two typefaces (Schibsted Grotesk for labels/prose, Spline Sans
+ * Mono for every aviation value), its own focus ring colour. Dark is the default; the light
+ * variant reads `[data-theme='light']` off `<html>`, which `uiSync` already maintains.
  */
 
-.mono {
-  font-family: var(--font-mono);
+.pos {
+  --pos-bg: oklch(0.155 0.012 250);
+  --pos-panel: oklch(0.19 0.013 250);
+  --pos-rail: oklch(0.215 0.014 250);
+  --pos-line: oklch(0.31 0.012 250);
+  --pos-hair: oklch(0.26 0.012 250);
+  --pos-t1: oklch(0.97 0.005 250);
+  --pos-t2: oklch(0.76 0.008 250);
+  --pos-t3: oklch(0.58 0.010 250);
+  --pos-hover: oklch(0.25 0.013 250);
+  --pos-accent: oklch(0.72 0.16 145);
+  --pos-on-accent: oklch(0.17 0.03 145);
+  --pos-caution: oklch(0.80 0.13 78);
+  --pos-alert: oklch(0.68 0.17 25);
+  --pos-focus: var(--pos-accent);
+
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--pos-bg);
+  color: var(--pos-t1);
+  font-family: 'Schibsted Grotesk', 'Segoe UI', system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+[data-theme='light'] .pos {
+  --pos-bg: oklch(0.96 0.004 250);
+  --pos-panel: oklch(0.995 0.002 250);
+  --pos-rail: oklch(0.975 0.003 250);
+  --pos-line: oklch(0.84 0.006 250);
+  --pos-hair: oklch(0.90 0.005 250);
+  --pos-t1: oklch(0.22 0.012 250);
+  --pos-t2: oklch(0.38 0.012 250);
+  --pos-t3: oklch(0.53 0.012 250);
+  --pos-hover: oklch(0.94 0.005 250);
+  --pos-accent: oklch(0.50 0.13 145);
+  --pos-on-accent: oklch(0.99 0.005 145);
+  --pos-caution: oklch(0.56 0.14 65);
+  --pos-alert: oklch(0.50 0.18 25);
+}
+
+.pos-mono {
+  font-family: 'Spline Sans Mono', 'Cascadia Mono', Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
 
-/*
- * Status as a 6 px dot, never a pill. The dot carries the state and the text beside it
- * carries the label; a badge would add a second box to read at every row.
- */
-.dot {
+.pos-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.pos *:focus-visible {
+  outline: 2px solid var(--pos-focus);
+  outline-offset: 2px;
+}
+
+.pos-textaction {
+  min-height: 44px;
+  padding: 0 0.5rem;
+  background: transparent;
+  border: 0;
+  color: var(--pos-t2);
+  font: inherit;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pos-textaction:hover {
+  color: var(--pos-t1);
+}
+
+.pos-textaction--danger-on-hover:hover {
+  color: var(--pos-alert);
+}
+
+.pos-tag {
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  border: 1px solid var(--pos-line);
+  color: var(--pos-t3);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.pos-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--text-dim);
+  background: var(--pos-t3);
   flex: none;
 }
 
-.dot--info {
-  background: var(--accent);
+.pos-dot--caution {
+  background: var(--pos-caution);
 }
 
-.panel--position {
+.pos-dot--info {
+  background: var(--pos-accent);
+  opacity: 0.7;
+}
+
+.pos-dot--accent {
+  background: var(--pos-accent);
+}
+
+/* ---------------------------------------------------------------- header */
+
+.pos-header {
+  flex: none;
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 0.75rem;
-}
-
-.panel__head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.panel--position h2 {
-  margin-bottom: 0;
-}
-
-.panel__badge {
-  font-size: 0.72rem;
-  color: var(--text-dim);
-}
-
-/* ------------------------------------------------------------ navdata gate */
-
-.navdata-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  padding: 1rem;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.navdata-card__reason {
-  margin: 0;
-  color: var(--text-dim);
-}
-
-.navdata-card__bar {
-  height: 6px;
-  background: var(--bg);
-  border-radius: 999px;
-  overflow: hidden;
-}
-
-.navdata-card__bar span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-.navdata-card__build {
-  align-self: flex-start;
-  min-height: 44px;
+  height: 64px;
   padding: 0 1rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: var(--pos-panel);
+  border-bottom: 1px solid var(--pos-hair);
+  position: relative;
+}
+
+.pos-header__menu-trigger {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  border: 1px solid var(--pos-line);
   border-radius: 8px;
+  color: var(--pos-t1);
   font-weight: 600;
   cursor: pointer;
 }
 
-/* --------------------------------------------------------- airport search */
-
-.airport-search {
-  display: flex;
-  flex-direction: column;
-  gap: 0.4rem;
-}
-
-.airport-search__label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-/* The shortcut is shown, not folklore the instructor has to be told about. */
-.airport-search__shortcut {
-  padding: 0.05rem 0.35rem;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  font-size: 0.68rem;
-  letter-spacing: 0;
-}
-
-.airport-search__input {
-  min-height: 44px;
-  padding: 0 0.75rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 1rem;
-}
-
-.airport-search__results {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 260px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.airport-search__result {
+.pos-header__airport {
   display: flex;
   align-items: center;
   gap: 0.6rem;
-  width: 100%;
+}
+
+.pos-header__icao {
+  width: 4.5em;
   min-height: 44px;
-  padding: 0 0.75rem;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 80ms ease;
+  padding: 0 0.5rem;
+  background: var(--pos-bg);
+  border: 1px solid var(--pos-line);
+  border-radius: 8px;
+  color: var(--pos-t1);
+  font-size: 1.5rem;
+  font-weight: 600;
+  text-transform: uppercase;
 }
 
-.airport-search__result:hover {
-  background: var(--bg-raised);
-}
-
-.airport-search__result-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.pos-header__airport-name {
+  color: var(--pos-t2);
   white-space: nowrap;
 }
 
-.airport-search__result-meta {
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
+.pos-header__load {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--pos-accent);
+  border: 0;
+  border-radius: 8px;
+  color: var(--pos-on-accent);
+  font-weight: 700;
+  cursor: pointer;
 }
 
-.airport-search__empty {
+.pos-header__startat-trigger {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  border: 1px solid var(--pos-line);
+  border-radius: 8px;
+  color: var(--pos-t1);
+  cursor: pointer;
+}
+
+.pos-header__spacer {
+  flex: 1;
+}
+
+.pos-header__demo {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  background: var(--pos-caution);
+  color: var(--pos-on-accent);
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.pos-header__connection {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--pos-t2);
+  font-size: 0.82rem;
+}
+
+.pos-header__connection-dot--blink {
+  animation: pos-blink 1.4s ease-in-out infinite;
+}
+
+@keyframes pos-blink {
+  50% {
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pos-header__connection-dot--blink {
+    animation: none;
+  }
+}
+
+/* --------------------------------------------------------------- popovers */
+
+.pos-popover {
+  position: absolute;
+  top: 68px;
+  z-index: 30;
+  background: var(--pos-panel);
+  border: 1px solid var(--pos-line);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
   padding: 0.75rem;
-  color: var(--text-dim);
 }
 
-/* ----------------------------------------------------------------- runways */
-
-.runways {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
+.pos-screenmenu {
+  left: 1rem;
+  width: 220px;
 }
 
-.runway {
+.pos-screenmenu__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+}
+
+.pos-screenmenu__item {
   min-height: 44px;
-  padding: 0.4rem 0.75rem;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  padding: 0 0.6rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--pos-t1);
   text-align: left;
   cursor: pointer;
 }
 
-.runway--selected {
-  border-color: var(--accent);
-  background: color-mix(in oklch, var(--accent) 12%, var(--bg-raised));
+.pos-screenmenu__item:hover {
+  background: var(--pos-hover);
 }
 
-.runway__ident {
-  font-size: 1.1rem;
-  font-weight: 700;
+.pos-startat {
+  left: 12rem;
+  width: 716px;
+  display: grid;
+  grid-template-columns: 186px auto 200px;
+  gap: 1rem;
 }
 
-.runway__meta {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-}
-
-.runway__ils {
-  font-size: 0.75rem;
-  color: var(--accent);
-}
-
-/* -------------------------------------------------------------------- tabs */
-
-.tabs {
+.pos-startat__sidebar {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.25rem;
-  border-bottom: 1px solid var(--border);
+  flex-direction: column;
+  gap: 1rem;
 }
 
-/*
- * Ghost buttons. A toolbar holds tertiary actions, and every solid button in one competes
- * with the surface's real primary action — which here is "Place aircraft", and is the only
- * solid button on the panel.
- */
-.tab {
+.pos-startat__section-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--pos-t3);
+}
+
+.pos-startat__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.pos-startat__item {
+  width: 100%;
   min-height: 44px;
-  padding: 0 0.9rem;
-  color: var(--text-dim);
+  padding: 0 0.5rem;
   background: transparent;
   border: 0;
-  border-bottom: 2px solid transparent;
-  font-size: 0.9rem;
-  font-weight: 600;
+  border-radius: 6px;
+  color: var(--pos-t1);
+  text-align: left;
   cursor: pointer;
 }
 
-.tab--active {
-  color: var(--accent);
-  border-bottom-color: var(--accent);
+.pos-startat__item:hover {
+  background: var(--pos-hover);
 }
 
-/* ---------------------------------------------------- pattern and finals */
+.pos-startat__item--selected {
+  color: var(--pos-accent);
+  background: color-mix(in oklch, var(--pos-accent) 14%, transparent);
+}
 
-.pattern {
+.pos-startat__stands {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.4rem;
+  min-width: 0;
 }
 
-/*
- * Three columns: left-hand circuit, the runway, right-hand circuit. The tiles are placed
- * where those legs actually are relative to the runway, so the instructor points at a
- * position rather than reading an identifier.
- */
-.pattern__grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+.pos-startat__stands-count {
+  margin: 0;
+  font-size: 0.75rem;
+  color: var(--pos-t3);
+}
+
+.pos-startat__stands-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 262px;
+  overflow-y: auto;
+}
+
+.pos-startat__stand {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--pos-hair);
+  color: var(--pos-t1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pos-startat__stand--selected {
+  color: var(--pos-accent);
+}
+
+.pos-startat__stand-type {
+  color: var(--pos-t3);
+  font-size: 0.78rem;
+}
+
+/* ------------------------------------------------------- airport diagram */
+
+.pos-diagram {
+  position: relative;
+}
+
+.pos-diagram__svg {
+  display: block;
+}
+
+.pos-diagram__terminal {
+  fill: var(--pos-hover);
+  stroke: var(--pos-line);
+}
+
+.pos-diagram__terminal-label {
+  fill: var(--pos-t3);
+  font-size: 8px;
+  font-family: 'Schibsted Grotesk', sans-serif;
+}
+
+.pos-diagram__taxiway {
+  stroke: var(--pos-line);
+  stroke-width: 2;
+}
+
+.pos-diagram__runway {
+  fill: var(--pos-t3);
+  opacity: 0.5;
+}
+
+.pos-diagram__runway-label {
+  fill: var(--pos-t1);
+  font-size: 9px;
+  font-family: 'Spline Sans Mono', monospace;
+}
+
+.pos-diagram__stand {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.pos-diagram__stand-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--pos-line);
+}
+
+.pos-diagram__stand--selected .pos-diagram__stand-dot {
+  background: var(--pos-accent);
+  box-shadow: 0 0 0 5px color-mix(in oklch, var(--pos-accent) 16%, transparent);
+}
+
+/* ----------------------------------------------------------- runway strip */
+
+.pos-runwaystrip {
+  flex: none;
+  padding: 0.6rem 1rem;
+  background: var(--pos-panel);
+  border-bottom: 1px solid var(--pos-hair);
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+}
+
+.pos-runwaystrip__tabs {
+  display: flex;
   gap: 0.4rem;
 }
 
-.tile {
+.pos-runwaystrip__tab {
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  align-items: flex-start;
   gap: 0.1rem;
-  min-height: 52px;
-  padding: 0.4rem 0.6rem;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
+  min-height: 44px;
+  padding: 0.3rem 0.7rem;
+  background: transparent;
+  border: 1px solid var(--pos-line);
   border-radius: 8px;
-  text-align: left;
+  color: var(--pos-t1);
   cursor: pointer;
-  transition: background-color 80ms ease;
 }
 
-.tile:hover {
-  background: var(--bg);
+.pos-runwaystrip__tab--selected {
+  border-color: var(--pos-accent);
+  background: color-mix(in oklch, var(--pos-accent) 10%, transparent);
 }
 
-.tile--staged {
-  border-color: var(--accent);
-  background: color-mix(in oklch, var(--accent) 14%, var(--bg-raised));
-}
-
-.tile__label {
-  font-weight: 600;
-}
-
-.tile__detail {
+.pos-runwaystrip__wind {
   font-size: 0.72rem;
-  color: var(--text-dim);
+  color: var(--pos-t3);
 }
 
-.pattern__runway {
-  position: relative;
+.pos-runwaystrip__wind--caution {
+  color: var(--pos-caution);
+}
+
+.pos-runwaystrip__facts,
+.pos-runwaystrip__readouts {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+/* -------------------------------------------------------------- tab strip */
+
+.pos-tabs {
+  flex: none;
+  display: flex;
   gap: 0.25rem;
-  padding: 0.5rem;
-  background: var(--bg);
-  border: 1px dashed var(--border);
-  border-radius: 8px;
-}
-
-/*
- * The pavement itself, with a dashed centreline down it. Drawn rather than merely
- * labelled: the grid only reads as a circuit if the object in the middle reads as the
- * runway the circuit is flown around.
- */
-.pattern__runway-strip {
-  position: absolute;
-  top: 12%;
-  bottom: 12%;
-  width: 26px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background-image: linear-gradient(var(--text-dim) 50%, transparent 0);
-  background-size: 2px 14px;
-  background-repeat: repeat-y;
-  background-position: center;
-}
-
-.pattern__runway-ident {
-  position: relative;
-  padding: 0.1rem 0.4rem;
-  background: var(--bg);
-  border-radius: 4px;
-  font-size: 1.6rem;
-  font-weight: 700;
-}
-
-.pattern__runway-hint {
-  position: relative;
-}
-
-.pattern__runway-hint {
-  font-size: 0.7rem;
-  color: var(--text-dim);
-  text-align: center;
-}
-
-.finals {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.finals__title {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.chip {
-  min-height: 44px;
-  padding: 0 0.85rem;
-  color: var(--text);
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  font-size: 0.9rem;
-  font-weight: 600;
-  font-variant-numeric: tabular-nums;
-  cursor: pointer;
-}
-
-.chip--staged,
-.chip--active {
-  color: var(--accent);
-  border-color: var(--accent);
-  background: color-mix(in oklch, var(--accent) 12%, var(--bg-raised));
-}
-
-/* ------------------------------------------------------------- procedures */
-
-.procedures {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  max-height: 420px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.procedures__title {
-  margin: 0 0 0.35rem;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--accent);
-}
-
-.procedures__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.procedure {
-  display: flex;
-  align-items: center;
-  gap: 0.6rem;
-  width: 100%;
-  min-height: 44px;
-  padding: 0 0.6rem;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 80ms ease;
-}
-
-.procedure:hover {
-  background: var(--bg-raised);
-}
-
-.procedure--open {
-  color: var(--accent);
-}
-
-.procedure__transition {
-  font-size: 0.75rem;
-  color: var(--text-dim);
-}
-
-.procedure__meta {
-  margin-left: auto;
-  font-size: 0.75rem;
-  color: var(--text-dim);
-  font-variant-numeric: tabular-nums;
-}
-
-/* A table cannot reflow, so it scrolls sideways inside its own box. */
-.legs {
-  overflow-x: auto;
-  scrollbar-gutter: stable;
-}
-
-.legs__table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.85rem;
-}
-
-/* Once the header scrolls away every cell below it is an unlabelled string. */
-.legs__table thead {
-  position: sticky;
-  top: 0;
-  background: var(--bg-panel);
-}
-
-/* Sentence case, never uppercase: uppercase headers are read measurably slower. */
-.legs__table th {
-  padding: 0.4rem 0.5rem;
-  font-weight: 500;
-  color: var(--text-dim);
-  text-align: left;
-  border-bottom: 1px solid var(--border);
-}
-
-.legs__table td {
-  padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--border);
-  vertical-align: middle;
-}
-
-/* Shown, never hidden: an instructor reading a SID needs to see the climb leg. */
-.leg--unpositionable td {
-  color: var(--text-dim);
-}
-
-.leg__reason {
-  font-size: 0.75rem;
-  color: var(--warn);
-}
-
-.leg__stage {
-  min-height: 32px;
-  padding: 0 0.7rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.8rem;
-  cursor: pointer;
-}
-
-/* ---------------------------------------------------------------- parking */
-
-.parking {
-  display: flex;
-  flex-direction: column;
-  gap: 0.6rem;
-}
-
-.parking__toolbar {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem;
-}
-
-.parking__filter {
-  flex: 1;
-  min-width: 140px;
-  min-height: 44px;
-  padding: 0 0.75rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.parking__list {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  max-height: 340px;
-  overflow-y: auto;
-  scrollbar-gutter: stable;
-}
-
-.stand {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  width: 100%;
-  min-height: 44px;
-  padding: 0 0.6rem;
-  color: var(--text);
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--border);
-  text-align: left;
-  cursor: pointer;
-  transition: background-color 80ms ease;
-}
-
-.stand:hover {
-  background: var(--bg-raised);
-}
-
-.stand--staged {
-  color: var(--accent);
-}
-
-.stand__meta {
-  font-size: 0.78rem;
-  color: var(--text-dim);
-}
-
-.stand__meta:last-child {
-  margin-left: auto;
-}
-
-/* ------------------------------------------------------------- coordinate */
-
-.coordinate {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 1rem;
-}
-
-.coordinate__form {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.75rem;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-
-.coordinate__title {
-  margin: 0;
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.coordinate__row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-}
-
-.coordinate__field {
-  display: flex;
-  flex: 1;
-  min-width: 90px;
-  flex-direction: column;
-  gap: 0.2rem;
-  font-size: 0.75rem;
-  color: var(--text-dim);
-}
-
-.coordinate__field input {
-  min-height: 44px;
-  padding: 0 0.6rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 1rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.coordinate__warning {
-  margin: 0;
-  font-size: 0.75rem;
-  color: var(--warn);
-}
-
-.coordinate__submit {
-  align-self: flex-start;
-  min-height: 44px;
   padding: 0 1rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
+  background: var(--pos-panel);
+  border-bottom: 1px solid var(--pos-hair);
+}
+
+.pos-tabs__tab {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--pos-t2);
   font-weight: 600;
   cursor: pointer;
 }
 
-.coordinate__submit:disabled {
-  opacity: 0.55;
-  cursor: not-allowed;
+.pos-tabs__tab--selected {
+  color: var(--pos-t1);
+  border-bottom-color: var(--pos-accent);
 }
 
-/* ------------------------------------------------------------ staging bar */
+/* ---------------------------------------------------------------- body */
 
-.staging {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  gap: 1rem;
-  align-items: center;
-  padding: 0.85rem;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-
-.staging--empty,
-.staging--error {
+.pos-body {
+  flex: 1;
+  min-height: 0;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
+  overflow: hidden;
 }
 
-.staging__diagram {
+.pos-main {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  padding: 1rem;
+}
+
+.pos-chip {
+  min-height: 44px;
+  padding: 0 0.8rem;
+  background: var(--pos-hover);
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--pos-t1);
+  cursor: pointer;
+}
+
+.pos-chip--selected {
+  border-color: var(--pos-accent);
+  color: var(--pos-accent);
+}
+
+.pos-field {
   display: flex;
   flex-direction: column;
-  align-items: center;
   gap: 0.25rem;
 }
 
-.schematic {
-  width: 200px;
-  height: 112px;
-  background: var(--bg);
+.pos-field__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pos-t3);
+}
+
+.pos-field__input {
+  min-height: 44px;
+  padding: 0 0.6rem;
+  background: var(--pos-bg);
+  border: 1px solid var(--pos-line);
   border-radius: 8px;
+  color: var(--pos-t1);
+  font-size: 1rem;
 }
 
-.schematic__runway {
-  stroke: var(--text);
-  stroke-width: 5;
+.pos-field__input:disabled {
+  opacity: 0.5;
 }
 
-.schematic__centreline {
-  stroke: var(--text-dim);
+.pos-radio {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  color: var(--pos-t1);
+}
+
+.pos-factrow {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px solid var(--pos-hair);
+}
+
+.pos-factrow__label {
+  flex: none;
+  width: 9rem;
+  color: var(--pos-t3);
+  font-size: 0.8rem;
+}
+
+.pos-factrow__value {
+  flex: 1;
+  color: var(--pos-t1);
+}
+
+.pos-factrow__value--caution {
+  color: var(--pos-caution);
+}
+
+.pos-factrow__value--accent {
+  color: var(--pos-accent);
+}
+
+.pos-factrow__tag {
+  font-size: 0.7rem;
+  color: var(--pos-t3);
+}
+
+/* -------------------------------------------------------- approach tab */
+
+.pos-approachtab {
+  display: flex;
+  gap: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.pos-approachtab__selected {
+  flex: 1;
+  min-width: 240px;
+}
+
+.pos-approachtab__name {
+  margin: 0 0 0.5rem;
+  font-size: 1.3rem;
+  font-weight: 600;
+}
+
+.pos-approachtab__footnote {
+  margin-top: 0.75rem;
+  color: var(--pos-t3);
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+
+/* ------------------------------------------------------- circuit diagram */
+
+.pos-circuit {
+  position: relative;
+  width: 720px;
+  max-width: 100%;
+}
+
+.pos-circuit__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.pos-circuit__centreline {
+  stroke: var(--pos-line);
   stroke-width: 1;
   stroke-dasharray: 4 4;
 }
 
-.schematic__heading {
-  stroke: var(--accent);
-  stroke-width: 2;
+.pos-circuit__tick {
+  fill: var(--pos-line);
 }
 
-.schematic__aircraft {
-  fill: var(--accent);
+.pos-circuit__leg {
+  stroke: var(--pos-t3);
+  stroke-width: 1.5;
+  stroke-dasharray: 6 4;
+  fill: none;
 }
 
-.schematic__label {
-  fill: var(--text-dim);
-  font-size: 10px;
-  font-family: var(--font-mono);
+.pos-circuit__runway {
+  stroke: var(--pos-t1);
+  stroke-width: 10;
 }
 
-.staging__label {
-  margin: 0;
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  text-align: center;
+.pos-circuit__threshold {
+  fill: var(--pos-t1);
 }
 
-.staging__fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 0.6rem;
+.pos-circuit__marker-dot {
+  fill: var(--pos-t3);
 }
 
-.staging__field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.2rem;
+.pos-circuit__marker-dot--selected {
+  fill: var(--pos-accent);
+  filter: drop-shadow(0 0 5px color-mix(in oklch, var(--pos-accent) 17%, transparent));
 }
 
-.staging__field-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
+.pos-circuit__marker-label {
+  fill: var(--pos-t2);
+  font-size: 11px;
+  font-family: 'Schibsted Grotesk', sans-serif;
 }
 
-.staging__field-input {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-}
-
-.staging__number {
-  flex: 1;
-  min-width: 0;
-  min-height: 44px;
-  padding: 0 0.55rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 1.05rem;
-  font-variant-numeric: tabular-nums;
-}
-
-.staging__field-unit {
-  font-size: 0.8rem;
-  color: var(--text-dim);
-}
-
-/*
- * The provenance line: where this number came from. Tertiary weight, because it is context
- * for a decision rather than the decision — but it is always there, because a charted
- * altitude and a category guess look identical without it.
- */
-.staging__field-note {
-  font-size: 0.68rem;
-  line-height: 1.3;
-  color: var(--text-dim);
-}
-
-.staging__toggle {
-  min-height: 44px;
-  padding: 0 0.9rem;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-weight: 600;
+.pos-circuit__marker-button {
+  position: absolute;
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  background: transparent;
+  border: 0;
+  border-radius: 50%;
   cursor: pointer;
 }
 
-.staging__toggle--on {
-  color: var(--ok);
-  border-color: var(--ok);
+.pos-circuit__wind-arrow {
+  stroke: var(--pos-t2);
+  fill: var(--pos-t2);
 }
 
-.staging__commit {
+.pos-circuit__wind-label {
+  fill: var(--pos-t3);
+  font-size: 11px;
+  font-family: 'Spline Sans Mono', monospace;
+}
+
+.pos-circuit__north {
+  stroke: var(--pos-t3);
+  fill: var(--pos-t3);
+  font-size: 11px;
+}
+
+/* -------------------------------------------------------------- SID/STAR */
+
+.pos-sidstartab {
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
-  gap: 0.35rem;
-  max-width: 260px;
+  gap: 1rem;
+  max-width: 640px;
 }
 
-.staging__blocked,
-.staging__flash {
-  margin: 0;
+.pos-sidstartab__kind {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.pos-sidstartab__ident {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pos-sidstartab__ident-trigger {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: var(--pos-bg);
+  border: 1px solid var(--pos-line);
+  border-radius: 8px;
+  color: var(--pos-t1);
+  font-size: 1.25rem;
+  cursor: pointer;
+}
+
+.pos-sidstartab__ident-count {
   font-size: 0.75rem;
-  text-align: right;
+  color: var(--pos-t3);
 }
 
-.staging__blocked {
-  color: var(--warn);
+.pos-sidstartab__ident-menu {
+  top: 48px;
+  left: 0;
+  width: 320px;
 }
 
-.staging__flash {
-  color: var(--ok);
+.pos-sidstartab__ident-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow-y: auto;
 }
 
-/* The one solid button on the surface. */
-.staging__place {
+.pos-sidstartab__ident-option {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--pos-hair);
+  color: var(--pos-t1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pos-sidstartab__ident-via {
+  color: var(--pos-t3);
+}
+
+.pos-sidstartab__breadcrumb {
+  display: flex;
+  gap: 0.5rem;
+  color: var(--pos-t2);
+}
+
+/* --------------------------------------------------------------- airwork */
+
+.pos-airworktab {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 480px;
+}
+
+.pos-airworktab__ladder {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.pos-airworktab__row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--pos-t1);
+  cursor: pointer;
+}
+
+.pos-airworktab__row--selected {
+  border-color: var(--pos-accent);
+  background: color-mix(in oklch, var(--pos-accent) 10%, transparent);
+}
+
+.pos-airworktab__tick {
+  height: 4px;
+  background: var(--pos-t3);
+  border-radius: 2px;
+}
+
+.pos-airworktab__fl {
+  width: 4em;
+}
+
+.pos-airworktab__feet {
+  margin-left: auto;
+  color: var(--pos-t3);
+}
+
+/* ---------------------------------------------------------------- custom */
+
+.pos-customtab {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  max-width: 480px;
+}
+
+.pos-customtab__row {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.pos-customtab__origin {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* ------------------------------------------------------------------ rail */
+
+.pos-rail {
+  flex: none;
+  width: 480px;
+  overflow-y: auto;
+  padding: 1rem;
+  background: var(--pos-rail);
+  border-left: 1px solid var(--pos-hair);
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.pos-rail__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pos-rail__title {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pos-rail__rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pos-rail__row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--pos-hair);
+}
+
+.pos-rail__row-label {
+  flex: none;
+  width: 8rem;
+  color: var(--pos-t3);
+  font-size: 0.8rem;
+}
+
+.pos-rail__row-value {
+  flex: 1;
+  color: var(--pos-t1);
+}
+
+.pos-rail__row-value--caution {
+  color: var(--pos-caution);
+}
+
+.pos-rail__row-tag {
+  font-size: 0.68rem;
+  color: var(--pos-t3);
+}
+
+.pos-rail__row-tag--caution {
+  color: var(--pos-caution);
+}
+
+.pos-rail__checks-title {
+  margin: 0 0 0.5rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.pos-rail__checks-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.pos-rail__check {
+  display: flex;
+  gap: 0.5rem;
+  align-items: flex-start;
+}
+
+.pos-rail__check .pos-dot {
+  margin-top: 0.35rem;
+}
+
+.pos-rail__check-body {
+  min-width: 0;
+}
+
+.pos-rail__check-text {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.pos-rail__check-note {
+  margin: 0.15rem 0 0;
+  color: var(--pos-t3);
+  font-size: 0.72rem;
+}
+
+.pos-rail__footer {
+  margin-top: auto;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--pos-hair);
+}
+
+.pos-rail__metar {
+  margin: 0 0 0.25rem;
+  font-size: 0.75rem;
+  color: var(--pos-t2);
+}
+
+.pos-rail__footer-note {
+  margin: 0;
+  font-size: 0.7rem;
+  color: var(--pos-t3);
+}
+
+/* ------------------------------------------------------------- bottom bar */
+
+.pos-bottombar {
+  flex: none;
+  display: flex;
+  align-items: flex-start;
+  gap: 1.5rem;
+  padding: 0.75rem 1rem;
+  background: var(--pos-panel);
+  border-top: 1px solid var(--pos-hair);
+  flex-wrap: wrap;
+}
+
+.pos-bottombar__group {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.pos-bottombar__group-title {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--pos-t3);
+}
+
+.pos-bottombar__divider {
+  align-self: stretch;
+  width: 1px;
+  background: var(--pos-hair);
+}
+
+.pos-bottombar__spacer {
+  flex: 1;
+}
+
+.pos-bottombar__actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.pos-bottombar__commit {
+  display: flex;
+}
+
+.pos-bottombar__set {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
   min-height: 52px;
-  padding: 0 1.6rem;
-  color: var(--on-accent);
-  background: var(--accent);
+  padding: 0.4rem 1.5rem;
+  background: var(--pos-accent);
   border: 0;
   border-radius: 8px;
-  font-size: 1.05rem;
+  color: var(--pos-on-accent);
   font-weight: 700;
   cursor: pointer;
 }
 
-.staging__place:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+.pos-bottombar__set-sub {
+  font-size: 0.68rem;
+  font-weight: 400;
+  opacity: 0.85;
 }
 
-.staging__dismiss {
-  min-height: 36px;
-  padding: 0 0.8rem;
-  color: var(--text);
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+.pos-bottombar__na {
+  color: var(--pos-caution);
+}
+
+/* ----------------------------------------------------------------- checkbox */
+
+.pos-checkbox {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0 0.4rem;
+  color: var(--pos-t1);
+  cursor: pointer;
+  position: relative;
+}
+
+.pos-checkbox__input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  opacity: 0;
   cursor: pointer;
 }
 
-@media (max-width: 820px) {
-  .staging {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.pos-checkbox__box {
+  width: 15px;
+  height: 15px;
+  flex: none;
+  border: 1px solid var(--pos-line);
+  border-radius: 2px;
+  background: var(--pos-bg);
+}
 
-  .staging__commit {
-    align-items: stretch;
-    max-width: none;
-  }
+.pos-checkbox__input:checked + .pos-checkbox__box {
+  background: var(--pos-accent);
+  border-color: var(--pos-accent);
+}
+
+.pos-checkbox__input:checked + .pos-checkbox__box::after {
+  content: '✓';
+  display: block;
+  font-size: 12px;
+  line-height: 15px;
+  text-align: center;
+  color: var(--pos-on-accent);
+}
+
+.pos-checkbox--disabled {
+  opacity: 0.55;
+}
+
+.pos-checkbox--disabled .pos-checkbox__input {
+  cursor: not-allowed;
 }

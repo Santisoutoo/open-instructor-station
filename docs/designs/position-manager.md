@@ -1039,6 +1039,13 @@ handler.
 
 ## 15. The panel
 
+> **Current panel design:** the panel's UI described in this section (§15.1–§15.4, "Shell",
+> "Structure", "State", "Visual system") has been superseded by
+> [`docs/designs/position-redesign-v3.md`](position-redesign-v3.md), a static visual replica
+> of an approved "v3" redesign. §15.5 (Gating) and §15.6 (What is not in the panel) — the
+> API/model contract — are unaffected and still accurate; the redesign phase deliberately
+> does not wire the panel to them yet.
+
 ### 15.1 Shell
 
 `App.tsx` is a two-column workspace: the Position panel and the aircraft controls take the left

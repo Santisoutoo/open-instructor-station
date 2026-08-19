@@ -11,7 +11,6 @@
  */
 
 import { vi } from 'vitest';
-import type { RootState } from '../../store';
 
 /** One request the panel made, recorded in order. */
 export interface ApiCall {
@@ -78,22 +77,4 @@ export function stubApi(routes: Record<string, Answer>): { calls: ApiCall[] } {
 /** Every call whose URL contains `fragment`, in order. */
 export function callsTo(calls: readonly ApiCall[], fragment: string): ApiCall[] {
   return calls.filter((call) => call.url.includes(fragment));
-}
-
-/** The Position slice, with only the fields a given test cares about spelled out. */
-export function positionState(
-  overrides: Partial<RootState['position']> = {},
-): Partial<RootState> {
-  return {
-    position: {
-      selectedIcao: null,
-      selectedRunwayIdent: null,
-      activeTab: 'pattern',
-      openProcedure: null,
-      staged: null,
-      setupOverrides: {},
-      recentIcaos: [],
-      ...overrides,
-    },
-  };
 }
