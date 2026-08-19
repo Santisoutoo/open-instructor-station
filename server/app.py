@@ -19,6 +19,7 @@ Surface:
 * ``/api/fuel-payload/*`` — the Fuel & Payload Manager, in
   :mod:`server.fuel_payload_routes`.
 * ``/api/failures/*`` — the Failures Manager, in :mod:`server.failure_routes`.
+* ``/api/pushback/*`` — the Pushback Manager, in :mod:`server.pushback_routes`.
 * ``/api/scenarios/*`` — the Flight Scenario Generator, in
   :mod:`server.scenario_routes`.
 * ``/api/profiles/*`` — Training Profiles, in :mod:`server.profile_routes`.
@@ -52,6 +53,7 @@ from server import (
     navdata_routes,
     position_routes,
     profile_routes,
+    pushback_routes,
     scenario_routes,
     weather_routes,
 )
@@ -394,6 +396,7 @@ def create_app() -> FastAPI:
     app.include_router(weather_routes.router)
     app.include_router(fuel_payload_routes.router)
     app.include_router(failure_routes.router)
+    app.include_router(pushback_routes.router)
     app.include_router(scenario_routes.router)
     app.include_router(profile_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
