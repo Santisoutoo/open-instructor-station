@@ -15,6 +15,7 @@ export const TAB_IDS = [
   'aircraft',
   'landing',
   'traffic',
+  'camera',
 ] as const;
 
 export type TabId = (typeof TAB_IDS)[number];

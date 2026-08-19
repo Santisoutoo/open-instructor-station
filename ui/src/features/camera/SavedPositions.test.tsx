@@ -8,7 +8,7 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { savedPositionsFixture } from './mock';
+import { savedPositionsFixture } from './fixtures';
 import { SavedPositions } from './SavedPositions';
 
 const BRIDGE_REASON =
@@ -63,7 +63,7 @@ describe('SavedPositions', () => {
     await user.click(screen.getByRole('button', { name: 'Apply Base leg view' }));
 
     expect(handlers.onApply).toHaveBeenCalledTimes(1);
-    expect(handlers.onApply).toHaveBeenCalledWith('mock-pos-2');
+    expect(handlers.onApply).toHaveBeenCalledWith('pos-2');
     expect(handlers.onDelete).not.toHaveBeenCalled();
   });
 
@@ -74,12 +74,12 @@ describe('SavedPositions', () => {
     await user.click(screen.getByRole('button', { name: 'Delete Three-quarter left' }));
 
     expect(handlers.onDelete).toHaveBeenCalledTimes(1);
-    expect(handlers.onDelete).toHaveBeenCalledWith('mock-pos-1');
+    expect(handlers.onDelete).toHaveBeenCalledWith('pos-1');
     expect(handlers.onApply).not.toHaveBeenCalled();
   });
 
   it('marks the selected position and no other', () => {
-    renderList({ selectedPositionId: 'mock-pos-2' });
+    renderList({ selectedPositionId: 'pos-2' });
 
     const rows = screen.getAllByRole('listitem');
     expect(rows[1]).toHaveAttribute('aria-current', 'true');

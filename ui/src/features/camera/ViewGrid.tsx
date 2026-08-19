@@ -1,5 +1,5 @@
 import { CAMERA_VIEWS } from './catalogue';
-import { type CameraViewId, type CameraViewSupport } from './types.mock';
+import { type CameraViewId, type CameraViewSupport } from '../../api/models';
 
 interface ViewGridProps {
   /** The manifest's per-view support entries, one per catalogue id (design D2). */

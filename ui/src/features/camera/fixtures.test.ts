@@ -1,12 +1,13 @@
 /**
- * The mock manifest must keep the shape the contract suite pins on the server side
- * (design §4.2): exactly one support entry per catalogue view, in catalogue order —
- * otherwise the panel demos a manifest the backend will never serve.
+ * The stand-in manifest testApi.ts answers with must keep the shape the contract suite
+ * pins on the server side (design §4.2): exactly one support entry per catalogue view,
+ * in catalogue order — otherwise the panel is tested against a manifest the backend
+ * will never serve.
  */
 
 import { describe, expect, it } from 'vitest';
 import { CAMERA_VIEWS } from './catalogue';
-import { cameraManifestFixture, savedPositionsFixture } from './mock';
+import { cameraManifestFixture, savedPositionsFixture } from './fixtures';
 
 describe('cameraManifestFixture', () => {
   it('serves exactly one support entry per catalogue view, in catalogue order', () => {

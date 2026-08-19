@@ -10,7 +10,7 @@
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import { type CameraViewId } from './types.mock';
+import { type CameraViewId } from '../../api/models';
 
 export interface CameraUiState {
   /** The last view REQUESTED — the optimistic highlight (design D6), or `null` before the first tap. */

@@ -1,5 +1,5 @@
 import { SaveDialog } from './SaveDialog';
-import { type SavedCameraPosition } from './types.mock';
+import { type SavedCameraPosition } from '../../api/models';
 
 interface SavedPositionsProps {
   /** In creation order, as `GET /positions` serves them. */

@@ -113,6 +113,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/geodesy/measure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Measure
+         * @description The exact WGS84 distance and initial true bearing from point 1 to point 2.
+         */
+        get: operations["measure_api_geodesy_measure_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/navdata/status": {
         parameters: {
             query?: never;
@@ -969,6 +989,126 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/camera/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Per-view support plus ``custom_positions_supported``, resolved against the adapter.
+         *
+         *     Capability-free (§2.1, the ``get_failure_support`` posture): it answers
+         *     "what could I do here?" even when the answer is "nothing, and here is why"
+         *     for every entry.
+         */
+        get: operations["get_manifest_api_camera_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set View
+         * @description Switch to a named view now. Idempotent — asking for the current view is a no-op.
+         */
+        post: operations["set_view_api_camera_view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Positions
+         * @description Every saved position, in creation order. Local storage — never a simulator read.
+         */
+        get: operations["list_positions_api_camera_positions_get"];
+        put?: never;
+        /**
+         * Save Position
+         * @description Read the camera's current free pose and save it under a name.
+         *
+         *     409 when there is no such pose (D9) — the instructor is in a named view,
+         *     or the adapter cannot read one. That is a state the panel can fix by
+         *     switching to the drone camera, which is why it is not the 501 an
+         *     unsupported *capability* gets.
+         */
+        post: operations["save_position_api_camera_positions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/positions/{position_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Position
+         * @description Recall a saved position, resolved fresh against live aircraft state (D4).
+         *
+         *     The stored offset is aircraft-relative, so what the instructor gets back is
+         *     the same *framing* rather than the same patch of sky — the adapter resolves
+         *     it against wherever the aircraft is at write time.
+         */
+        post: operations["apply_position_api_camera_positions__position_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Position
+         * @description Remove a saved position. Never capability-gated — this is local storage.
+         *
+         *     404 with "may already be deleted" when it is already gone, the profile
+         *     store's own wording for the same race.
+         */
+        delete: operations["delete_position_api_camera_positions__position_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1546,6 +1686,98 @@ export interface components {
             file: string;
         };
         /**
+         * CameraCommandResult
+         * @description What ``/view`` and ``/positions/{id}/apply`` answer — an echo, not a
+         *     read-back (D6: there is nothing honest to read back into).
+         */
+        CameraCommandResult: {
+            /** View Id */
+            view_id?: ("cockpit" | "chase" | "tower" | "wing" | "drone") | null;
+            offset?: components["schemas"]["CameraOffset"] | null;
+        };
+        /**
+         * CameraManifest
+         * @description ``GET /api/camera/manifest`` — the whole per-view picture the panel gates on.
+         */
+        CameraManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Caveat */
+            caveat: string | null;
+            /** Views */
+            views: components["schemas"]["CameraViewSupport"][];
+            /** Custom Positions Supported */
+            custom_positions_supported: boolean;
+            /** Custom Positions Reason */
+            custom_positions_reason: string | null;
+        };
+        /**
+         * CameraOffset
+         * @description A free/drone camera pose, expressed relative to the aircraft's own
+         *     reference point and CURRENT heading (D4) — never a world-frame
+         *     coordinate. Recalling a saved offset resolves it fresh every time
+         *     (``core.camera.geometry``, a later track).
+         */
+        CameraOffset: {
+            /**
+             * Forward M
+             * @description Metres forward of the aircraft's reference point, along its current heading. Negative is aft.
+             */
+            forward_m: number;
+            /**
+             * Right M
+             * @description Metres to the right of the reference point, perpendicular to the aircraft's current heading. Negative is left.
+             */
+            right_m: number;
+            /**
+             * Up M
+             * @description Metres above the reference point.
+             */
+            up_m: number;
+            /**
+             * Look Offset Deg
+             * @description Camera yaw relative to the aircraft's CURRENT heading (D5). 0 = looking the same way the aircraft points; +90 = looking to the right of the nose.
+             */
+            look_offset_deg: number;
+            /**
+             * Pitch Deg
+             * @description Camera pitch, WORLD frame (D5), positive looking up toward the sky — independent of the aircraft's own pitch attitude.
+             */
+            pitch_deg: number;
+            /**
+             * Zoom Ratio
+             * @description Field-of-view zoom multiplier; 1.0 is the adapter's default FOV.
+             * @default 1
+             */
+            zoom_ratio: number;
+        };
+        /**
+         * CameraViewRequest
+         * @description ``POST /api/camera/view``.
+         */
+        CameraViewRequest: {
+            /**
+             * View Id
+             * @enum {string}
+             */
+            view_id: "cockpit" | "chase" | "tower" | "wing" | "drone";
+        };
+        /**
+         * CameraViewSupport
+         * @description One catalogue entry resolved against one adapter.
+         */
+        CameraViewSupport: {
+            /**
+             * View Id
+             * @enum {string}
+             */
+            view_id: "cockpit" | "chase" | "tower" | "wing" | "drone";
+            /** Supported */
+            supported: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
          * Capabilities
          * @description What a given adapter supports, as declared by the adapter itself.
          *
@@ -1554,7 +1786,10 @@ export interface components {
          *     dataclass so that it is served verbatim by ``GET /api/capabilities`` and
          *     lands in the OpenAPI schema the UI client is generated from.
          *
-         *     Immutable — an adapter's capabilities never change at runtime.
+         *     Immutable — an adapter's capabilities are fixed for the lifetime of a
+         *     connection, resolved once at ``connect()`` and never mutated afterwards
+         *     (ai-traffic.md D3/D4: a connect-time probe may decide a flag, but nothing
+         *     moves it mid-session).
          */
         Capabilities: {
             /**
@@ -2278,6 +2513,22 @@ export interface components {
              * @default []
              */
             violations: string[];
+        };
+        /**
+         * MeasureResult
+         * @description The exact geodesic answer between two points, WGS84.
+         */
+        MeasureResult: {
+            /**
+             * Distance Nm
+             * @description Geodesic distance, nautical miles.
+             */
+            distance_nm: number;
+            /**
+             * Initial Bearing True Deg
+             * @description Initial true bearing from point 1 to point 2, degrees.
+             */
+            initial_bearing_true_deg: number;
         };
         /**
          * Navaid
@@ -3034,6 +3285,38 @@ export interface components {
             runway_ident: string;
         };
         /**
+         * SaveCameraPositionRequest
+         * @description ``POST /api/camera/positions``.
+         */
+        SaveCameraPositionRequest: {
+            /** Name */
+            name: string;
+        };
+        /**
+         * SavedCameraPosition
+         * @description One saved custom camera position.
+         *
+         *     Built by the adapter's in-memory store or ``core.camera.store``, never by
+         *     a request body — the id and creation timestamp are assigned, not
+         *     supplied.
+         */
+        SavedCameraPosition: {
+            /**
+             * Position Id
+             * @description Server-assigned opaque id (uuid4 hex).
+             */
+            position_id: string;
+            /** Name */
+            name: string;
+            offset: components["schemas"]["CameraOffset"];
+            /**
+             * Created At
+             * Format: date-time
+             * @description UTC.
+             */
+            created_at: string;
+        };
+        /**
          * ScenarioDetail
          * @description One scenario's full document plus its availability, for a preview view.
          */
@@ -3735,6 +4018,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AircraftSetupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measure_api_geodesy_measure_get: {
+        parameters: {
+            query: {
+                lat1: number;
+                lon1: number;
+                lat2: number;
+                lon2: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeasureResult"];
                 };
             };
             /** @description Validation Error */
@@ -4974,6 +5291,172 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_manifest_api_camera_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CameraManifest"];
+                };
+            };
+        };
+    };
+    set_view_api_camera_view_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CameraViewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CameraCommandResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_positions_api_camera_positions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedCameraPosition"][];
+                };
+            };
+        };
+    };
+    save_position_api_camera_positions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveCameraPositionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedCameraPosition"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_position_api_camera_positions__position_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CameraCommandResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_position_api_camera_positions__position_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

@@ -3,6 +3,7 @@ import { setupListeners } from '@reduxjs/toolkit/query';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import { instructorApi } from '../api/instructorApi';
 import aircraftReducer from '../features/aircraft/aircraftSlice';
+import cameraReducer from '../features/camera/cameraSlice';
 import failuresReducer from '../features/failures/failuresSlice';
 import fuelPayloadReducer from '../features/fuel-payload/fuelPayloadSlice';
 import landingReducer from '../features/landing/landingSlice';
@@ -35,6 +36,7 @@ const reducerMap = {
   map: mapReducer,
   landing: landingReducer,
   traffic: trafficReducer,
+  camera: cameraReducer,
   [instructorApi.reducerPath]: instructorApi.reducer,
 };
 

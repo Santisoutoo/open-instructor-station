@@ -3,10 +3,11 @@
  *
  * The manifest carries *support*, not wording — `view_id`/`supported`/`reason` only —
  * so the labels and descriptions live here permanently, the `failures/categories.ts`
- * pattern. Unlike `mock.ts`/`types.mock.ts`, this file survives backend integration.
+ * pattern. The ids themselves are not restated: `CameraViewId` is the generated union,
+ * so a card naming a view the server does not serve does not compile.
  */
 
-import { type CameraViewId } from './types.mock';
+import { type CameraViewId } from '../../api/models';
 
 export interface CameraViewCard {
   viewId: CameraViewId;

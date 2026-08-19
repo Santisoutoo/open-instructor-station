@@ -10,8 +10,8 @@ import userEvent from '@testing-library/user-event';
 import { useReducer } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import cameraReducer, { initialCameraUiState, viewRequested } from './cameraSlice';
-import { cameraManifestFixture } from './mock';
-import { type CameraViewSupport } from './types.mock';
+import { cameraManifestFixture } from './fixtures';
+import { type CameraViewSupport } from '../../api/models';
 import { ViewGrid } from './ViewGrid';
 
 const WING_REASON =
