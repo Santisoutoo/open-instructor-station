@@ -385,3 +385,19 @@ class TestValidation:
         with client:
             response = client.post("/api/traffic/spawn", json=body)
         assert response.status_code == 422
+
+    def test_a_builder_valueerror_maps_to_422(self, client: TestClient) -> None:
+        """``runway_incursion_track`` refuses to time a crossing against a
+        stationary aircraft (its arrival is undefined) — the one place a
+        well-formed request reaches a ``core.traffic`` builder's own
+        ``ValueError``, mapped to 422 exactly as ``position_routes._resolve``
+        maps ``core.geodesy``'s (§6.3)."""
+        with client:
+            setup = client.post("/api/aircraft/setup", json={"ias_kt": 0.0})
+            assert setup.status_code == 200, setup.text
+            response = client.post(
+                "/api/traffic/spawn",
+                json={"type": "runway_incursion", "airport_icao": "ZZZZ", "runway_ident": "36"},
+            )
+        assert response.status_code == 422
+        assert "stationary" in response.json()["detail"]
