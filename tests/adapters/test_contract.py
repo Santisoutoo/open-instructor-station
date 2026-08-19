@@ -50,6 +50,7 @@ from core.models import (
     PayloadStation,
     TankFuel,
 )
+from core.pushback import PushbackNotOnGround, PushbackRequest
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.traffic import (
     TrafficCapacityExceeded,
@@ -229,6 +230,12 @@ TRAFFIC_EXPIRY_GRACE_S = 4.0
 #: reads on either side of the spawn call itself.
 TRAFFIC_EXPIRY_CLOCK_EPSILON_S = 0.05
 
+#: How far a pushed-back aircraft may end up from the manoeuvre's computed
+#: chord, in metres (pushback-manager.md §4.2). Tighter than
+#: :data:`POSITION_TOLERANCE_M`: the manoeuvre itself is short and there is no
+#: re-acceleration afterward to absorb drift.
+PUSHBACK_TOLERANCE_M = {"fake": 0.1, "xplane": 5.0}
+
 #: Which test pins each capability. ``PENDING`` marks a flag whose manager
 #: arrives in a later phase: the contract is not written yet, and that is a
 #: deliberate, visible decision rather than an oversight.
@@ -243,7 +250,7 @@ CAPABILITY_COVERAGE: dict[str, str] = {
     "can_control_autopilot": "test_apply_setup_writes_the_autopilot",
     "can_set_fuel_payload": "test_set_loadout_round_trips",
     "can_control_camera": PENDING,
-    "can_pushback": PENDING,
+    "can_pushback": "test_pushback_moves_the_aircraft_backward",
 }
 
 #: Capability -> a setup carrying a field that capability gates. Used twice: to
@@ -346,6 +353,71 @@ async def adapter(request: pytest.FixtureRequest) -> AsyncIterator[SimAdapter]:
     await instance.connect()
     try:
         await _stabilise(instance)
+        yield instance
+    finally:
+        await instance.disconnect()
+
+
+#: A parked, on-ground aircraft, constructed directly rather than reached
+#: through the interface — ``on_ground`` has no write path on ``SimAdapter``
+#: (it is derived from the simulator's own physics, never a settable field),
+#: so ``grounded_adapter`` below cannot ask a freshly-``_stabilise``d Fake to
+#: land the way it asks a live one to.
+GROUNDED_FAKE_STATE = AircraftState(
+    latitude=40.4936,
+    longitude=-3.5668,
+    altitude_ft=2000.0,
+    heading_deg=90.0,
+    ias_kt=0.0,
+    vertical_speed_fpm=0.0,
+    pitch_deg=0.0,
+    roll_deg=0.0,
+    on_ground=True,
+)
+
+
+@pytest.fixture(params=ADAPTER_PARAMS)
+async def grounded_adapter(request: pytest.FixtureRequest) -> AsyncIterator[SimAdapter]:
+    """A connected adapter whose aircraft is on the ground, for pushback tests.
+
+    Pushback is only meaningful from a parked aircraft, and unlike every other
+    capability this suite exercises, ``on_ground`` cannot be written through
+    ``SimAdapter`` at all — it is read-only and derived from the simulator's
+    own physics. The Fake is therefore constructed directly with an on-ground
+    state (:data:`GROUNDED_FAKE_STATE`) instead of going through the
+    ``_stabilise``-into-flight path the shared ``adapter`` fixture uses.
+
+    A live simulator's ground state is whatever the user loaded. This asks it
+    to settle by teleporting to its own current position at ``ias_kt=0`` — the
+    same live-only wrinkle ``docs/designs/pushback-manager.md`` §8.3 documents
+    for the sim-only pushback tests — and skips with a clear reason if it still
+    does not report ``on_ground`` afterward, rather than retrying forever. This
+    branch never runs in CI: the ``xplane`` parametrisation only executes under
+    ``pytest -m sim``.
+    """
+    if request.param == "fake":
+        fake_instance = FakeSimAdapter(initial_state=GROUNDED_FAKE_STATE)
+        await fake_instance.connect()
+        try:
+            yield fake_instance
+        finally:
+            await fake_instance.disconnect()
+        return
+
+    instance = _build(request.param)
+    await instance.connect()
+    try:
+        state = await instance.get_aircraft_state()
+        if not state.on_ground and instance.capabilities.can_set_position:
+            here = _position_of(state)
+            await instance.set_position(here, heading_deg=state.heading_deg, ias_kt=0.0)
+            state = await instance.get_aircraft_state()
+        if not state.on_ground:
+            pytest.skip(
+                f"{instance.name}: the aircraft did not settle on the ground for the "
+                "pushback fixture — a live-sim environmental precondition, not a "
+                "contract failure."
+            )
         yield instance
     finally:
         await instance.disconnect()
@@ -1562,6 +1634,127 @@ async def test_stream_traffic_reflects_spawns(adapter: SimAdapter) -> None:
 
 
 # --------------------------------------------------------------------------
+# can_pushback
+# --------------------------------------------------------------------------
+
+
+async def test_pushback_moves_the_aircraft_backward(grounded_adapter: SimAdapter) -> None:
+    """The flag's coverage entry (pushback-manager.md §4.2).
+
+    A straight push, ``distance_m=20``: the aircraft ends up 20 m from where it
+    started, at the back bearing (the reciprocal of its heading), with the
+    heading itself unchanged.
+    """
+    if not grounded_adapter.capabilities.can_pushback:
+        pytest.skip(f"{grounded_adapter.name} does not declare can_pushback")
+
+    before = await grounded_adapter.get_aircraft_state()
+    home = _position_of(before)
+    expected_back_bearing_deg = (before.heading_deg + 180.0) % 360.0
+    tol_m = PUSHBACK_TOLERANCE_M[grounded_adapter.name]
+    request = PushbackRequest(direction="straight", distance_m=20.0)
+    try:
+        await grounded_adapter.pushback(request)
+        after = await grounded_adapter.get_aircraft_state()
+
+        distance_nm, bearing_deg = distance_and_bearing(home, _position_of(after))
+        assert distance_nm * METRES_PER_NAUTICAL_MILE == pytest.approx(20.0, abs=tol_m)
+        assert bearing_deg == pytest.approx(expected_back_bearing_deg, abs=2.0)
+        assert after.heading_deg == pytest.approx(before.heading_deg, abs=1.0)
+    finally:
+        await grounded_adapter.set_position(home, heading_deg=before.heading_deg, ias_kt=0.0)
+
+
+async def test_pushback_arc_rotates_heading_by_the_full_angle(grounded_adapter: SimAdapter) -> None:
+    """D5's hand-checkable half, both directions: the final heading is rotated
+    by exactly ``angle_deg``, clockwise for ``"right"``, counter-clockwise for
+    ``"left"``.
+    """
+    if not grounded_adapter.capabilities.can_pushback:
+        pytest.skip(f"{grounded_adapter.name} does not declare can_pushback")
+
+    before = await grounded_adapter.get_aircraft_state()
+    home = _position_of(before)
+
+    try:
+        await grounded_adapter.pushback(
+            PushbackRequest(direction="right", distance_m=20.0, angle_deg=45.0)
+        )
+        after_right = await grounded_adapter.get_aircraft_state()
+        assert after_right.heading_deg == pytest.approx(
+            (before.heading_deg + 45.0) % 360.0, abs=1.0
+        )
+    finally:
+        await grounded_adapter.set_position(home, heading_deg=before.heading_deg, ias_kt=0.0)
+
+    try:
+        await grounded_adapter.pushback(
+            PushbackRequest(direction="left", distance_m=20.0, angle_deg=45.0)
+        )
+        after_left = await grounded_adapter.get_aircraft_state()
+        assert after_left.heading_deg == pytest.approx((before.heading_deg - 45.0) % 360.0, abs=1.0)
+    finally:
+        await grounded_adapter.set_position(home, heading_deg=before.heading_deg, ias_kt=0.0)
+
+
+async def test_pushback_refuses_when_airborne(adapter: SimAdapter) -> None:
+    """D8: a precondition, not a capability — an airborne aircraft is left
+    unmoved and :class:`~core.pushback.PushbackNotOnGround` is raised, even on
+    an adapter that declares ``can_pushback``.
+
+    Uses the shared, airborne ``adapter`` fixture rather than
+    ``grounded_adapter`` — this is the one pushback test that specifically
+    needs the aircraft *not* to be on the ground.
+    """
+    if not adapter.capabilities.can_pushback:
+        pytest.skip(f"{adapter.name} does not declare can_pushback")
+
+    before = await adapter.get_aircraft_state()
+    assert not before.on_ground, (
+        "the `adapter` fixture is expected to leave the aircraft airborne — "
+        "if this fails, the fixture (not this test) is the thing to fix"
+    )
+    request = PushbackRequest(direction="straight", distance_m=20.0)
+    with pytest.raises(PushbackNotOnGround):
+        await adapter.pushback(request)
+
+    after = await adapter.get_aircraft_state()
+    assert after.latitude == pytest.approx(before.latitude)
+    assert after.longitude == pytest.approx(before.longitude)
+    assert after.heading_deg == pytest.approx(before.heading_deg, abs=0.5)
+
+
+async def test_pushback_is_idempotent_in_direction_only(grounded_adapter: SimAdapter) -> None:
+    """Two identical calls move the aircraft twice, not once.
+
+    Pushback is a relative command, like a throttle nudge — not idempotent as
+    a *state* — but each call is deterministic given its own starting state,
+    so two identical straight pushes cover twice the distance of one.
+    """
+    if not grounded_adapter.capabilities.can_pushback:
+        pytest.skip(f"{grounded_adapter.name} does not declare can_pushback")
+
+    before = await grounded_adapter.get_aircraft_state()
+    home = _position_of(before)
+    tol_m = PUSHBACK_TOLERANCE_M[grounded_adapter.name]
+    request = PushbackRequest(direction="straight", distance_m=20.0)
+    try:
+        await grounded_adapter.pushback(request)
+        once = await grounded_adapter.get_aircraft_state()
+        await grounded_adapter.pushback(request)
+        twice = await grounded_adapter.get_aircraft_state()
+
+        once_distance_nm, _ = distance_and_bearing(home, _position_of(once))
+        twice_distance_nm, _ = distance_and_bearing(home, _position_of(twice))
+        assert twice_distance_nm * METRES_PER_NAUTICAL_MILE == pytest.approx(
+            2.0 * once_distance_nm * METRES_PER_NAUTICAL_MILE, abs=2.0 * tol_m
+        )
+        assert twice.heading_deg == pytest.approx(once.heading_deg, abs=1.0)
+    finally:
+        await grounded_adapter.set_position(home, heading_deg=before.heading_deg, ias_kt=0.0)
+
+
+# --------------------------------------------------------------------------
 # Capability-free reads
 # --------------------------------------------------------------------------
 
@@ -1863,5 +2056,32 @@ async def test_traffic_methods_refuse_without_the_capability() -> None:
             aclose = getattr(stream, "aclose", None)
             if aclose is not None:
                 await aclose()
+    finally:
+        await sim.disconnect()
+
+
+async def test_pushback_refuses_without_the_capability() -> None:
+    """The other half of the flag's contract (pushback-manager.md §4.2).
+
+    ``FakeSimAdapter`` declares every capability
+    (:func:`test_fake_adapter_declares_every_capability`), so a
+    skip-guarded case against the parametrised ``adapter``/``grounded_adapter``
+    fixtures would never actually exercise this refusal — the same reasoning
+    the weather/failures/loadout/traffic refusal tests above already state.
+    The restricted-subclass pattern is unaffected by ``on_ground``: a refusal
+    is raised before the precondition is even checked.
+    """
+
+    class NoPushbackAdapter(FakeSimAdapter):
+        @property
+        def capabilities(self) -> Capabilities:
+            return super().capabilities.model_copy(update={"can_pushback": False})
+
+    sim = NoPushbackAdapter(initial_state=GROUNDED_FAKE_STATE)
+    await sim.connect()
+    try:
+        request = PushbackRequest(direction="straight", distance_m=20.0)
+        with pytest.raises(CapabilityNotSupported, match="can_pushback"):
+            await sim.pushback(request)
     finally:
         await sim.disconnect()
