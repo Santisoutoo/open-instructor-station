@@ -132,6 +132,105 @@ describe('the loaded airport', () => {
   });
 });
 
+describe('the Map hand-off', () => {
+  /** Exactly what `map/MapStagingBar` dispatches: a coordinate, no airport, 0 ft, 000°. */
+  const HANDED_OVER = {
+    latitude: 40.46,
+    longitude: -3.57,
+    altitudeFt: 0,
+    headingDeg: 0,
+  };
+
+  function handoffState(loadedIcao: string): Partial<RootState> {
+    return {
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: loadedIcao,
+        loadedIcao,
+        activeTab: 'custom',
+        custom: {
+          origin: 'coordinates',
+          latitude: HANDED_OVER.latitude,
+          longitude: HANDED_OVER.longitude,
+          altitudeFt: HANDED_OVER.altitudeFt,
+          headingDeg: HANDED_OVER.headingDeg,
+        },
+      },
+    };
+  }
+
+  it('shows and can commit the handed-over point with no airport loaded', async () => {
+    // The map gives a coordinate, which is a whole CoordinatePlacementRequest. Answering
+    // "Type an ICAO code and press Load" is the same as losing it.
+    const { calls } = stubApi(positionRoutes());
+    renderPanel(handoffState(''));
+
+    expect(
+      await screen.findByText(/A coordinate handed over from another screen/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Type an ICAO code/)).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(bodiesOf(calls, 'position/preview')).toContainEqual({
+        type: 'coordinate',
+        position: { latitude: 40.46, longitude: -3.57, altitude_ft: 0 },
+        heading_deg: 0,
+      });
+    });
+    const button = await screen.findByRole('button', { name: /Set position/ });
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
+  it('survives the screen’s own staging mirror instead of being overwritten by it', async () => {
+    // The bottom bar mirrors whatever the screen resolves onto `position.staged`. Adopting
+    // the hand-off into the Custom tab is what makes those two the same placement.
+    stubApi(positionRoutes());
+    const store = renderPanel(handoffState(ICAO));
+
+    await waitFor(() => {
+      expect(store.getState().position.staged).toEqual({
+        type: 'coordinate',
+        position: { latitude: 40.46, longitude: -3.57, altitude_ft: 0 },
+        heading_deg: 0,
+      });
+    });
+  });
+});
+
+describe('a coordinate that does not resolve', () => {
+  it('stages nothing at 0°N 0°E while the airport lookup has not answered', async () => {
+    // The Custom tab falls back to the loaded airport's own position. When the search
+    // errors there is no fallback, and filling the hole with a zero would put the aircraft
+    // in the Gulf of Guinea on one click.
+    const { calls } = stubApi(
+      positionRoutes({
+        'navdata/airports': { status: 503, detail: 'Index unavailable.' },
+      }),
+    );
+    const store = renderPanel({
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: ICAO,
+        loadedIcao: ICAO,
+        activeTab: 'custom',
+      },
+    });
+
+    expect(await screen.findByText(/Nothing to place yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Set position/ })).toBeDisabled();
+    expect(store.getState().position.staged).toBeNull();
+    for (const body of bodiesOf(calls, 'position/preview')) {
+      expect(body).not.toEqual(
+        expect.objectContaining({
+          position: expect.objectContaining({ latitude: 0, longitude: 0 }) as unknown,
+        }),
+      );
+    }
+  });
+});
+
 describe('choosing a start position', () => {
   it('previews the placement the selected marker means', async () => {
     const { calls } = stubApi(positionRoutes());

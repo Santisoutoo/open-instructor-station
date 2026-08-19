@@ -9,6 +9,13 @@
  * before the redesign, reinstated here rather than reinvented. The header stays visible
  * through the gate on purpose: this screen is full-bleed, so its screen menu is the only way
  * off it.
+ *
+ * **An airport is not the only way in.** The Map's "Send to Position tab" hands over a bare
+ * coordinate (`docs/designs/instructor-map.md` D5), which is a whole placement on its own and
+ * frequently nowhere near a field. When one has been adopted with no airport loaded, the
+ * screen shows the Custom location tab, the rail and the commit bar — the runway strip and
+ * the other three tabs have nothing behind them and are not drawn. Sending a coordinate to a
+ * screen that answers "type an ICAO code" is the same as losing it.
  */
 
 import {
@@ -78,6 +85,11 @@ function NavdataCard({
 export function PositionPanel() {
   const activeTab = useAppSelector((state) => state.positionDesign.activeTab);
   const loadedIcao = useAppSelector((state) => state.positionDesign.loadedIcao);
+  const hasCoordinate = useAppSelector(
+    (state) =>
+      state.positionDesign.custom.latitude !== null &&
+      state.positionDesign.custom.longitude !== null,
+  );
 
   // Polled **only while a build is running**, which is what `BUILD_POLL_MS` says it is for.
   // A ready index does not change under the screen, and a station left open on one for a
@@ -104,28 +116,45 @@ export function PositionPanel() {
         <NavdataCard reason={gate.reason} canBuild={false} fraction={gate.fraction} />
       )}
 
-      {gate.kind === 'ready' &&
-        (loadedIcao === '' ? (
-          <p className="pos-empty">
-            Type an ICAO code and press Load. Every airport in the simulator&apos;s
-            navigation data is available.
-          </p>
-        ) : (
-          <>
-            <RunwayStrip />
-            <PositionTabs />
-            <div className="pos-body">
-              <div className="pos-main">
-                {activeTab === 'approach' && <ApproachTrainingTab />}
-                {activeTab === 'sidstar' && <SidStarTab />}
-                {activeTab === 'airwork' && <AirworkTab />}
-                {activeTab === 'custom' && <CustomLocationTab />}
-              </div>
-              <ApplyRail />
+      {gate.kind === 'ready' && loadedIcao !== '' && (
+        <>
+          <RunwayStrip />
+          <PositionTabs />
+          <div className="pos-body">
+            <div className="pos-main">
+              {activeTab === 'approach' && <ApproachTrainingTab />}
+              {activeTab === 'sidstar' && <SidStarTab />}
+              {activeTab === 'airwork' && <AirworkTab />}
+              {activeTab === 'custom' && <CustomLocationTab />}
             </div>
-            <BottomBar />
-          </>
-        ))}
+            <ApplyRail />
+          </div>
+          <BottomBar />
+        </>
+      )}
+
+      {gate.kind === 'ready' && loadedIcao === '' && hasCoordinate && (
+        <>
+          <p className="pos-empty">
+            A coordinate handed over from another screen. Load an airport to place on a
+            runway, a procedure or a stand.
+          </p>
+          <div className="pos-body">
+            <div className="pos-main">
+              <CustomLocationTab />
+            </div>
+            <ApplyRail />
+          </div>
+          <BottomBar />
+        </>
+      )}
+
+      {gate.kind === 'ready' && loadedIcao === '' && !hasCoordinate && (
+        <p className="pos-empty">
+          Type an ICAO code and press Load. Every airport in the simulator&apos;s
+          navigation data is available.
+        </p>
+      )}
     </div>
   );
 }

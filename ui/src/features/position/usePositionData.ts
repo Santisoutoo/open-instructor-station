@@ -30,7 +30,7 @@ import type {
 import { useAppSelector } from '../../store';
 import { useGetWeatherStateQuery } from '../weather/weatherApi';
 import { AIRWORK_LEVEL_FEET } from './airwork';
-import { buildPlacementRequest } from './placementRequest';
+import { buildPlacementRequest, type PlacementInputs } from './placementRequest';
 import type { ProcedureFamily } from './positionDesignSlice';
 import { instructorSetup, mergedSetup, type InstructorSetup } from './setup';
 import { windComponents } from './wind';
@@ -80,6 +80,21 @@ export function useSelectedRunway(): Runway | null {
   const selected = useAppSelector((state) => state.positionDesign.selectedRunway);
   const { runways } = useRunways();
   return runways.find((runway) => runway.ident === selected) ?? null;
+}
+
+/**
+ * The ground under the placement, feet MSL — the selected runway's elevation, else the
+ * airport's, else `null` when neither is known.
+ *
+ * It is what turns the preview's altitude MSL into "is this placement airborne", which is
+ * the question the speed gate turns on. `null` is honest: with no airport there is no
+ * terrain source on this side of the wire, and the gate falls back to sea level as the
+ * reference rather than pretending to know better.
+ */
+export function useGroundElevationFt(): number | null {
+  const runway = useSelectedRunway();
+  const { airport } = useAirport();
+  return runway?.elevation_ft ?? airport?.elevation_ft ?? null;
 }
 
 /**
@@ -192,6 +207,50 @@ export function procedureFamilyMatches(
   return true;
 }
 
+/**
+ * The Custom tab's placement, or `null` when its coordinate does not resolve.
+ *
+ * `null` matters more here than anywhere else on the screen. The boxes fall back to the
+ * loaded airport's own position while they are empty, and until the airport search answers
+ * — in flight right after Load, forever if it errors — there is no fallback either. Filling
+ * that hole with a zero would stage `(0, 0)`, the server would happily preview a placement
+ * in the Gulf of Guinea, and one click would put the aeroplane there. A missing coordinate
+ * is "nothing to place", exactly as the Airwork tab already treats a missing airport.
+ *
+ * The altitude is not held to the same bar: at a coordinate that resolved, an unknown
+ * altitude falls back to the airport's elevation and then to sea level, which is a real
+ * place the rail prints in full. A wrong altitude is visible and recoverable; a wrong
+ * coordinate is 5,000 km of ocean.
+ */
+function customPlacement(
+  custom: {
+    readonly latitude: number | null;
+    readonly longitude: number | null;
+    readonly altitudeFt: number | null;
+    readonly headingDeg: number | null;
+  },
+  fallbacks: {
+    readonly airportLatitude: number | null;
+    readonly airportLongitude: number | null;
+    readonly airportElevationFt: number | null;
+    readonly runwayCourse: number | null;
+  },
+): PlacementInputs['custom'] {
+  const latitude = custom.latitude ?? fallbacks.airportLatitude;
+  const longitude = custom.longitude ?? fallbacks.airportLongitude;
+  if (latitude === null || longitude === null) {
+    return null;
+  }
+  return {
+    position: {
+      latitude,
+      longitude,
+      altitude_ft: custom.altitudeFt ?? fallbacks.airportElevationFt ?? 0,
+    },
+    headingDeg: custom.headingDeg ?? fallbacks.runwayCourse,
+  };
+}
+
 /** The placement the current screen state means, rebuilt only when an input changes. */
 function usePlacementRequest(): PlacementRequest | null {
   const design = useAppSelector((state) => state.positionDesign);
@@ -244,14 +303,12 @@ function usePlacementRequest(): PlacementRequest | null {
                 headingDeg: runwayCourse ?? 0,
               }
             : null,
-        custom: {
-          position: {
-            latitude: custom.latitude ?? airportLatitude ?? 0,
-            longitude: custom.longitude ?? airportLongitude ?? 0,
-            altitude_ft: custom.altitudeFt ?? airportElevationFt ?? 0,
-          },
-          headingDeg: custom.headingDeg ?? runwayCourse,
-        },
+        custom: customPlacement(custom, {
+          airportLatitude,
+          airportLongitude,
+          airportElevationFt,
+          runwayCourse,
+        }),
       }),
     [
       loadedIcao,
@@ -308,10 +365,7 @@ export function useStagedPlacement(): StagedPlacement {
 
   // Memoised so `overrides` is reference-stable: `BottomBar`'s mirror onto `positionSlice`
   // is an effect keyed on it, and a fresh object every render would re-stage forever.
-  const setup = useMemo(
-    () => instructorSetup(config, send, preview, ils),
-    [config, send, preview, ils],
-  );
+  const setup = useMemo(() => instructorSetup(config, send, ils), [config, send, ils]);
   const merged = useMemo(
     () => mergedSetup(preview, setup.overrides),
     [preview, setup.overrides],

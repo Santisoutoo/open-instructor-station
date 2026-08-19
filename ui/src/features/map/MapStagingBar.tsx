@@ -3,14 +3,21 @@
  * hand-off to the Position tab.
  *
  * The map never commits a placement itself — repositioning is the Position Manager's
- * job. "Send to Position tab" stages a coordinate placement over there (the exact
- * payload the CoordinateForm builds: altitude, heading and speed at 0, the ground-point
- * defaults) and switches tabs, so the instructor lands on the staging bar that can
- * actually commit, with the full setup editor around it.
+ * job. "Send to Position tab" stages a coordinate placement over there (altitude, heading
+ * and speed at 0, the ground-point defaults) and switches tabs, so the instructor lands
+ * where the placement can actually be committed, with the full setup editor around it.
+ *
+ * That takes **two** dispatches, and both are load-bearing. `placementStaged` is the
+ * shared server-intent contract `features/profiles` reads;
+ * `coordinateHandoffReceived` is what the Position *screen* consumes — it adopts the
+ * coordinate into the Custom location tab, so the point survives the screen's own
+ * staging mirror and can be placed. Staging alone would leave the coordinate visible to
+ * nobody and overwritten by the first placement the screen resolves.
  */
 
 import { useAppDispatch, useAppSelector } from '../../store';
 import { tabSelected as moduleTabSelected } from '../../store/uiSlice';
+import { coordinateHandoffReceived } from '../position/positionDesignSlice';
 import {
   placementStaged,
   tabSelected as positionTabSelected,
@@ -52,6 +59,14 @@ export function MapStagingBar({ staged }: { staged: LatLon }) {
                 },
                 heading_deg: 0,
                 ias_kt: 0,
+              }),
+            );
+            dispatch(
+              coordinateHandoffReceived({
+                latitude: staged.lat,
+                longitude: staged.lon,
+                altitudeFt: 0,
+                headingDeg: 0,
               }),
             );
             dispatch(positionTabSelected('coordinate'));

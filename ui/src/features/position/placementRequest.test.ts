@@ -183,6 +183,30 @@ describe('the Airwork and Custom tabs', () => {
       buildPlacementRequest(inputs({ activeTab: 'custom', runwayIdent: null })),
     ).not.toBeNull();
   });
+
+  it('needs no airport either — the Map hands over a coordinate and nothing else', () => {
+    // docs/designs/instructor-map.md D5: "Send to Position tab" is one of the two commit
+    // paths, and the point it hands over is frequently nowhere near a field.
+    expect(
+      buildPlacementRequest(inputs({ activeTab: 'custom', icao: '', runwayIdent: null })),
+    ).toEqual({
+      type: 'coordinate',
+      position: { latitude: 43.5, longitude: 7.1, altitude_ft: 3000 },
+      heading_deg: 90,
+    });
+  });
+
+  it('answers null rather than a coordinate when the custom position does not resolve', () => {
+    expect(
+      buildPlacementRequest(inputs({ activeTab: 'custom', custom: null })),
+    ).toBeNull();
+  });
+
+  it('still lets a selected stand win, and still needs an airport for one', () => {
+    expect(
+      buildPlacementRequest(inputs({ activeTab: 'custom', standName: 'A3', icao: '' })),
+    ).toBeNull();
+  });
 });
 
 describe('the finals table', () => {

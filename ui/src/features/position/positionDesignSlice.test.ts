@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import reducer, {
   airportLoaded,
   configChanged,
+  coordinateHandoffReceived,
   designTabSelected,
   finalPlacementSelected,
   initialPositionDesignState,
@@ -34,6 +35,42 @@ describe('startRunwaySelected / startStandSelected', () => {
   it('takes whatever ident navdata publishes, not a closed set', () => {
     expect(reducer(undefined, startRunwaySelected('18C')).selectedRunway).toBe('18C');
     expect(reducer(undefined, startRunwaySelected('09')).selectedRunway).toBe('09');
+  });
+});
+
+describe('coordinateHandoffReceived', () => {
+  const HANDOFF = {
+    latitude: 40.46,
+    longitude: -3.57,
+    altitudeFt: 0,
+    headingDeg: 0,
+  };
+
+  it('adopts the coordinate into the Custom location tab and opens it', () => {
+    const state = reducer(undefined, coordinateHandoffReceived(HANDOFF));
+    expect(state.activeTab).toBe('custom');
+    expect(state.custom).toEqual({
+      origin: 'coordinates',
+      latitude: 40.46,
+      longitude: -3.57,
+      altitudeFt: 0,
+      headingDeg: 0,
+    });
+  });
+
+  it('clears a selected stand, which would otherwise win over the coordinate', () => {
+    // `buildPlacementRequest` sends a stand whichever tab is open; a hand-off arriving
+    // behind one would be staged and never placed.
+    const withStand = reducer(undefined, startStandSelected('A3'));
+    expect(
+      reducer(withStand, coordinateHandoffReceived(HANDOFF)).selectedStand,
+    ).toBeNull();
+  });
+
+  it('needs no loaded airport', () => {
+    const state = reducer(undefined, coordinateHandoffReceived(HANDOFF));
+    expect(state.loadedIcao).toBe('');
+    expect(state.custom.latitude).toBe(40.46);
   });
 });
 

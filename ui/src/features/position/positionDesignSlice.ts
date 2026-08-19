@@ -118,15 +118,20 @@ export interface AircraftConfigState {
 }
 
 /**
- * The three "sent with the position" switches.
+ * The "sent with the position" switches.
  *
  * They **add** to what the placement already carries; they cannot subtract from it. The
  * server merges an override over the preview's setup field by field with `exclude_none`,
  * so there is no way to say "unset this" on the wire, and pretending otherwise would put a
  * lie on screen. Off therefore means "do not add it"; the rail shows the merged result.
+ *
+ * There is no `heading` switch, and there was never anything one could have done.
+ * `Placement.to_setup()` sets `heading_deg` on every placement and `execute_placement`
+ * writes it whatever the client sends, so the switch could only ever copy the preview's own
+ * heading back over itself — while tagging the rail's Heading row "overridden" on a screen
+ * where nothing had been overridden.
  */
 export interface SendWithPositionState {
-  heading: boolean;
   course: boolean;
   ilsFrequency: boolean;
 }
@@ -191,7 +196,7 @@ export const initialPositionDesignState: PositionDesignState = {
   airworkLevel: 'FL100',
   custom: initialCustom,
   config: initialConfig,
-  send: { heading: true, course: true, ilsFrequency: true },
+  send: { course: true, ilsFrequency: true },
 };
 
 /** Everything that is only meaningful at one airport, cleared when another is loaded. */
@@ -307,6 +312,41 @@ const positionDesignSlice = createSlice({
       const { field, value } = action.payload;
       Object.assign(state.custom, { [field]: value });
     },
+    /**
+     * A coordinate handed off by another manager — today only the Map's "Send to Position
+     * tab" (`docs/designs/instructor-map.md` D5).
+     *
+     * The coordinate is **adopted**, not merely displayed: it becomes the Custom location
+     * tab's own state and that tab is opened on it. That is what makes the hand-off
+     * committable, and it is also what stops the bottom bar's mirror onto `positionSlice`
+     * from overwriting it — the placement the screen resolves to *is* the handed-off point,
+     * so the mirror writes the same thing back instead of something else.
+     *
+     * It needs no loaded airport: a latitude and a longitude are a whole
+     * `CoordinatePlacementRequest`.
+     */
+    coordinateHandoffReceived(
+      state,
+      action: PayloadAction<{
+        latitude: number;
+        longitude: number;
+        altitudeFt: number;
+        headingDeg: number | null;
+      }>,
+    ) {
+      const { latitude, longitude, altitudeFt, headingDeg } = action.payload;
+      state.custom = {
+        origin: 'coordinates',
+        latitude,
+        longitude,
+        altitudeFt,
+        headingDeg,
+      };
+      state.activeTab = 'custom';
+      // A selected stand wins over every tab in `buildPlacementRequest`; a hand-off that
+      // arrived while one was selected would otherwise be staged and never placed.
+      state.selectedStand = null;
+    },
     configChanged(
       state,
       action: PayloadAction<{
@@ -351,6 +391,7 @@ export const {
   airworkLevelSelected,
   customOriginSelected,
   customFieldChanged,
+  coordinateHandoffReceived,
   configChanged,
   sendToggled,
   situationReset,

@@ -101,18 +101,36 @@ export interface PlacementInputs {
  * **A selected stand wins over everything.** Picking a stand is picking a ground position,
  * and the circuit marker or procedure leg still highlighted behind it is not where the
  * aeroplane is going — the rail's checks say so in words too.
+ *
+ * **The Custom location tab needs no airport.** A latitude and a longitude are a whole
+ * `CoordinatePlacementRequest`, and the Map's "Send to Position tab" hand-off arrives as
+ * exactly that — often nowhere near a field. Every other placement is named relative to an
+ * airport and cannot resolve without one.
  */
 export function buildPlacementRequest(inputs: PlacementInputs): PlacementRequest | null {
-  if (inputs.icao === '') {
-    return null;
+  if (inputs.standName !== null) {
+    return inputs.icao === ''
+      ? null
+      : {
+          type: 'parking',
+          airport_icao: inputs.icao,
+          stand_name: inputs.standName,
+        };
   }
 
-  if (inputs.standName !== null) {
+  if (inputs.activeTab === 'custom') {
+    if (inputs.custom === null) {
+      return null;
+    }
     return {
-      type: 'parking',
-      airport_icao: inputs.icao,
-      stand_name: inputs.standName,
+      type: 'coordinate',
+      position: inputs.custom.position,
+      heading_deg: inputs.custom.headingDeg,
     };
+  }
+
+  if (inputs.icao === '') {
+    return null;
   }
 
   switch (inputs.activeTab) {
@@ -140,16 +158,6 @@ export function buildPlacementRequest(inputs: PlacementInputs): PlacementRequest
         type: 'coordinate',
         position: inputs.airwork.position,
         heading_deg: inputs.airwork.headingDeg,
-      };
-    }
-    case 'custom': {
-      if (inputs.custom === null) {
-        return null;
-      }
-      return {
-        type: 'coordinate',
-        position: inputs.custom.position,
-        heading_deg: inputs.custom.headingDeg,
       };
     }
   }
