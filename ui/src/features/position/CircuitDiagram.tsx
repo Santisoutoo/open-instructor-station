@@ -13,14 +13,32 @@
  * it lines up with the SVG dot without needing to live inside the SVG's own transform). The
  * button is what carries the click handler, the accessible name and the ≥44 px touch target
  * CLAUDE.md asks for; the SVG circle is what carries the visual ring and glow.
+ *
+ * **The buttons are positioned in percentages of the container, never in viewBox pixels.**
+ * The SVG scales down (`.pos-circuit` is `width: 720px; max-width: 100%`), so on any viewport
+ * narrower than 720 px of diagram — every tablet — a button placed at a raw viewBox
+ * coordinate drifts away from the dot it is supposed to be over: at 1024 px the drawing is at
+ * ~0.71 and the furthest marker's hit target sits ~88 px from its circle. `.pos-circuit` is
+ * the positioning context and the SVG preserves its aspect ratio, so a percentage tracks the
+ * scale for free.
  */
 
 import { CX, CY, centrelineTicks, place, windArrowRotation } from './circuit';
 import { CIRCUIT_MARKERS, labelPlacement } from './markers';
 import { MARKER_IDS, type MarkerId } from './positionDesignSlice';
 
-const TICK_FROM_NM = -10;
+/**
+ * The extended centreline's far end, in NM before the threshold.
+ *
+ * 8 NM and not 10: the whole picture rotates about (360, 252) by the runway course, so the
+ * far end traces a circle of `(8 - UMID) × K = 192` px around that centre — inside the
+ * 720×520 box for every course. At 10 NM the radius is 272 px and the last tick fell outside
+ * the viewBox (y = 524 in a 520-tall box) for any runway pointing roughly north or south.
+ */
+const TICK_FROM_NM = -8;
 const TICK_TO_NM = 2;
+const VIEWBOX_W = 720;
+const VIEWBOX_H = 520;
 const WIND_ANCHOR = { x: 664, y: 74 };
 const NORTH_ANCHOR = { x: 46, y: 470 };
 
@@ -68,9 +86,9 @@ export function CircuitDiagram({
   return (
     <div className="pos-circuit">
       <svg
-        viewBox="0 0 720 520"
-        width={720}
-        height={520}
+        viewBox={`0 0 ${String(VIEWBOX_W)} ${String(VIEWBOX_H)}`}
+        width={VIEWBOX_W}
+        height={VIEWBOX_H}
         className="pos-circuit__svg"
         role="img"
         aria-label={`Circuit diagram for runway ${runwayIdent}`}
@@ -195,7 +213,10 @@ export function CircuitDiagram({
             key={id}
             type="button"
             className="pos-circuit__marker-button"
-            style={{ left: p.x, top: p.y }}
+            style={{
+              left: `${String((p.x / VIEWBOX_W) * 100)}%`,
+              top: `${String((p.y / VIEWBOX_H) * 100)}%`,
+            }}
             aria-pressed={id === selectedMarker}
             onClick={() => {
               onSelectMarker(id);
