@@ -12,6 +12,15 @@ import '@fontsource/ibm-plex-sans/700.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import '@fontsource/ibm-plex-mono/700.css';
+// The Position screen v3 replica's own typefaces — imported at boot rather than chunked
+// into the lazy position bundle, because `position` is the app's default tab and loads
+// at boot either way.
+import '@fontsource/schibsted-grotesk/400.css';
+import '@fontsource/schibsted-grotesk/500.css';
+import '@fontsource/schibsted-grotesk/600.css';
+import '@fontsource/spline-sans-mono/400.css';
+import '@fontsource/spline-sans-mono/500.css';
+import '@fontsource/spline-sans-mono/600.css';
 import './index.css';
 
 // Hash → tab, theme persistence, demo-feed preference. Once, before first render.
