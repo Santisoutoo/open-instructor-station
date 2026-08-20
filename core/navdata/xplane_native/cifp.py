@@ -454,11 +454,30 @@ def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
     if anchor is None:
         return None
 
-    latitude = decode_latitude(_after_semicolon(fields[anchor]))
-    longitude = decode_longitude(_at(fields, anchor + _RWY_LONGITUDE_OFFSET))
-    if latitude is None or longitude is None:  # pragma: no cover - the anchor guarantees both
+    threshold_latlon = _decode_runway_threshold(fields, anchor)
+    if threshold_latlon is None:  # pragma: no cover - the anchor guarantees both
         return None
 
+    return _build_runway(fields, ident, anchor, threshold_latlon)
+
+
+def _decode_runway_threshold(fields: Sequence[str], anchor: int) -> tuple[float, float] | None:
+    """Latitude/longitude at the record's coordinate anchor, or ``None`` if either fails."""
+    latitude = decode_latitude(_after_semicolon(fields[anchor]))
+    longitude = decode_longitude(_at(fields, anchor + _RWY_LONGITUDE_OFFSET))
+    if latitude is None or longitude is None:
+        return None
+    return latitude, longitude
+
+
+def _build_runway(
+    fields: Sequence[str],
+    ident: str,
+    anchor: int,
+    threshold_latlon: tuple[float, float],
+) -> CifpRunway:
+    """Assemble the runway from the anchor and the fields around it."""
+    latitude, longitude = threshold_latlon
     elevation_ft = _parse_float(_at(fields, anchor + _RWY_ELEVATION_OFFSET))
     displaced_ft = _parse_float(_at(fields, anchor + _RWY_DISPLACED_THRESHOLD_OFFSET))
     crossing_height_ft = _parse_float(_before_semicolon(fields[anchor]))
