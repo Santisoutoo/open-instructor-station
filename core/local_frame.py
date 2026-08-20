@@ -45,6 +45,7 @@ import math
 from geographiclib.geodesic import Geodesic
 from pydantic import BaseModel, ConfigDict, Field
 
+from core.atmosphere import METRES_PER_FOOT
 from core.models import GeoPosition
 
 __all__ = [
@@ -55,8 +56,6 @@ __all__ = [
     "origin_separation_m",
     "world_to_local",
 ]
-
-_METRES_PER_FOOT = 0.3048
 
 # WGS84 defining parameters. Same ellipsoid geographiclib runs on, so the two
 # halves of core's geodesy agree to the last significant figure.
@@ -179,7 +178,7 @@ def world_to_local(origin: LocalFrameOrigin, position: GeoPosition) -> LocalCoor
     point_ecef = _to_ecef(
         position.latitude,
         position.longitude,
-        position.altitude_ft * _METRES_PER_FOOT,
+        position.altitude_ft * METRES_PER_FOOT,
     )
     delta: _Vector3 = (
         point_ecef[0] - origin_ecef[0],
@@ -220,7 +219,7 @@ def local_to_world(origin: LocalFrameOrigin, local: LocalCoordinates) -> GeoPosi
     return GeoPosition(
         latitude=latitude,
         longitude=longitude,
-        altitude_ft=height_m / _METRES_PER_FOOT,
+        altitude_ft=height_m / METRES_PER_FOOT,
     )
 
 

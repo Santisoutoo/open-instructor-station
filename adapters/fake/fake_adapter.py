@@ -48,6 +48,7 @@ from core.models import (
 from core.pushback import PushbackRequest, pushback_target, require_on_ground
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.traffic import (
+    SECONDS_PER_HOUR,
     TrafficCapacityExceeded,
     TrafficContact,
     TrafficTrack,
@@ -107,7 +108,6 @@ _ALL_CAPABILITIES = Capabilities(
     can_pushback=True,
 )
 
-_SECONDS_PER_HOUR = 3600.0
 _SECONDS_PER_MINUTE = 60.0
 
 #: The Fake's own traffic capacity (ai-traffic.md §4.4). Chosen to mirror
@@ -625,7 +625,7 @@ class FakeSimAdapter:
 
     def _advance(self, elapsed_s: float) -> None:
         """Integrate the aircraft one step forward (great-circle, no wind)."""
-        distance_nm = self._state.ias_kt * elapsed_s / _SECONDS_PER_HOUR
+        distance_nm = self._state.ias_kt * elapsed_s / SECONDS_PER_HOUR
         climb_ft = self._state.vertical_speed_fpm * elapsed_s / _SECONDS_PER_MINUTE
         if distance_nm == 0.0 and climb_ft == 0.0:
             return
