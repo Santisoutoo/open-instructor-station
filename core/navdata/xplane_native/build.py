@@ -718,6 +718,19 @@ def _add_airport(
     if latitude is None or longitude is None:  # pragma: no cover - _finalise guarantees this
         return
 
+    _add_airport_row(airports, airport, latitude, longitude, cifp_idents)
+    _add_runway_rows(runways, airport)
+    _add_parking_rows(parking, airport)
+
+
+def _add_airport_row(
+    airports: _Batch,
+    airport: ParsedAirport,
+    latitude: float,
+    longitude: float,
+    cifp_idents: frozenset[str],
+) -> None:
+    """Insert the one row describing the airport itself."""
     airports.add(
         (
             airport.icao,
@@ -740,6 +753,9 @@ def _add_airport(
         )
     )
 
+
+def _add_runway_rows(runways: _Batch, airport: ParsedAirport) -> None:
+    """Insert one row per runway end pair."""
     for runway in airport.runways:
         runways.add(
             (
@@ -759,6 +775,9 @@ def _add_airport(
             )
         )
 
+
+def _add_parking_rows(parking: _Batch, airport: ParsedAirport) -> None:
+    """Insert one row per parking stand."""
     for stand in airport.parking:
         parking.add(
             (
