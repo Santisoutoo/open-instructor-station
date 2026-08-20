@@ -16,6 +16,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from core.models import AirframeInfo
@@ -60,6 +61,30 @@ class Settings(BaseSettings):
     # the same LAN is a first-class scenario.
     host: str = "0.0.0.0"
     port: int = 8000
+    #: Whether the packaged executable should open a browser once the server
+    #: answers. ``None`` means "not set" — ``server.__main__`` then falls back
+    #: to "packaged runs open one, a source checkout does not". Explicit
+    #: string spellings are parsed by :meth:`_parse_open_browser` rather than
+    #: left to pydantic's own bool coercion: that coercion accepts more
+    #: spellings than this ever did (``"y"``, ``"t"``), does not strip
+    #: whitespace, and raises on anything else instead of treating it as
+    #: false — three behaviour changes ``server.__main__``'s hand-rolled
+    #: ``os.environ.get(...).strip().lower() in {...}`` check never had.
+    open_browser: bool | None = None
+
+    @field_validator("open_browser", mode="before")
+    @classmethod
+    def _parse_open_browser(cls, value: object) -> object:
+        """Reproduce the exact hand-rolled parsing this field replaces.
+
+        Only ``"1"``, ``"true"``, ``"yes"`` and ``"on"`` — case-insensitive,
+        surrounding whitespace stripped — count as true. Every other string,
+        including ``"0"``/``"false"``/``"no"``/``"off"`` and anything
+        unrecognised, is false. Never raises on an unrecognised spelling.
+        """
+        if not isinstance(value, str):
+            return value
+        return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 @lru_cache(maxsize=1)
