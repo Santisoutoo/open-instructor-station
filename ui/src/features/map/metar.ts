@@ -17,10 +17,11 @@
  * - Wind direction is TRUE degrees and is NOT rounded to the nearest 10 — a crosswind
  *   preset that commanded 273° shows `273`, because showing the commanded value verbatim
  *   is the whole point of the chip.
- * - Cloud bases are feet **MSL** (`CloudLayer.base_ft`'s own unit), whereas a real METAR
- *   cloud group is height AGL. Converting needs the field elevation, which this module
- *   does not have. TODO(#113): the overlays track mounts the chip next to its
- *   reference-airport picker — pass that airport's elevation in and subtract it here.
+ * - Cloud bases are published in feet **MSL** (`CloudLayer.base_ft`'s own unit), whereas
+ *   a real METAR cloud group is height AGL. When the caller knows the field elevation —
+ *   the chip is mounted next to the reference-airport picker, which does — it passes it
+ *   in and the bases render AGL, real-METAR style; with no elevation stated the bases
+ *   stay MSL, the wire value verbatim.
  * - There is no wind-variability, weather-phenomena or trend group: the wire model does
  *   not command them.
  */
@@ -74,19 +75,24 @@ export function metarVisibility(metres: number): string {
 }
 
 /**
- * Cloud groups ascending by base, `BKN025` style — the base in hundreds of feet. Layers
- * whose coverage rounds to zero octas state no cloud and are dropped; no remaining layer
+ * Cloud groups ascending by base, `BKN025` style — the base in hundreds of feet, AGL
+ * when `fieldElevationFt` is stated (a real METAR group is height above the field),
+ * MSL otherwise (the wire value verbatim, floored at zero either way). Layers whose
+ * coverage rounds to zero octas state no cloud and are dropped; no remaining layer
  * reads `SKC`.
  */
-export function metarClouds(layers: readonly CloudLayer[]): string {
+export function metarClouds(
+  layers: readonly CloudLayer[],
+  fieldElevationFt: number | null = null,
+): string {
   const groups = [...layers]
     .sort((a, b) => a.base_ft - b.base_ft)
     .map((layer) => ({ group: coverageGroup(layer.coverage_ratio), layer }))
     .filter(({ group }) => group !== 'SKC')
-    .map(
-      ({ group, layer }) =>
-        `${group}${String(Math.max(0, Math.round(layer.base_ft / 100))).padStart(3, '0')}`,
-    );
+    .map(({ group, layer }) => {
+      const baseFt = layer.base_ft - (fieldElevationFt ?? 0);
+      return `${group}${String(Math.max(0, Math.round(baseFt / 100))).padStart(3, '0')}`;
+    });
   return groups.length === 0 ? 'SKC' : groups.join(' ');
 }
 
@@ -106,10 +112,14 @@ export function metarQnh(hpa: number): string {
  * The whole chip string: wind, visibility + cloud (collapsed to `CAVOK` when the commanded
  * state earns it — 10 km or more, no cloud group, no precipitation), temperature/dewpoint
  * and QNH. The CAVOK comparison uses the same ROUNDED metres the visibility token does,
- * so 9999.7 m collapses to CAVOK rather than falling between the two.
+ * so 9999.7 m collapses to CAVOK rather than falling between the two. Pass the reference
+ * airport's `fieldElevationFt` to render cloud bases AGL (see {@link metarClouds}).
  */
-export function formatMetar(state: WeatherState): string {
-  const clouds = metarClouds(state.cloud_layers);
+export function formatMetar(
+  state: WeatherState,
+  fieldElevationFt: number | null = null,
+): string {
+  const clouds = metarClouds(state.cloud_layers, fieldElevationFt);
   const cavok =
     roundedVisibility(state.visibility_m) >= 10000 &&
     clouds === 'SKC' &&

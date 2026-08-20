@@ -106,6 +106,19 @@ describe('metarClouds', () => {
     expect(metarClouds([cloud({ coverage_ratio: 0 })])).toBe('SKC');
     expect(metarClouds([])).toBe('SKC');
   });
+
+  it('renders bases AGL when the field elevation is stated — real-METAR style', () => {
+    // 2500 ft MSL over a 1500 ft field is a 1000 ft ceiling.
+    expect(metarClouds([cloud({ base_ft: 2500 })], 1500)).toBe('BKN010');
+  });
+
+  it('floors an AGL base at zero when the commanded base sits below the field', () => {
+    expect(metarClouds([cloud({ base_ft: 1000 })], 1998)).toBe('BKN000');
+  });
+
+  it('stays MSL — the wire value verbatim — when no elevation is stated', () => {
+    expect(metarClouds([cloud({ base_ft: 2500 })], null)).toBe('BKN025');
+  });
 });
 
 describe('metarTemperatures', () => {
@@ -149,6 +162,12 @@ describe('formatMetar', () => {
     expect(formatMetar(weatherState({ precipitation_ratio: 0.4 }))).toBe(
       '27005KT 9999 SKC 19/07 Q1016',
     );
+  });
+
+  it('renders cloud bases AGL when the reference airport elevation is passed', () => {
+    expect(
+      formatMetar(weatherState({ cloud_layers: [cloud({ base_ft: 2500 })] }), 1500),
+    ).toBe('27005KT 9999 BKN010 19/07 Q1016');
   });
 
   it('formats a commanded CAT III fog exactly as set, not as observed', () => {
