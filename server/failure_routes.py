@@ -29,7 +29,7 @@ import asyncio
 import logging
 import time
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypedDict
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -47,6 +47,9 @@ from core.failures import (
     InjectFailureRequest,
 )
 from core.sim_adapter import CapabilityNotSupported
+from server._shared import _require_capability
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
+from server.constants import POLL_INTERVAL_S as FAILURE_EVAL_INTERVAL_S
 from server.deps import get_adapter
 
 if TYPE_CHECKING:
@@ -54,7 +57,6 @@ if TYPE_CHECKING:
     from core.sim_adapter import SimAdapter
 
 __all__ = [
-    "CAPABILITY_UNAVAILABLE_STATUS",
     "FAILURE_EVAL_INTERVAL_S",
     "FailureCatalogueEntry",
     "FailureCatalogueResponse",
@@ -64,13 +66,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather than
-#: imported to keep the import edge one-way: ``app`` includes these routers.
-CAPABILITY_UNAVAILABLE_STATUS = 501
-
-#: Watcher tick rate: trigger latency is bounded by one frame (§6.3).
-FAILURE_EVAL_INTERVAL_S = 0.25
 
 #: How long the watcher waits before re-entering ``stream_state`` after the
 #: stream itself dies (adapter disconnected). Short enough that a reconnected
@@ -112,16 +107,6 @@ class FailureCatalogueResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:
-    """Refuse up front when the adapter has not declared what this needs."""
-    if not bool(getattr(adapter.capabilities, flag, False)):
-        raise HTTPException(
-            status_code=CAPABILITY_UNAVAILABLE_STATUS,
-            detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
-            f"declare {flag}, so it cannot {what}.",
-        )
-
-
 async def _require_failure_support(adapter: SimAdapter, ref: FailureRef) -> None:
     """Refuse when either the group capability or this one catalogue entry is unsupported.
 
@@ -149,6 +134,16 @@ async def _current_status(adapter: SimAdapter) -> FailuresStatus:
     return FailuresStatus(active=active, armed=list(_scheduler.armed))
 
 
+class _SharedCatalogueFields(TypedDict):
+    """The 5 fields both catalogue branches carry unchanged from ``spec``."""
+
+    failure_id: FailureId
+    label: str
+    category: FailureCategory
+    takes_engine_index: bool
+    description: str
+
+
 def _catalogue_entry(
     spec: FailureSpec, support: FailureSupport | None, *, adapter_name: str
 ) -> FailureCatalogueEntry:
@@ -158,24 +153,23 @@ def _catalogue_entry(
     should always carry (a bug in that adapter); the row still renders,
     disabled, rather than the whole catalogue request failing for it.
     """
+    shared: _SharedCatalogueFields = {
+        "failure_id": spec.failure_id,
+        "label": spec.label,
+        "category": spec.category,
+        "takes_engine_index": spec.takes_engine_index,
+        "description": spec.description,
+    }
     if support is None:
         return FailureCatalogueEntry(
-            failure_id=spec.failure_id,
-            label=spec.label,
-            category=spec.category,
-            takes_engine_index=spec.takes_engine_index,
-            description=spec.description,
+            **shared,
             supported=False,
             best_effort=False,
             reason=f"The {adapter_name!r} adapter's support manifest carries no entry "
             f"for {spec.failure_id!r}.",
         )
     return FailureCatalogueEntry(
-        failure_id=spec.failure_id,
-        label=spec.label,
-        category=spec.category,
-        takes_engine_index=spec.takes_engine_index,
-        description=spec.description,
+        **shared,
         supported=support.supported,
         best_effort=support.best_effort,
         reason=support.reason,

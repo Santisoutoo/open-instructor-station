@@ -32,6 +32,8 @@ from core.scenarios.loader import LoadedScenario, load_all_scenarios
 from core.scenarios.models import ScenarioDocument
 from core.scenarios.preflight import missing_capabilities
 from core.sim_adapter import Capabilities
+from server._shared import _not_found_or_404
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_navdata
 from server.scenario_engine import (
     ScenarioAlreadyRunning,
@@ -42,16 +44,11 @@ from server.scenario_engine import (
 )
 
 __all__ = [
-    "CAPABILITY_UNAVAILABLE_STATUS",
     "ScenarioDetail",
     "ScenarioManifest",
     "ScenarioSummary",
     "router",
 ]
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather
-#: than imported to keep the import edge one-way: ``app`` includes this router.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 
@@ -120,10 +117,8 @@ def _summary(
 def _find_or_404(scenario_id: str) -> LoadedScenario:
     """Load and return the scenario named ``scenario_id``, or raise a 404."""
     loaded, _errors = load_all_scenarios()
-    for item in loaded:
-        if item.id == scenario_id:
-            return item
-    raise HTTPException(status_code=404, detail=f"Scenario {scenario_id!r} is not defined.")
+    found = next((item for item in loaded if item.id == scenario_id), None)
+    return _not_found_or_404(found, f"Scenario {scenario_id!r} is not defined.")
 
 
 # ---------------------------------------------------------------------------
