@@ -245,6 +245,32 @@ commands and reads live values over the same X-Plane Web API (:8086) the adapter
 - **ARINC 424 path terminators:** only legs carrying a resolvable fix (`IF`, `TF`, `CF`, `DF`,
   `AF`, `RF`) are positionable. Legs like `CA`/`VA`/`FM`/`VM` are trajectory-dependent — show
   them, do not offer them as positions.
+- **A capability flag that gates its own validation is a deadlock.** A `-m sim` suite that
+  skips while its flag is `False` can never be the run that flips the flag to `True`. Pushback
+  and camera hit exactly this in Phase 3: the honest resolution is to flip the flag when the
+  code earns it structurally (pushback reuses the already-validated `set_position` procedure
+  wholesale and adds zero new dataref surface; camera probes every candidate command at connect
+  and degrades any that fails to resolve), state in the code that the flip asserts the code is
+  right rather than that it has been flown, and let `pytest -m sim` settle it. What is *not*
+  acceptable is a suite that silently passes vacuously — a live test whose assertions collapse
+  when a flag is off must say so in its docstring, and must fail loudly (not skip) when the
+  thing it exists to prove turns out false.
+
+- **Geodesic hops do not hold their latitude — flat-trig inverses are off by far more than
+  spherical excess.** Measured while building `core/camera/geometry.py`: the naive inverse of
+  two geodesic offsets is wrong by `distance² / R × tan(latitude)` — **145 mm worst case over a
+  ±500 m envelope across latitudes 0–75°**, five orders of magnitude past the micrometres a
+  spherical-excess estimate predicts. Two re-projection refinement passes bring it to 12 nm.
+  The measurement lives in that module's docstring and is pinned by a millimetre-tolerance
+  round-trip test; any future "simplification" that drops the refinement will fail it.
+
+- **`ui/src/api/schema.d.ts` drifts silently — regenerate it in any PR that touches a route.**
+  `dev` shipped a generated client that was missing `GET /api/geodesy/measure` entirely, months
+  after the server started serving it, and nothing failed: typecheck can only see the types it
+  was handed. The schema is a generated artefact — when branches conflict on it, regenerate from
+  the composed server (`create_app().openapi()` needs no running process) instead of hand-merging,
+  and treat a hand edit as a rule-7 violation.
+
 - **MSFS will always be a feature subset**: weather injection is locked down by Asobo, failures
   via SimConnect are limited, and study-level aircraft use internal failure systems. L:var access
   goes through the MobiFlight WASM module (optional add-on, same pattern as `bridge/`).
