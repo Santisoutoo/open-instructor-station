@@ -33,7 +33,7 @@ from core.profiles.models import ProfileSummary, TrainingProfile, TrainingProfil
 from core.profiles.store import ProfileStore, ProfileStoreError
 from core.scenarios.models import ScenarioDocument
 from core.sim_adapter import CapabilityNotSupported, SimAdapter, WeatherRejected
-from server._shared import _resolve_apply_and_readback_weather
+from server._shared import _not_found_or_404, _resolve_apply_and_readback_weather
 from server.deps import get_adapter, get_navdata, get_profile_store
 from server.failure_routes import arm_failure
 from server.position_routes import ApplyPlacementRequest, PlacementResult, execute_placement
@@ -119,10 +119,7 @@ class ProfileApplyResult(BaseModel):
 
 
 def _require_profile(store: ProfileStore, profile_id: str) -> TrainingProfile:
-    profile = store.get(profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail=_NOT_FOUND.format(id=profile_id))
-    return profile
+    return _not_found_or_404(store.get(profile_id), _NOT_FOUND.format(id=profile_id))
 
 
 def _reason(exc: Exception) -> str:

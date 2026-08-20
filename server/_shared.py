@@ -17,7 +17,27 @@ from core.sim_adapter import SimAdapter
 from core.weather.models import WeatherRequest, WeatherSetup, WeatherState
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 
-__all__ = ["_require_capability", "_resolve_apply_and_readback_weather", "_weather_context"]
+__all__ = [
+    "_not_found_or_404",
+    "_require_capability",
+    "_resolve_apply_and_readback_weather",
+    "_weather_context",
+]
+
+
+def _not_found_or_404[T](value: T | None, detail: str) -> T:
+    """Return ``value``, or raise a 404 carrying ``detail`` verbatim.
+
+    Generalises ``server.navdata_routes._found`` (the pattern's original,
+    clean form: a single prior lookup, ``None`` means "not found") over the
+    caller's own already-formatted message rather than a fixed template — the
+    four call sites this shares (navdata, a runway lookup, a scenario id
+    search, a training profile lookup) each name a different kind of missing
+    thing, in a different sentence.
+    """
+    if value is None:
+        raise HTTPException(status_code=404, detail=detail)
+    return value
 
 
 def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:

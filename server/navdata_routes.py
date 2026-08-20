@@ -52,6 +52,7 @@ from core.navdata.models import (
     ProcedureSummary,
 )
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
+from server._shared import _not_found_or_404
 from server.deps import get_navdata
 
 __all__ = [
@@ -121,9 +122,7 @@ def _provider() -> NavdataProvider:
 
 def _found[T](value: T | None, what: str) -> T:
     """Return ``value``, or raise 404 naming what was missing."""
-    if value is None:
-        raise HTTPException(status_code=404, detail=f"{what} is not in the navigation index.")
-    return value
+    return _not_found_or_404(value, f"{what} is not in the navigation index.")
 
 
 @router.get("/status", response_model=NavdataStatus)

@@ -71,7 +71,7 @@ from core.placements import (
     WaypointPlacementRequest,
 )
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
-from server._shared import _require_capability
+from server._shared import _not_found_or_404, _require_capability
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_airframe_info, get_navdata
 
@@ -204,13 +204,10 @@ class PlacementResult(BaseModel):
 
 
 def _runway(provider: NavdataProvider, icao: str, ident: str) -> Runway:
-    runway = provider.get_runway(icao, ident)
-    if runway is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Runway {ident.upper()} is not published at {icao.upper()}.",
-        )
-    return runway
+    return _not_found_or_404(
+        provider.get_runway(icao, ident),
+        f"Runway {ident.upper()} is not published at {icao.upper()}.",
+    )
 
 
 def _leg(
