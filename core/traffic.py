@@ -628,6 +628,100 @@ def tcas_conflict_track(
     )
 
 
+def _validate_incursion_speeds(
+    vehicle_speed_kt: float | None, user_state: AircraftState
+) -> tuple[float, float]:
+    """Resolve the vehicle speed and the user's ground speed, validating both.
+
+    Raises:
+        ValueError: for a stationary user aircraft (its arrival time is
+            undefined, so no honest crossing time exists) or a non-positive
+            vehicle speed.
+    """
+    speed_kt = RUNWAY_INCURSION_DEFAULT_SPEED_KT if vehicle_speed_kt is None else vehicle_speed_kt
+    if speed_kt <= 0.0:
+        raise ValueError(f"vehicle_speed_kt must be a positive speed in knots, got {speed_kt!r}.")
+    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
+    if user_gs_kt <= 0.0:
+        raise ValueError(
+            "Cannot time a runway incursion against a stationary aircraft: its arrival "
+            "at the crossing point is undefined."
+        )
+    return speed_kt, user_gs_kt
+
+
+def _incursion_crossing_point_and_timing(
+    runway: Runway,
+    user_state: AircraftState,
+    user_gs_kt: float,
+    cross_at_along_track_nm: float,
+    lead_time_before_user_arrival_s: float,
+) -> tuple[GeoPosition, float]:
+    """The crossing point on the centreline, and the elapsed time the vehicle reaches it."""
+    on_centreline = point_at_distance_and_bearing(
+        runway.threshold, cross_at_along_track_nm, runway.true_bearing_deg
+    )
+    crossing_point = GeoPosition(
+        latitude=on_centreline.latitude,
+        longitude=on_centreline.longitude,
+        altitude_ft=runway.elevation_ft,
+    )
+    user_position = GeoPosition(
+        latitude=user_state.latitude,
+        longitude=user_state.longitude,
+        altitude_ft=user_state.altitude_ft,
+    )
+    distance_to_crossing_nm, _ = distance_and_bearing(user_position, crossing_point)
+    t_user_arrival_s = distance_to_crossing_nm / user_gs_kt * SECONDS_PER_HOUR
+    t_cross_s = max(0.0, t_user_arrival_s - lead_time_before_user_arrival_s)
+    return crossing_point, t_cross_s
+
+
+def _incursion_waypoints(
+    crossing_point: GeoPosition,
+    t_cross_s: float,
+    speed_kt: float,
+    runway: Runway,
+    from_side: Literal["left", "right"],
+) -> tuple[TrafficWaypoint, ...]:
+    """The vehicle's waypoints: an optional staging leg, the crossing, and the far side."""
+    # A vehicle coming FROM the left crosses towards the right: its heading is
+    # the runway axis + 90°, and it starts one offset behind the centreline
+    # along its own (negative) track.
+    vehicle_heading_deg = (
+        runway.true_bearing_deg + (90.0 if from_side == "left" else -90.0)
+    ) % 360.0
+    offset_nm = RUNWAY_INCURSION_DEFAULT_OFFSET_M / METRES_PER_NAUTICAL_MILE
+    start_point = point_at_distance_and_bearing(crossing_point, -offset_nm, vehicle_heading_deg)
+    end_point = point_at_distance_and_bearing(crossing_point, offset_nm, vehicle_heading_deg)
+    # §6.1 as written: the far side is reached at the time 2x offset takes at
+    # the vehicle's speed, counted from the crossing moment.
+    t_end_s = t_cross_s + (2.0 * offset_nm) / speed_kt * SECONDS_PER_HOUR
+
+    waypoints: list[TrafficWaypoint] = []
+    if t_cross_s > 0.0:
+        # The staging leg is a timing artifact — its stated speed is the creep
+        # the schedule implies, not the commanded crossing speed.
+        staging_speed_kt = offset_nm / t_cross_s * SECONDS_PER_HOUR
+        waypoints.append(
+            TrafficWaypoint(
+                position=start_point, speed_kt=staging_speed_kt, t_offset_s=0.0, on_ground=True
+            )
+        )
+    # When t_cross_s clamps to 0.0 the vehicle is already crossing at spawn:
+    # the track starts on the centreline (two tied t=0 waypoints would be
+    # rejected by the model, and rightly — spawn is t=0, once).
+    waypoints.append(
+        TrafficWaypoint(
+            position=crossing_point, speed_kt=speed_kt, t_offset_s=t_cross_s, on_ground=True
+        )
+    )
+    waypoints.append(
+        TrafficWaypoint(position=end_point, speed_kt=0.0, t_offset_s=t_end_s, on_ground=True)
+    )
+    return tuple(waypoints)
+
+
 def runway_incursion_track(
     runway: Runway,
     user_state: AircraftState,
@@ -667,74 +761,18 @@ def runway_incursion_track(
             undefined, so no honest crossing time exists) or a non-positive
             vehicle speed.
     """
-    speed_kt = RUNWAY_INCURSION_DEFAULT_SPEED_KT if vehicle_speed_kt is None else vehicle_speed_kt
-    if speed_kt <= 0.0:
-        raise ValueError(f"vehicle_speed_kt must be a positive speed in knots, got {speed_kt!r}.")
-    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
-    if user_gs_kt <= 0.0:
-        raise ValueError(
-            "Cannot time a runway incursion against a stationary aircraft: its arrival "
-            "at the crossing point is undefined."
-        )
-
-    on_centreline = point_at_distance_and_bearing(
-        runway.threshold, cross_at_along_track_nm, runway.true_bearing_deg
+    speed_kt, user_gs_kt = _validate_incursion_speeds(vehicle_speed_kt, user_state)
+    crossing_point, t_cross_s = _incursion_crossing_point_and_timing(
+        runway, user_state, user_gs_kt, cross_at_along_track_nm, lead_time_before_user_arrival_s
     )
-    crossing_point = GeoPosition(
-        latitude=on_centreline.latitude,
-        longitude=on_centreline.longitude,
-        altitude_ft=runway.elevation_ft,
-    )
-    user_position = GeoPosition(
-        latitude=user_state.latitude,
-        longitude=user_state.longitude,
-        altitude_ft=user_state.altitude_ft,
-    )
-    distance_to_crossing_nm, _ = distance_and_bearing(user_position, crossing_point)
-    t_user_arrival_s = distance_to_crossing_nm / user_gs_kt * SECONDS_PER_HOUR
-    t_cross_s = max(0.0, t_user_arrival_s - lead_time_before_user_arrival_s)
-
-    # A vehicle coming FROM the left crosses towards the right: its heading is
-    # the runway axis + 90°, and it starts one offset behind the centreline
-    # along its own (negative) track.
-    vehicle_heading_deg = (
-        runway.true_bearing_deg + (90.0 if from_side == "left" else -90.0)
-    ) % 360.0
-    offset_nm = RUNWAY_INCURSION_DEFAULT_OFFSET_M / METRES_PER_NAUTICAL_MILE
-    start_point = point_at_distance_and_bearing(crossing_point, -offset_nm, vehicle_heading_deg)
-    end_point = point_at_distance_and_bearing(crossing_point, offset_nm, vehicle_heading_deg)
-    # §6.1 as written: the far side is reached at the time 2x offset takes at
-    # the vehicle's speed, counted from the crossing moment.
-    t_end_s = t_cross_s + (2.0 * offset_nm) / speed_kt * SECONDS_PER_HOUR
-
-    waypoints: list[TrafficWaypoint] = []
-    if t_cross_s > 0.0:
-        # The staging leg is a timing artifact — its stated speed is the creep
-        # the schedule implies, not the commanded crossing speed.
-        staging_speed_kt = offset_nm / t_cross_s * SECONDS_PER_HOUR
-        waypoints.append(
-            TrafficWaypoint(
-                position=start_point, speed_kt=staging_speed_kt, t_offset_s=0.0, on_ground=True
-            )
-        )
-    # When t_cross_s clamps to 0.0 the vehicle is already crossing at spawn:
-    # the track starts on the centreline (two tied t=0 waypoints would be
-    # rejected by the model, and rightly — spawn is t=0, once).
-    waypoints.append(
-        TrafficWaypoint(
-            position=crossing_point, speed_kt=speed_kt, t_offset_s=t_cross_s, on_ground=True
-        )
-    )
-    waypoints.append(
-        TrafficWaypoint(position=end_point, speed_kt=0.0, t_offset_s=t_end_s, on_ground=True)
-    )
+    waypoints = _incursion_waypoints(crossing_point, t_cross_s, speed_kt, runway, from_side)
 
     return TrafficTrack(
         kind=kind,
         scenario_shape="runway_incursion",
         callsign=callsign,
         label=f"Runway incursion, {runway.airport_icao} {runway.ident}",
-        waypoints=tuple(waypoints),
+        waypoints=waypoints,
     )
 
 
