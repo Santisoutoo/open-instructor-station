@@ -6,13 +6,12 @@ write is an idempotent REST call.
 
 Surface:
 
-* ``GET  /api/health`` — liveness and which simulator is attached.
-* ``GET  /api/capabilities`` — the adapter's raw capability flags.
-* ``GET  /api/state`` — one aircraft snapshot.
-* ``GET  /api/aircraft/controls`` — per-control writability, with a stated
-  reason for everything that is disabled.
-* ``POST /api/aircraft/setup`` — apply an :class:`~core.models.AircraftSetup`.
-* ``WS   /ws/state`` — the ~4 Hz live feed.
+* ``GET  /api/health``, ``GET /api/capabilities``, ``GET /api/state``, the
+  Aircraft Control panel's ``/api/aircraft/*`` and ``WS /ws/state`` — the one
+  part of the surface with no manager of its own, registered in
+  :mod:`server.system_routes`. Its response models and helpers
+  (``AircraftControlId``, ``_CONTROL_FIELDS``, ``_build_manifest``, ...) stay
+  in this module — see :mod:`server.system_routes`'s own docstring for why.
 * ``/api/navdata/*`` and ``/api/position/*`` — the Position Manager, in
   :mod:`server.navdata_routes` and :mod:`server.position_routes`.
 * ``/api/weather/*`` — the Weather Manager, in :mod:`server.weather_routes`.
@@ -39,14 +38,14 @@ from contextlib import asynccontextmanager, suppress
 from pathlib import Path
 from typing import Literal, get_args
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from core.models import AircraftSetup, AircraftState
 from core.navdata.provider import NavdataUnavailable
-from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
+from core.sim_adapter import SimAdapter
 from server import (
     failure_routes,
     fuel_payload_routes,
@@ -58,13 +57,10 @@ from server import (
     traffic_routes,
     weather_routes,
 )
-from server.constants import CAPABILITY_UNAVAILABLE_STATUS
-from server.constants import POLL_INTERVAL_S as STATE_STREAM_INTERVAL_S
 from server.deps import get_adapter, load_airframe_info
 
 __all__ = [
     "CONTROL_IDS",
-    "STATE_STREAM_INTERVAL_S",
     "UI_DIST",
     "AircraftControlId",
     "AircraftControlManifest",
@@ -305,85 +301,17 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    @app.get("/api/health", tags=["system"], response_model=HealthResponse)
-    async def health() -> HealthResponse:
-        """Liveness plus which simulator we are talking to."""
-        adapter = get_adapter()
-        return HealthResponse(
-            status="ok",
-            adapter=adapter.name,
-            connected=adapter.is_connected,
-        )
-
-    @app.get("/api/capabilities", tags=["system"], response_model=Capabilities)
-    async def capabilities() -> Capabilities:
-        """What the active adapter supports. The UI disables the rest."""
-        return get_adapter().capabilities
-
-    @app.get("/api/state", tags=["aircraft"], response_model=AircraftState)
-    async def state() -> AircraftState:
-        """One snapshot of the user aircraft."""
-        return await get_adapter().get_aircraft_state()
-
-    @app.get(
-        "/api/aircraft/controls",
-        tags=["aircraft"],
-        response_model=AircraftControlManifest,
-    )
-    async def aircraft_controls() -> AircraftControlManifest:
-        """Which Aircraft Control panel controls are writable, and why the rest are not.
-
-        The panel renders every control in this list. Entries with
-        ``supported = false`` render disabled, showing ``reason`` — the UI never
-        calls an endpoint the adapter cannot honour and never catches a failure
-        it could have prevented.
-        """
-        return _build_manifest(get_adapter())
-
-    @app.post(
-        "/api/aircraft/setup",
-        tags=["aircraft"],
-        response_model=AircraftSetupResult,
-    )
-    async def apply_aircraft_setup(setup: AircraftSetup) -> AircraftSetupResult:
-        """Apply every field of ``setup`` that is set, leaving the rest untouched.
-
-        Idempotent: the body states target values, not deltas, so replaying it is
-        harmless. Any field whose control is unsupported is refused as a whole
-        with ``501`` and a stated reason rather than partially applied.
-        """
-        adapter = get_adapter()
-        requested = set(setup.model_dump(exclude_none=True))
-        blocked = _blocked_reasons(adapter, requested)
-        if blocked:
-            raise HTTPException(
-                status_code=CAPABILITY_UNAVAILABLE_STATUS,
-                detail="Unavailable on this adapter — " + " ".join(blocked),
-            )
-        try:
-            await adapter.apply_setup(setup)
-        except CapabilityNotSupported as exc:
-            # Defence in depth: the manifest should already have disabled this.
-            raise HTTPException(status_code=CAPABILITY_UNAVAILABLE_STATUS, detail=str(exc)) from exc
-        return AircraftSetupResult(applied=setup, state=await adapter.get_aircraft_state())
-
-    @app.websocket("/ws/state")
-    async def state_socket(websocket: WebSocket) -> None:
-        """Push the aircraft state at ~4 Hz until the client goes away."""
-        await websocket.accept()
-        adapter = get_adapter()
-        try:
-            async for aircraft_state in adapter.stream_state(STATE_STREAM_INTERVAL_S):
-                await websocket.send_text(aircraft_state.model_dump_json())
-        except WebSocketDisconnect:
-            logger.debug("State WebSocket client disconnected")
-        except Exception:
-            logger.exception("State stream failed; closing the WebSocket")
-            with suppress(Exception):
-                await websocket.close(code=1011)
+    # Deferred, not at module level: server.system_routes imports the Aircraft
+    # Control models/helpers straight out of this module (so
+    # tests/server/test_app.py's server.app._CONTROL_FIELDS patch stays
+    # effective), and importing it here — after everything it needs is
+    # already defined above — avoids the import cycle a module-level import
+    # would create.
+    from server import system_routes
 
     # The feature managers live in their own routers; this module stays the
     # shell. Registered before the UI mount, which claims "/".
+    app.include_router(system_routes.router)
     app.include_router(geodesy_routes.router)
     app.include_router(navdata_routes.router)
     app.include_router(position_routes.router)
