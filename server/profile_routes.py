@@ -40,6 +40,7 @@ from server.weather_routes import WeatherApplyResult
 from server.weather_routes import _resolve as _resolve_weather
 
 __all__ = [
+    "IMPORT_VALIDATION_STATUS",
     "ProfileApplyResult",
     "ProfileFailureOutcome",
     "ProfilePositionOutcome",
@@ -54,6 +55,11 @@ router = APIRouter(prefix="/api/profiles", tags=["profiles"])
 
 _NOT_FOUND = "No training profile {id!r}."
 _MAY_BE_DELETED = "No training profile {id!r} — it may already be deleted."
+
+#: An uploaded ``.json`` that does not validate as a
+#: :class:`~core.profiles.models.TrainingProfile`. The upload is well-formed
+#: as a request, the *content* fails the schema — no partial import.
+IMPORT_VALIDATION_STATUS = 422
 
 
 # ---------------------------------------------------------------------------
@@ -391,7 +397,7 @@ async def import_profile(file: UploadFile = File(...)) -> TrainingProfile:
     try:
         return get_profile_store().import_bytes(raw)
     except ValidationError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=IMPORT_VALIDATION_STATUS, detail=str(exc)) from exc
     except ProfileStoreError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
