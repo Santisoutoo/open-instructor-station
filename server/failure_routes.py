@@ -47,6 +47,7 @@ from core.failures import (
     InjectFailureRequest,
 )
 from core.sim_adapter import CapabilityNotSupported
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter
 
 if TYPE_CHECKING:
@@ -54,7 +55,6 @@ if TYPE_CHECKING:
     from core.sim_adapter import SimAdapter
 
 __all__ = [
-    "CAPABILITY_UNAVAILABLE_STATUS",
     "FAILURE_EVAL_INTERVAL_S",
     "FailureCatalogueEntry",
     "FailureCatalogueResponse",
@@ -64,10 +64,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather than
-#: imported to keep the import edge one-way: ``app`` includes these routers.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 #: Watcher tick rate: trigger latency is bounded by one frame (§6.3).
 FAILURE_EVAL_INTERVAL_S = 0.25

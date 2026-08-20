@@ -58,6 +58,7 @@ from server import (
     traffic_routes,
     weather_routes,
 )
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, load_airframe_info
 
 __all__ = [
@@ -83,12 +84,6 @@ UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"
 #: The Vite dev server. CORS is permissive because the station is a LAN tool,
 #: not a public site.
 DEV_ORIGINS = ["http://localhost:5173", "http://127.0.0.1:5173"]
-
-#: Status used for "the active adapter cannot do this". 501 rather than 4xx: the
-#: request is well-formed, the *server* has no implementation behind it. The UI
-#: is expected to have disabled the control long before it gets here — reaching
-#: this response means a caller ignored ``GET /api/aircraft/controls``.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 
 # ---------------------------------------------------------------------------

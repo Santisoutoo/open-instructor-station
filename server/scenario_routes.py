@@ -32,6 +32,7 @@ from core.scenarios.loader import LoadedScenario, load_all_scenarios
 from core.scenarios.models import ScenarioDocument
 from core.scenarios.preflight import missing_capabilities
 from core.sim_adapter import Capabilities
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_navdata
 from server.scenario_engine import (
     ScenarioAlreadyRunning,
@@ -42,16 +43,11 @@ from server.scenario_engine import (
 )
 
 __all__ = [
-    "CAPABILITY_UNAVAILABLE_STATUS",
     "ScenarioDetail",
     "ScenarioManifest",
     "ScenarioSummary",
     "router",
 ]
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather
-#: than imported to keep the import edge one-way: ``app`` includes this router.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 router = APIRouter(prefix="/api/scenarios", tags=["scenarios"])
 

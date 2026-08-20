@@ -71,6 +71,7 @@ from core.placements import (
     WaypointPlacementRequest,
 )
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_airframe_info, get_navdata
 
 __all__ = [
@@ -93,10 +94,6 @@ __all__ = [
     "execute_placement",
     "router",
 ]
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather than
-#: imported to keep the import edge one-way: ``app`` includes these routers.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 #: A leg that carries no defensible coordinate. 422 rather than 404: the leg
 #: exists and was found, it simply cannot be a position. The UI has already

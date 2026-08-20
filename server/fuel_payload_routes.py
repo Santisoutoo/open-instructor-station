@@ -39,10 +39,10 @@ from core.fuel_payload.models import (
 )
 from core.models import AircraftSetup, AirframeInfo, AirframeMassLimits, Loadout, LoadoutState
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_airframe_info
 
 __all__ = [
-    "CAPABILITY_UNAVAILABLE_STATUS",
     "ENVELOPE_VIOLATION_STATUS",
     "FuelPayloadApplyResult",
     "FuelPayloadManifest",
@@ -51,10 +51,6 @@ __all__ = [
     "FuelPayloadState",
     "router",
 ]
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather than
-#: imported to keep the import edge one-way: ``app`` includes these routers.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 #: A resolved loadout that is verifiably outside the CG envelope, and the
 #: instructor did not set ``override_envelope`` (D8). The request is

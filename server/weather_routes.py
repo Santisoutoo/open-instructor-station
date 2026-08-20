@@ -29,6 +29,7 @@ from core.navdata.provider import NavdataProvider
 from core.sim_adapter import CapabilityNotSupported, SimAdapter, WeatherRejected
 from core.weather.models import WeatherPresetId, WeatherRequest, WeatherSetup, WeatherState
 from core.weather.presets import WEATHER_PRESETS, resolve_request
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_navdata
 
 __all__ = [
@@ -40,11 +41,6 @@ __all__ = [
     "WeatherPreview",
     "router",
 ]
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS`` /
-#: ``server.position_routes.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather
-#: than imported to keep the import edge one-way: ``app`` includes this router.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 #: A request whose data cannot answer it — a preset needing a runway or a
 #: field elevation it was not given. Mirrors
