@@ -22,12 +22,13 @@ refusal inside its 200 body instead.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Coroutine
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ValidationError
 
-from core.failures import FailureRef
+from core.failures import ArmedFailure, FailureRef
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
 from core.profiles.models import ProfileSummary, TrainingProfile, TrainingProfileCreate
 from core.profiles.store import ProfileStore, ProfileStoreError
@@ -204,6 +205,41 @@ async def _apply_weather(
     )
 
 
+async def _attempt_failure_action[T](
+    ref: FailureRef,
+    coro: Coroutine[object, object, T],
+    *,
+    on_success: Callable[[FailureRef, T], ProfileFailureOutcome],
+    profile_id: str,
+) -> ProfileFailureOutcome:
+    """Await one failure-manager call, D8's own exception handling either way.
+
+    Shared by both ``_apply_failures`` loops (immediate injection, arming):
+    they only ever differ in what they await and in how a *successful* result
+    becomes a :class:`ProfileFailureOutcome` — the exception handling and the
+    failure-path outcome shape (``applied=False, armed=False, reason=...``)
+    are identical between them. ``on_success`` takes ``ref`` explicitly
+    (rather than closing over a loop variable) so neither call site needs a
+    lambda default-argument trick to stay correct.
+    """
+    try:
+        result = await coro
+    except (CapabilityNotSupported, HTTPException, ValueError) as exc:
+        return ProfileFailureOutcome(ref=ref, applied=False, armed=False, reason=_reason(exc))
+    except Exception as exc:  # D8's own defensive fallback
+        reason = _unexpected_reason(exc, component="failures", profile_id=profile_id)
+        return ProfileFailureOutcome(ref=ref, applied=False, armed=False, reason=reason)
+    return on_success(ref, result)
+
+
+def _injected_outcome(ref: FailureRef, _result: None) -> ProfileFailureOutcome:
+    return ProfileFailureOutcome(ref=ref, applied=True, armed=False)
+
+
+def _armed_outcome(ref: FailureRef, armed: ArmedFailure) -> ProfileFailureOutcome:
+    return ProfileFailureOutcome(ref=ref, applied=True, armed=True, armed_id=armed.armed_id)
+
+
 async def _apply_failures(
     document: ScenarioDocument, *, adapter: SimAdapter, profile_id: str
 ) -> tuple[ProfileFailureOutcome, ...]:
@@ -214,42 +250,26 @@ async def _apply_failures(
     outcomes: list[ProfileFailureOutcome] = []
 
     for ref in block.immediate:
-        try:
-            await adapter.inject_failure(ref)
-        except (CapabilityNotSupported, HTTPException, ValueError) as exc:
-            outcomes.append(
-                ProfileFailureOutcome(ref=ref, applied=False, armed=False, reason=_reason(exc))
+        outcomes.append(
+            await _attempt_failure_action(
+                ref,
+                adapter.inject_failure(ref),
+                on_success=_injected_outcome,
+                profile_id=profile_id,
             )
-            continue
-        except Exception as exc:  # D8's own defensive fallback
-            reason = _unexpected_reason(exc, component="failures", profile_id=profile_id)
-            outcomes.append(
-                ProfileFailureOutcome(ref=ref, applied=False, armed=False, reason=reason)
-            )
-            continue
-        outcomes.append(ProfileFailureOutcome(ref=ref, applied=True, armed=False))
+        )
 
     for armed_request in block.armed:
         armed_ref = FailureRef(
             failure_id=armed_request.failure_id, engine_index=armed_request.engine_index
         )
-        try:
-            armed = await arm_failure(armed_request, adapter=adapter)
-        except (CapabilityNotSupported, HTTPException, ValueError) as exc:
-            outcomes.append(
-                ProfileFailureOutcome(
-                    ref=armed_ref, applied=False, armed=False, reason=_reason(exc)
-                )
-            )
-            continue
-        except Exception as exc:  # D8's own defensive fallback
-            reason = _unexpected_reason(exc, component="failures", profile_id=profile_id)
-            outcomes.append(
-                ProfileFailureOutcome(ref=armed_ref, applied=False, armed=False, reason=reason)
-            )
-            continue
         outcomes.append(
-            ProfileFailureOutcome(ref=armed_ref, applied=True, armed=True, armed_id=armed.armed_id)
+            await _attempt_failure_action(
+                armed_ref,
+                arm_failure(armed_request, adapter=adapter),
+                on_success=_armed_outcome,
+                profile_id=profile_id,
+            )
         )
 
     return tuple(outcomes)
