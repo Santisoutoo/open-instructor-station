@@ -551,34 +551,16 @@ def build_index(
     started = time.monotonic()
     pump = _Progress(progress)
     skipped = _SkipCounter()
-
-    try:
-        connection = sqlite3.connect(destination)
-    except sqlite3.Error as error:  # pragma: no cover - disk-level failure
-        raise NavdataIndexError(
-            f"Could not create the navdata index at {destination}: {error}"
-        ) from error
+    connection = _connect_for_build(destination)
 
     try:
         prepare_for_build(connection)
         apply_schema(connection)
 
-        counts = _index_airports(connection, sources, pump, cancel, skipped, cifp_idents)
+        counts = _index_all_sources(connection, sources, pump, cancel, skipped, cifp_idents)
         if counts is None:
             return None
-        airports, runways, parking = counts
-
-        navaids = _index_navaids(connection, sources, pump, cancel, skipped)
-        if navaids is None:
-            return None
-
-        fixes = _index_fixes(connection, sources, pump, cancel, skipped)
-        if fixes is None:
-            return None
-
-        holds = _index_holds(connection, sources, pump, cancel, skipped)
-        if holds is None:
-            return None
+        airports, runways, parking, navaids, fixes, holds = counts
 
         stats = BuildStats(
             airport_count=airports,
@@ -590,13 +572,7 @@ def build_index(
             skipped_record_count=skipped.total,
             duration_s=time.monotonic() - started,
         )
-
-        pump.enter("finalising")
-        _write_metadata(connection, sources, stats)
-        connection.commit()
-        for statement in FINALISE_PRAGMAS:
-            connection.execute(statement)
-        pump.update(1.0, "index written")
+        _finalise_build(connection, sources, stats, pump)
     except sqlite3.Error as error:
         raise NavdataIndexError(f"The navdata index build failed: {error}") from error
     except OSError as error:
@@ -605,6 +581,69 @@ def build_index(
         connection.close()
 
     return stats
+
+
+def _connect_for_build(destination: Path) -> sqlite3.Connection:
+    """Open (or create) the sqlite file at ``destination`` for a fresh build.
+
+    Raises:
+        NavdataIndexError: disk-level failure.
+    """
+    try:
+        return sqlite3.connect(destination)
+    except sqlite3.Error as error:  # pragma: no cover - disk-level failure
+        raise NavdataIndexError(
+            f"Could not create the navdata index at {destination}: {error}"
+        ) from error
+
+
+def _index_all_sources(
+    connection: sqlite3.Connection,
+    sources: ResolvedSources,
+    pump: _Progress,
+    cancel: Event | None,
+    skipped: _SkipCounter,
+    cifp_idents: frozenset[str],
+) -> tuple[int, int, int, int, int, int] | None:
+    """Run every indexing pass in turn, stopping early if cancelled.
+
+    Returns:
+        ``(airports, runways, parking, navaids, fixes, holds)`` counts, or
+        ``None`` when the build was cancelled partway through.
+    """
+    counts = _index_airports(connection, sources, pump, cancel, skipped, cifp_idents)
+    if counts is None:
+        return None
+    airports, runways, parking = counts
+
+    navaids = _index_navaids(connection, sources, pump, cancel, skipped)
+    if navaids is None:
+        return None
+
+    fixes = _index_fixes(connection, sources, pump, cancel, skipped)
+    if fixes is None:
+        return None
+
+    holds = _index_holds(connection, sources, pump, cancel, skipped)
+    if holds is None:
+        return None
+
+    return airports, runways, parking, navaids, fixes, holds
+
+
+def _finalise_build(
+    connection: sqlite3.Connection,
+    sources: ResolvedSources,
+    stats: BuildStats,
+    pump: _Progress,
+) -> None:
+    """Write metadata, commit and apply the finalise pragmas."""
+    pump.enter("finalising")
+    _write_metadata(connection, sources, stats)
+    connection.commit()
+    for statement in FINALISE_PRAGMAS:
+        connection.execute(statement)
+    pump.update(1.0, "index written")
 
 
 class _SkipCounter:
