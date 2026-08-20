@@ -776,6 +776,80 @@ def runway_incursion_track(
     )
 
 
+def _resolve_sequence_speed_kt(ias_kt: float | None, category: ApproachCategory) -> float:
+    """The approach speed shared by every track in the sequence, validated.
+
+    Raises:
+        ValueError: for a non-positive approach speed.
+    """
+    speed_kt = APPROACH_CATEGORY_VAT_KT[category] if ias_kt is None else ias_kt
+    if speed_kt <= 0.0:
+        raise ValueError(f"ias_kt must be a positive speed in knots, got {speed_kt!r}.")
+    return speed_kt
+
+
+def _runway_threshold_and_rollout(runway: Runway) -> tuple[GeoPosition, GeoPosition, float]:
+    """The threshold at field elevation, and where the ground roll ends."""
+    threshold = GeoPosition(
+        latitude=runway.threshold.latitude,
+        longitude=runway.threshold.longitude,
+        altitude_ft=runway.elevation_ft,
+    )
+    # The rollout ends half the pavement down the runway — far enough to be
+    # clearly a landed aircraft, never past the far end.
+    rollout_distance_nm = (runway.length_m / 2.0) / METRES_PER_NAUTICAL_MILE
+    rollout_point = point_at_distance_and_bearing(
+        threshold, rollout_distance_nm, runway.true_bearing_deg
+    )
+    return threshold, rollout_point, rollout_distance_nm
+
+
+def _approach_sequence_track(
+    runway: Runway,
+    distance_nm: float,
+    index: int,
+    speed_kt: float,
+    threshold: GeoPosition,
+    rollout_point: GeoPosition,
+    rollout_distance_nm: float,
+    kind: TrafficKind,
+    callsign_prefix: str,
+) -> TrafficTrack:
+    """One aircraft's track in the sequence: final approach, threshold, rollout.
+
+    Raises:
+        ValueError: for a non-positive distance.
+    """
+    if distance_nm <= 0.0:
+        raise ValueError(f"distances_nm must be positive, got {distance_nm!r}.")
+    start = final_approach_point(runway, distance_nm, DEFAULT_GLIDESLOPE_DEG)
+    t_threshold_s = distance_nm / speed_kt * SECONDS_PER_HOUR
+    # The ground roll decelerates from approach speed towards a stop, so
+    # the leg is timed at half the approach speed — its average.
+    t_rollout_s = t_threshold_s + rollout_distance_nm / (speed_kt / 2.0) * SECONDS_PER_HOUR
+    return TrafficTrack(
+        kind=kind,
+        scenario_shape="approach_sequence",
+        callsign=f"{callsign_prefix}{index + 1:02d}",
+        label=f"{runway.airport_icao} {runway.ident} final, {distance_nm:g} NM",
+        waypoints=(
+            TrafficWaypoint(position=start, speed_kt=speed_kt, t_offset_s=0.0),
+            TrafficWaypoint(
+                position=threshold,
+                speed_kt=speed_kt,
+                t_offset_s=t_threshold_s,
+                on_ground=True,
+            ),
+            TrafficWaypoint(
+                position=rollout_point,
+                speed_kt=0.0,
+                t_offset_s=t_rollout_s,
+                on_ground=True,
+            ),
+        ),
+    )
+
+
 def approach_sequence_tracks(
     runway: Runway,
     *,
@@ -800,55 +874,22 @@ def approach_sequence_tracks(
     Raises:
         ValueError: for a non-positive approach speed or distance.
     """
-    speed_kt = APPROACH_CATEGORY_VAT_KT[category] if ias_kt is None else ias_kt
-    if speed_kt <= 0.0:
-        raise ValueError(f"ias_kt must be a positive speed in knots, got {speed_kt!r}.")
-
-    threshold = GeoPosition(
-        latitude=runway.threshold.latitude,
-        longitude=runway.threshold.longitude,
-        altitude_ft=runway.elevation_ft,
-    )
-    # The rollout ends half the pavement down the runway — far enough to be
-    # clearly a landed aircraft, never past the far end.
-    rollout_distance_nm = (runway.length_m / 2.0) / METRES_PER_NAUTICAL_MILE
-    rollout_point = point_at_distance_and_bearing(
-        threshold, rollout_distance_nm, runway.true_bearing_deg
-    )
-
-    tracks: list[TrafficTrack] = []
-    for index, distance_nm in enumerate(distances_nm):
-        if distance_nm <= 0.0:
-            raise ValueError(f"distances_nm must be positive, got {distance_nm!r}.")
-        start = final_approach_point(runway, distance_nm, DEFAULT_GLIDESLOPE_DEG)
-        t_threshold_s = distance_nm / speed_kt * SECONDS_PER_HOUR
-        # The ground roll decelerates from approach speed towards a stop, so
-        # the leg is timed at half the approach speed — its average.
-        t_rollout_s = t_threshold_s + rollout_distance_nm / (speed_kt / 2.0) * SECONDS_PER_HOUR
-        tracks.append(
-            TrafficTrack(
-                kind=kind,
-                scenario_shape="approach_sequence",
-                callsign=f"{callsign_prefix}{index + 1:02d}",
-                label=f"{runway.airport_icao} {runway.ident} final, {distance_nm:g} NM",
-                waypoints=(
-                    TrafficWaypoint(position=start, speed_kt=speed_kt, t_offset_s=0.0),
-                    TrafficWaypoint(
-                        position=threshold,
-                        speed_kt=speed_kt,
-                        t_offset_s=t_threshold_s,
-                        on_ground=True,
-                    ),
-                    TrafficWaypoint(
-                        position=rollout_point,
-                        speed_kt=0.0,
-                        t_offset_s=t_rollout_s,
-                        on_ground=True,
-                    ),
-                ),
-            )
+    speed_kt = _resolve_sequence_speed_kt(ias_kt, category)
+    threshold, rollout_point, rollout_distance_nm = _runway_threshold_and_rollout(runway)
+    return tuple(
+        _approach_sequence_track(
+            runway,
+            distance_nm,
+            index,
+            speed_kt,
+            threshold,
+            rollout_point,
+            rollout_distance_nm,
+            kind,
+            callsign_prefix,
         )
-    return tuple(tracks)
+        for index, distance_nm in enumerate(distances_nm)
+    )
 
 
 def taxi_traffic_track(
