@@ -11,7 +11,7 @@
  * compile-time type says nothing about what actually arrives over a WebSocket.
  */
 
-import type { components } from './schema';
+import type { components, operations } from './schema';
 
 /** Live aircraft state: `GET /api/state` and every `WS /ws/state` frame. */
 export type AircraftState = components['schemas']['AircraftState'];
@@ -90,6 +90,21 @@ export type ProcedureKind = ProcedureSummary['kind'];
 /** A published holding pattern. */
 export type Hold = components['schemas']['Hold'];
 
+/** A ground-based navigation aid — `GET /api/navdata/navaids`. */
+export type Navaid = components['schemas']['Navaid'];
+
+/** The closed set of navaid kinds, straight from the server's enum. */
+export type NavaidKind = Navaid['kind'];
+
+/** A named waypoint from the enroute/terminal fix tables — `GET /api/navdata/fixes`. */
+export type Fix = components['schemas']['Fix'];
+
+/** Anything positionable, reduced to what a placement needs (procedure legs, holds). */
+export type Waypoint = components['schemas']['Waypoint'];
+
+/** The exact WGS84 answer of `GET /api/geodesy/measure`. */
+export type MeasureResult = components['schemas']['MeasureResult'];
+
 /** A point on the WGS84 ellipsoid. */
 export type GeoPosition = components['schemas']['GeoPosition'];
 
@@ -122,6 +137,10 @@ export type ApplyPlacementRequest = components['schemas']['ApplyPlacementRequest
  * `switch` on `type` stops compiling until the panel handles it.
  */
 export type PlacementRequest = ApplyPlacementRequest['placement'];
+
+/** The bare where-and-how placement the map's drag/click staging builds. */
+export type CoordinatePlacementRequest =
+  components['schemas']['CoordinatePlacementRequest'];
 
 /** The named runway-relative placements: the six finals, short final, and eight circuit legs. */
 export type RunwayPlacementName =
@@ -360,6 +379,73 @@ export type CameraViewRequest = components['schemas']['CameraViewRequest'];
  */
 export type CameraCommandResult = components['schemas']['CameraCommandResult'];
 
+// ---------------------------------------------------------------------------
+// AI Traffic Manager
+// ---------------------------------------------------------------------------
+
+/** One live traffic entity — `GET /api/traffic/status` and every `WS /ws/traffic` frame. */
+export type TrafficContact = components['schemas']['TrafficContact'];
+
+/** The three spawnable kinds: aircraft, ground vehicle, bird. */
+export type TrafficKind = TrafficContact['kind'];
+
+/** Which scenario shape a track was built for — a display label, never branched on. */
+export type TrafficScenarioShape = TrafficContact['scenario_shape'];
+
+/** One timed point on a traffic entity's path. `t_offset_s` is seconds after spawn. */
+export type TrafficWaypoint = components['schemas']['TrafficWaypoint'];
+
+/** A complete, timed path for one entity — what the bridge is handed. */
+export type TrafficTrack = components['schemas']['TrafficTrack'];
+
+/** `GET /api/traffic/status`, and the body of every despawn/clear response. */
+export type TrafficStatus = components['schemas']['TrafficStatus'];
+
+/** `POST /api/traffic/spawn` — one contact per track the request resolved into. */
+export type TrafficSpawnResult = components['schemas']['TrafficSpawnResult'];
+
+/** Converge an intruder on the user aircraft's own projected track. */
+export type TcasConflictSpawnRequest =
+  components['schemas']['TcasConflictSpawnRequest'];
+
+/** The three named TCAS presets. */
+export type TcasSeverity = TcasConflictSpawnRequest['severity'];
+
+/** A vehicle or aircraft crossing the runway, timed to the user's own closing speed. */
+export type RunwayIncursionSpawnRequest =
+  components['schemas']['RunwayIncursionSpawnRequest'];
+
+/** `n` aircraft on the same final, at named distances. */
+export type ApproachSequenceSpawnRequest =
+  components['schemas']['ApproachSequenceSpawnRequest'];
+
+/**
+ * ICAO approach category as the traffic spawn form needs it.
+ *
+ * {@link ApproachCategory} comes off an optional position-request field and is therefore
+ * nullable; this one is the same closed set without the `null`, because the traffic
+ * request defaults it server-side.
+ */
+export type TrafficApproachCategory = ApproachSequenceSpawnRequest['category'];
+
+/** A traffic entity ground-taxiing an explicit route. */
+export type TaxiTrafficSpawnRequest =
+  components['schemas']['TaxiTrafficSpawnRequest'];
+
+/** The escape hatch: a hand-built track, e.g. authored from map clicks. */
+export type CustomTrackSpawnRequest =
+  components['schemas']['CustomTrackSpawnRequest'];
+
+/**
+ * The discriminated union `POST /api/traffic/spawn` takes.
+ *
+ * Read off the operation's own request body rather than spelled out member by member, so
+ * a spawn shape added on the server arrives here without an edit — and a `switch` on
+ * `type` stops compiling until the panel handles it.
+ */
+export type TrafficSpawnRequest =
+  operations['spawn_traffic_api_traffic_spawn_post']['requestBody']['content']['application/json'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',
@@ -389,4 +475,53 @@ export function isAircraftState(value: unknown): value is AircraftState {
     const raw = candidate[field];
     return typeof raw === 'number' && Number.isFinite(raw);
   });
+}
+
+/** Numeric members of {@link TrafficContact}, used by the `/ws/traffic` payload guard. */
+const NUMERIC_CONTACT_FIELDS = [
+  'latitude',
+  'longitude',
+  'altitude_ft',
+  'heading_deg',
+  'ground_speed_kt',
+  'vertical_speed_fpm',
+] as const satisfies ReadonlyArray<keyof TrafficContact>;
+
+/** String members of {@link TrafficContact} the panel renders or keys on. */
+const STRING_CONTACT_FIELDS = [
+  'traffic_id',
+  'kind',
+  'scenario_shape',
+  'callsign',
+  'label',
+] as const satisfies ReadonlyArray<keyof TrafficContact>;
+
+function isTrafficContact(value: unknown): value is TrafficContact {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+  const candidate = value as Record<string, unknown>;
+  if (typeof candidate['on_ground'] !== 'boolean') {
+    return false;
+  }
+  if (STRING_CONTACT_FIELDS.some((field) => typeof candidate[field] !== 'string')) {
+    return false;
+  }
+  return NUMERIC_CONTACT_FIELDS.every((field) => {
+    const raw = candidate[field];
+    return typeof raw === 'number' && Number.isFinite(raw);
+  });
+}
+
+/**
+ * Runtime guard for `WS /ws/traffic` frames — the same reasoning as
+ * {@link isAircraftState}, applied to a list instead of a singleton.
+ *
+ * A frame is accepted whole or dropped whole: half a contact list is a worse picture of
+ * the sky than the previous frame, which the slice keeps until a good one replaces it.
+ * An empty array is valid and meaningful — it is exactly what an adapter without
+ * `can_spawn_traffic` streams.
+ */
+export function isTrafficContactList(value: unknown): value is TrafficContact[] {
+  return Array.isArray(value) && value.every(isTrafficContact);
 }

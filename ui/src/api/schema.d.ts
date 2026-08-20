@@ -1109,6 +1109,95 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/traffic/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Every live contact. Capability-free: no traffic support reads as no traffic.
+         */
+        get: operations["get_status_api_traffic_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/spawn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Spawn Traffic
+         * @description Resolve a spawn request into tracks and spawn each. Not idempotent — twice is two.
+         *
+         *     A multi-track ``approach_sequence`` is spawned sequentially, one awaited
+         *     ``spawn_traffic`` per track. A failure partway through leaves the
+         *     already-spawned entities spawned — no partial-failure rollback (§6.3), the
+         *     same posture the scenario engine takes for its own multi-step run; ``/clear``
+         *     is the one-tap way back.
+         */
+        post: operations["spawn_traffic_api_traffic_spawn_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/{traffic_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Despawn Traffic
+         * @description Despawn one entity. Idempotent: an unknown or already-gone id is a no-op, 200 either way.
+         *
+         *     A client racing a ``despawn_after_s`` auto-clear must never see an error for
+         *     something it did nothing wrong to ask for (§2).
+         */
+        delete: operations["despawn_traffic_api_traffic__traffic_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear All Traffic
+         * @description Despawn every entity the adapter is tracking. Idempotent — the one-tap reset.
+         */
+        post: operations["clear_all_traffic_api_traffic_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1626,6 +1715,42 @@ export interface components {
             setup?: components["schemas"]["AircraftSetup"] | null;
         };
         /**
+         * ApproachSequenceSpawnRequest
+         * @description n aircraft on the same final, at named distances — reuses core.geodesy verbatim (D11).
+         */
+        ApproachSequenceSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "approach_sequence";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+            /** Distances Nm */
+            distances_nm: number[];
+            /** Ias Kt */
+            ias_kt?: number | null;
+            /**
+             * Category
+             * @default B
+             * @enum {string}
+             */
+            category: "A" | "B" | "C" | "D" | "E";
+            /**
+             * Kind
+             * @default aircraft
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign Prefix
+             * @default SEQ
+             */
+            callsign_prefix: string;
+        };
+        /**
          * ArmFailureRequest
          * @description ``POST /api/failures/arm``.
          */
@@ -1922,6 +2047,18 @@ export interface components {
             heading_deg?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
+        };
+        /**
+         * CustomTrackSpawnRequest
+         * @description The escape hatch: a hand-built TrafficTrack, e.g. authored from map clicks.
+         */
+        CustomTrackSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "custom";
+            track: components["schemas"]["TrafficTrack"];
         };
         /**
          * DelayTrigger
@@ -3230,6 +3367,52 @@ export interface components {
             ils?: components["schemas"]["Ils"] | null;
         };
         /**
+         * RunwayIncursionSpawnRequest
+         * @description A vehicle or aircraft crossing the runway, timed to the user's own closing speed.
+         */
+        RunwayIncursionSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "runway_incursion";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+            /**
+             * Cross At Along Track Nm
+             * @description Distance beyond the threshold, along the landing direction, where the crossing happens. 0.0 = at the threshold itself.
+             * @default 0
+             */
+            cross_at_along_track_nm: number;
+            /**
+             * Lead Time Before User Arrival S
+             * @description How many seconds BEFORE the user would reach the crossing point the vehicle starts crossing it. Negative = the vehicle is still crossing slightly AFTER the user's projected arrival — the worse-case incursion.
+             * @default 8
+             */
+            lead_time_before_user_arrival_s: number;
+            /**
+             * From Side
+             * @default left
+             * @enum {string}
+             */
+            from_side: "left" | "right";
+            /** Vehicle Speed Kt */
+            vehicle_speed_kt?: number | null;
+            /**
+             * Kind
+             * @default ground_vehicle
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign
+             * @default GND01
+             */
+            callsign: string;
+        };
+        /**
          * RunwayPlacementRequest
          * @description A final or a circuit leg, relative to one runway end.
          *
@@ -3567,6 +3750,223 @@ export interface components {
              * @description Fuel mass in this tank, kilograms.
              */
             fuel_kg: number;
+        };
+        /**
+         * TaxiTrafficSpawnRequest
+         * @description A traffic entity ground-taxiing an explicit route (D12, §10.5).
+         */
+        TaxiTrafficSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "taxi_traffic";
+            /** Route */
+            route: components["schemas"]["GeoPosition"][];
+            /** Speed Kt */
+            speed_kt?: number | null;
+            /**
+             * Kind
+             * @default aircraft
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign
+             * @default TAXI01
+             */
+            callsign: string;
+        };
+        /**
+         * TcasConflictSpawnRequest
+         * @description Converge an intruder on the user aircraft's own projected track.
+         */
+        TcasConflictSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tcas_conflict";
+            /**
+             * Severity
+             * @default head_on_ra
+             * @enum {string}
+             */
+            severity: "head_on_ra" | "crossing_ra" | "ta_only";
+            /**
+             * Relative Bearing Deg
+             * @description Intruder's track relative to the user's own, at spawn: 180=head-on, 90/270=crossing, 0=same-direction closure from ahead or overtaking from behind.
+             * @default 180
+             */
+            relative_bearing_deg: number;
+            /**
+             * Miss Side
+             * @default left
+             * @enum {string}
+             */
+            miss_side: "left" | "right";
+            /**
+             * Vertical Offset
+             * @default above
+             * @enum {string}
+             */
+            vertical_offset: "above" | "below";
+            /** Closure Ias Kt */
+            closure_ias_kt?: number | null;
+            /**
+             * Kind
+             * @default aircraft
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign
+             * @default TFC01
+             */
+            callsign: string;
+        };
+        /**
+         * TrafficContact
+         * @description One live traffic entity, as reported by the adapter. Always-complete, like
+         *     AircraftState — a read, never a sparse write.
+         */
+        TrafficContact: {
+            /**
+             * Traffic Id
+             * @description Adapter-assigned uuid4 hex (D5). Stable for the entity's lifetime.
+             */
+            traffic_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Scenario Shape
+             * @enum {string}
+             */
+            scenario_shape: "tcas_conflict" | "runway_incursion" | "approach_sequence" | "taxi_traffic" | "custom";
+            /** Callsign */
+            callsign: string;
+            /** Label */
+            label: string;
+            /** Latitude */
+            latitude: number;
+            /** Longitude */
+            longitude: number;
+            /** Altitude Ft */
+            altitude_ft: number;
+            /** Heading Deg */
+            heading_deg: number;
+            /** Ground Speed Kt */
+            ground_speed_kt: number;
+            /** Vertical Speed Fpm */
+            vertical_speed_fpm: number;
+            /**
+             * On Ground
+             * @default false
+             */
+            on_ground: boolean;
+        };
+        /**
+         * TrafficSpawnResult
+         * @description ``POST /api/traffic/spawn`` — one contact per track the request resolved into.
+         */
+        TrafficSpawnResult: {
+            /**
+             * Contacts
+             * @description One per track spawned; more than one only for approach_sequence.
+             */
+            contacts: components["schemas"]["TrafficContact"][];
+        };
+        /**
+         * TrafficStatus
+         * @description ``GET /api/traffic/status`` — every live contact the adapter reports.
+         */
+        TrafficStatus: {
+            /**
+             * Adapter
+             * @description Name of the active adapter.
+             */
+            adapter: string;
+            /**
+             * Contacts
+             * @description Every live traffic entity.
+             */
+            contacts: components["schemas"]["TrafficContact"][];
+            /**
+             * Max Contacts
+             * @description Adapter-advertised capacity (D6), None when unknown/unbounded.
+             */
+            max_contacts?: number | null;
+        };
+        /**
+         * TrafficTrack
+         * @description A complete, timed path for one traffic entity — what SimAdapter.spawn_traffic takes.
+         *
+         *     Every field here is something the bridge can act on with no further
+         *     decision-making: "spawn at waypoints[0], move through the rest on schedule,
+         *     despawn after despawn_after_s" is the whole vocabulary (bridge/README.md's
+         *     "it spawns, it moves, it despawns. It does not make decisions.").
+         */
+        TrafficTrack: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Scenario Shape
+             * @default custom
+             * @enum {string}
+             */
+            scenario_shape: "tcas_conflict" | "runway_incursion" | "approach_sequence" | "taxi_traffic" | "custom";
+            /**
+             * Callsign
+             * @description e.g. "TFC01", "GND03".
+             */
+            callsign: string;
+            /**
+             * Label
+             * @description Human-readable description, e.g. "TCAS conflict, head-on".
+             */
+            label: string;
+            /** Waypoints */
+            waypoints: components["schemas"]["TrafficWaypoint"][];
+            /**
+             * Despawn After S
+             * @description Seconds after the LAST waypoint's t_offset_s before automatic despawn. None: the entity holds at the last waypoint until explicitly despawned.
+             */
+            despawn_after_s?: number | null;
+        };
+        /**
+         * TrafficWaypoint
+         * @description One timed point on a traffic entity's path.
+         */
+        TrafficWaypoint: {
+            /** @description Target position; altitude_ft is feet MSL. */
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Speed Kt
+             * @description Ground speed in knots for the leg starting here. Indicated airspeed for kind='aircraft' entities flying, a plain ground speed for 'ground_vehicle'/'bird' — there is no indicated-airspeed reading for a truck.
+             */
+            speed_kt: number;
+            /**
+             * Heading Deg
+             * @description True heading to face AT this waypoint. None: the consumer derives it from the bearing to the next waypoint (or holds the previous leg's heading on the final waypoint) — the same fallback order core.geodesy.waypoint_placement uses for a bare fix.
+             */
+            heading_deg?: number | null;
+            /**
+             * T Offset S
+             * @description Seconds after spawn this point is reached.
+             */
+            t_offset_s: number;
+            /**
+             * On Ground
+             * @description True for a taxiing or stationary point.
+             * @default false
+             */
+            on_ground: boolean;
         };
         /**
          * TrainingProfile
@@ -5465,6 +5865,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_traffic_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficStatus"];
+                };
+            };
+        };
+    };
+    spawn_traffic_api_traffic_spawn_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TcasConflictSpawnRequest"] | components["schemas"]["RunwayIncursionSpawnRequest"] | components["schemas"]["ApproachSequenceSpawnRequest"] | components["schemas"]["TaxiTrafficSpawnRequest"] | components["schemas"]["CustomTrackSpawnRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficSpawnResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    despawn_traffic_api_traffic__traffic_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                traffic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_all_traffic_api_traffic_clear_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficStatus"];
                 };
             };
         };

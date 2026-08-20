@@ -1,6 +1,6 @@
 /**
- * The live aircraft on the map: a rotated glyph Marker, the follow camera, and the
- * trail append.
+ * The live aircraft on the map: a rotated glyph Marker, the follow camera, the
+ * trail append — and the drag handle that stages a reposition.
  *
  * Driven by a `store.subscribe` inside one mount effect rather than by a selector
  * effect: the marker moves at the ~4 Hz telemetry cadence and appending to the trail
@@ -8,12 +8,20 @@
  * hooks lint (rightly) objects to. The subscription callback is an event handler in
  * spirit — and the `receivedAt` guard makes its own dispatch a no-op re-entry instead
  * of a loop.
+ *
+ * Dragging is hard rule 3 applied at the DOM level (map design D8): the marker is
+ * simply not draggable unless `commitGate` — imported from the Position Manager,
+ * never reimplemented — is open, so an adapter that cannot reposition offers no
+ * handle to pull. A finished drag stages through the *existing* `repositionStaged`
+ * action; committing is the staging bar's job, never this hook's.
  */
 
 import { Marker, type Map as MapLibreMap } from 'maplibre-gl';
 import { useEffect } from 'react';
+import { useGetCapabilitiesQuery } from '../../api/instructorApi';
 import { useAppDispatch, useAppStore } from '../../store';
-import { trailPointAppended } from './mapSlice';
+import { commitGate } from '../position/gate';
+import { repositionStaged, trailPointAppended } from './mapSlice';
 
 /** Points north at rotation 0; `rotationAlignment: 'map'` turns it with the heading. */
 const AIRCRAFT_SVG =
@@ -25,6 +33,10 @@ const AIRCRAFT_SVG =
 export function useAircraftMarker(map: MapLibreMap | null): void {
   const store = useAppStore();
   const dispatch = useAppDispatch();
+  const { data: capabilities, isError: capabilitiesFailed } = useGetCapabilitiesQuery();
+  // Draggability is a constructor option, so the effect keys on the gate's verdict:
+  // the marker is rebuilt when the capabilities answer arrives — once, in practice.
+  const draggable = commitGate(capabilities, capabilitiesFailed).open;
 
   useEffect(() => {
     if (map === null) {
@@ -37,12 +49,28 @@ export function useAircraftMarker(map: MapLibreMap | null): void {
       element,
       rotationAlignment: 'map',
       pitchAlignment: 'map',
+      draggable,
     });
     let added = false;
     let lastReceivedAt: number | null = null;
     let lastFollow = false;
+    // While the instructor holds the marker, telemetry must not snap it back to the
+    // aircraft's real position mid-gesture — the sync pauses until the drag ends.
+    let dragging = false;
+
+    marker.on('dragstart', () => {
+      dragging = true;
+    });
+    marker.on('dragend', () => {
+      dragging = false;
+      const { lat, lng } = marker.getLngLat();
+      dispatch(repositionStaged({ lat, lon: lng }));
+    });
 
     const sync = (): void => {
+      if (dragging) {
+        return;
+      }
       const state = store.getState();
       const frame = state.telemetry.latest;
       // Engaging follow recenters immediately, without waiting for the next frame.
@@ -82,5 +110,5 @@ export function useAircraftMarker(map: MapLibreMap | null): void {
       unsubscribe();
       marker.remove();
     };
-  }, [map, store, dispatch]);
+  }, [map, store, dispatch, draggable]);
 }

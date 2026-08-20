@@ -90,17 +90,40 @@ export class Map extends StubEvented {
   easeTo(): void {}
 }
 
+/** The subset of `MarkerOptions` the app constructs markers with. */
+export interface StubMarkerOptions {
+  element?: HTMLElement;
+  rotationAlignment?: string;
+  pitchAlignment?: string;
+  draggable?: boolean;
+}
+
 export class Marker extends StubEvented {
   /** Every instance constructed since the last `resetMaplibreStub()`. */
   static created: Marker[] = [];
 
-  constructor() {
+  /** What the marker was constructed with — how a test asserts `draggable`. */
+  readonly options: StubMarkerOptions;
+
+  private lngLat: { lng: number; lat: number } = { lng: 0, lat: 0 };
+
+  constructor(options: StubMarkerOptions = {}) {
     super();
+    this.options = options;
     Marker.created.push(this);
   }
 
-  setLngLat(): this {
+  setLngLat(lngLat: [number, number] | { lng: number; lat: number }): this {
+    this.lngLat = Array.isArray(lngLat) ? { lng: lngLat[0], lat: lngLat[1] } : lngLat;
     return this;
+  }
+
+  /**
+   * The last `setLngLat` value. The real library updates this itself during a drag;
+   * a test simulates that by calling `setLngLat` by hand before `trigger('dragend')`.
+   */
+  getLngLat(): { lng: number; lat: number } {
+    return this.lngLat;
   }
 
   setRotation(): this {
