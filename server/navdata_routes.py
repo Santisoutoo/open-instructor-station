@@ -55,6 +55,7 @@ from core.navdata.provider import NavdataProvider, NavdataUnavailable
 from server.deps import get_navdata
 
 __all__ = [
+    "AMBIGUOUS_QUERY_STATUS",
     "BUILDING_RETRY_AFTER_S",
     "NAVDATA_UNAVAILABLE_STATUS",
     "UNAVAILABLE_RETRY_AFTER_S",
@@ -69,6 +70,12 @@ logger = logging.getLogger(__name__)
 #: request is well-formed and the *server* has nothing to answer it with, and
 #: unlike a 501 it is expected to become answerable once the index is built.
 NAVDATA_UNAVAILABLE_STATUS = 503
+
+#: A "two query forms, one path" endpoint (``get_navaids``, ``get_fixes``)
+#: given both an ``ident`` and a ``lat``/``lon``, or neither. The request is
+#: well-formed, but the server has no precedence rule to invent between the
+#: two forms, so it refuses rather than silently picking one.
+AMBIGUOUS_QUERY_STATUS = 422
 
 #: ``Retry-After`` while the index is *building*, seconds. Short, because the
 #: thing the client is waiting for is finishing on its own.
@@ -276,7 +283,7 @@ def get_navaids(
         centre = GeoPosition(latitude=lat, longitude=lon)
         return _provider().navaids_near(centre, radius_nm, kinds=kinds, limit=limit)
     raise HTTPException(
-        status_code=422,
+        status_code=AMBIGUOUS_QUERY_STATUS,
         detail=(
             "Give either 'ident' (with an optional 'region') or 'lat' and 'lon' "
             "(with an optional 'radius_nm'), but not both and not neither."
@@ -314,7 +321,7 @@ def get_fixes(
         centre = GeoPosition(latitude=lat, longitude=lon)
         return _provider().fixes_near(centre, radius_nm, limit=limit)
     raise HTTPException(
-        status_code=422,
+        status_code=AMBIGUOUS_QUERY_STATUS,
         detail=(
             "Give either 'ident' (with an optional 'region') or 'lat' and 'lon' "
             "(with an optional 'radius_nm'), but not both and not neither."
