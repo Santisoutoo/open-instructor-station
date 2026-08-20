@@ -22,14 +22,17 @@ full table.
 from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from core.navdata.provider import NavdataProvider
 from core.sim_adapter import CapabilityNotSupported, WeatherRejected
 from core.weather.models import WeatherPresetId, WeatherRequest, WeatherSetup, WeatherState
 from core.weather.presets import WEATHER_PRESETS, resolve_request
-from server._shared import _require_capability, _weather_context
+from server._shared import (
+    _require_capability,
+    _resolve_apply_and_readback_weather,
+    _weather_context,
+)
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_navdata
 
@@ -209,11 +212,10 @@ async def apply_weather(request: WeatherRequest) -> WeatherApplyResult:
     # Off the event loop, on purpose — the same blocking navdata work
     # ``preview`` does, run inline here would stall the loop that also serves
     # ``/ws/state`` (mirrors ``position_routes.apply_placement``).
-    setup, notes = await run_in_threadpool(_resolve, get_navdata(), request)
-
     try:
-        await adapter.set_weather(setup)
-        state = await adapter.get_weather()
+        setup, state, notes = await _resolve_apply_and_readback_weather(
+            _resolve, get_navdata(), request, adapter=adapter
+        )
     except CapabilityNotSupported as exc:  # defence in depth; gated above
         raise HTTPException(status_code=CAPABILITY_UNAVAILABLE_STATUS, detail=str(exc)) from exc
     except WeatherRejected as exc:

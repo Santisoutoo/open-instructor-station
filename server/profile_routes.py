@@ -25,7 +25,6 @@ import logging
 from collections.abc import Callable, Coroutine
 
 from fastapi import APIRouter, File, HTTPException, Response, UploadFile
-from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, ValidationError
 
 from core.failures import ArmedFailure, FailureRef
@@ -34,6 +33,7 @@ from core.profiles.models import ProfileSummary, TrainingProfile, TrainingProfil
 from core.profiles.store import ProfileStore, ProfileStoreError
 from core.scenarios.models import ScenarioDocument
 from core.sim_adapter import CapabilityNotSupported, SimAdapter, WeatherRejected
+from server._shared import _resolve_apply_and_readback_weather
 from server.deps import get_adapter, get_navdata, get_profile_store
 from server.failure_routes import arm_failure
 from server.position_routes import ApplyPlacementRequest, PlacementResult, execute_placement
@@ -184,9 +184,9 @@ async def _apply_weather(
     if request is None:
         return ProfileWeatherOutcome(attempted=False, applied=True)
     try:
-        setup, notes = await run_in_threadpool(_resolve_weather, navdata, request)
-        await adapter.set_weather(setup)
-        state = await adapter.get_weather()
+        setup, state, notes = await _resolve_apply_and_readback_weather(
+            _resolve_weather, navdata, request, adapter=adapter
+        )
     except (
         HTTPException,
         CapabilityNotSupported,
