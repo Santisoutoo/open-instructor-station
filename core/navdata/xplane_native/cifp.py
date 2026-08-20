@@ -265,14 +265,48 @@ def parse_cifp(
     """
     airport_icao = normalize_icao(icao)
 
+    runways, deferred, skipped = _split_cifp_records(text)
+
+    # With no resolver, runway references stay unresolved like every other kind
+    # of fix: "nothing resolves while the index builds" reads uniformly, rather
+    # than runway legs alone lighting up as positionable mid-build.
+    resolver = (
+        _resolves_nothing
+        if resolve_fix is None
+        else _resolving_own_runways_first(resolve_fix, airport_icao, runways)
+    )
+
+    runway_idents = [runway.ident for runway in runways]
+    procedures, procedure_skipped = _build_procedures(
+        deferred, airport_icao, resolver, runway_idents
+    )
+
+    return CifpAirport(
+        icao=airport_icao,
+        runways=tuple(runways),
+        procedures=procedures,
+        skipped_record_count=skipped + procedure_skipped,
+    )
+
+
+def _split_cifp_records(
+    text: str,
+) -> tuple[list[CifpRunway], list[tuple[ProcedureKind, list[str], str]], int]:
+    """First pass over the file: parse every ``RWY:`` record and defer the rest.
+
+    Real files publish their RWY: records AFTER the procedures, and the legs
+    need them — a same-airport runway reference is resolved from these
+    records — so every RWY: record must be in hand before the first leg is
+    read.
+
+    Returns:
+        The parsed runways, the deferred ``(kind, fields, line)`` procedure
+        records in file order, and how many RWY: records were unreadable.
+    """
     runways: list[CifpRunway] = []
     deferred: list[tuple[ProcedureKind, list[str], str]] = []
     skipped = 0
 
-    # First pass: runways only. Real files publish their RWY: records AFTER the
-    # procedures, and the legs need them — a same-airport runway reference is
-    # resolved from these records — so every RWY: record must be in hand before
-    # the first leg is read.
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -296,15 +330,21 @@ def parse_cifp(
         if kind is not None:
             deferred.append((kind, fields, line))
 
-    # With no resolver, runway references stay unresolved like every other kind
-    # of fix: "nothing resolves while the index builds" reads uniformly, rather
-    # than runway legs alone lighting up as positionable mid-build.
-    resolver = (
-        _resolves_nothing
-        if resolve_fix is None
-        else _resolving_own_runways_first(resolve_fix, airport_icao, runways)
-    )
+    return runways, deferred, skipped
 
+
+def _build_procedures(
+    deferred: list[tuple[ProcedureKind, list[str], str]],
+    airport_icao: str,
+    resolver: FixResolver,
+    runway_idents: Sequence[str],
+) -> tuple[tuple[Procedure, ...], int]:
+    """Second pass: turn the deferred records into built procedures.
+
+    Returns:
+        The built procedures, and how many deferred records were unreadable.
+    """
+    skipped = 0
     builders: OrderedDict[tuple[ProcedureKind, str, str], _ProcedureBuilder] = OrderedDict()
     for kind, fields, line in deferred:
         parsed = _parse_procedure_record(kind, fields, line, airport_icao, resolver)
@@ -321,15 +361,8 @@ def parse_cifp(
             builders[key] = builder
         builder.legs.append(leg)
 
-    runway_idents = [runway.ident for runway in runways]
     procedures = tuple(builder.build(airport_icao, runway_idents) for builder in builders.values())
-
-    return CifpAirport(
-        icao=airport_icao,
-        runways=tuple(runways),
-        procedures=procedures,
-        skipped_record_count=skipped,
-    )
+    return procedures, skipped
 
 
 def _resolving_own_runways_first(
