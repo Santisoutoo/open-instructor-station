@@ -989,24 +989,14 @@ class XPNativeCifpSource:
         cycle recursed until the stack blew. See the comment at the guard for
         why the ``None`` cannot contaminate any non-nested answer.
         """
-        airport_icao = normalize_icao(icao)
-        path = cifp_file(self._root, airport_icao)
-        if path is None:
-            # A missing file is a normal outcome, not an error: every airport
-            # has runways, only about half have published procedures.
+        resolved = self._resolve_cifp_path(icao)
+        if resolved is None:
             return None
+        airport_icao, path, key = resolved
 
-        try:
-            mtime_ns = path.stat().st_mtime_ns
-        except OSError:
-            return None
-
-        key = (airport_icao, str(path), mtime_ns)
-        with self._lock:
-            cached = self._cache.get(key)
-            if cached is not None:
-                self._cache.move_to_end(key)
-                return cached
+        cached = self._cached(key)
+        if cached is not None:
+            return cached
 
         if airport_icao in self._parsing.icaos:
             # Re-entered from inside this airport's own parse: resolving one of
@@ -1034,12 +1024,40 @@ class XPNativeCifpSource:
             # "no procedures" for the life of the thread.
             self._parsing.icaos.discard(airport_icao)
 
+        self._remember(key, airport)
+        return airport
+
+    def _resolve_cifp_path(self, icao: str) -> tuple[str, Path, tuple[str, str, int]] | None:
+        """The normalised ICAO, its CIFP file and cache key, or ``None`` with no file."""
+        airport_icao = normalize_icao(icao)
+        path = cifp_file(self._root, airport_icao)
+        if path is None:
+            # A missing file is a normal outcome, not an error: every airport
+            # has runways, only about half have published procedures.
+            return None
+
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+        return airport_icao, path, (airport_icao, str(path), mtime_ns)
+
+    def _cached(self, key: tuple[str, str, int]) -> CifpAirport | None:
+        """The cached parse for ``key``, refreshing its recency, or ``None``."""
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+            return cached
+
+    def _remember(self, key: tuple[str, str, int], airport: CifpAirport) -> None:
+        """Cache ``airport`` under ``key``, evicting the least recently used entry."""
         with self._lock:
             self._cache[key] = airport
             self._cache.move_to_end(key)
             while len(self._cache) > self._max_entries:
                 self._cache.popitem(last=False)
-        return airport
 
     def invalidate(self) -> None:
         """Drop every cached parse. Called when the navdata cache key changes."""
