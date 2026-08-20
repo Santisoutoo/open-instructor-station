@@ -59,6 +59,7 @@ from server import (
     weather_routes,
 )
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
+from server.constants import POLL_INTERVAL_S as STATE_STREAM_INTERVAL_S
 from server.deps import get_adapter, load_airframe_info
 
 __all__ = [
@@ -74,9 +75,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Live state push rate: 4 Hz is smooth on a map without flooding a tablet.
-STATE_STREAM_INTERVAL_S = 0.25
 
 #: Where the separately-built frontend lands. Optional.
 UI_DIST = Path(__file__).resolve().parent.parent / "ui" / "dist"

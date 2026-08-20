@@ -48,6 +48,7 @@ from core.failures import (
 )
 from core.sim_adapter import CapabilityNotSupported
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
+from server.constants import POLL_INTERVAL_S as FAILURE_EVAL_INTERVAL_S
 from server.deps import get_adapter
 
 if TYPE_CHECKING:
@@ -64,9 +65,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Watcher tick rate: trigger latency is bounded by one frame (§6.3).
-FAILURE_EVAL_INTERVAL_S = 0.25
 
 #: How long the watcher waits before re-entering ``stream_state`` after the
 #: stream itself dies (adapter disconnected). Short enough that a reconnected

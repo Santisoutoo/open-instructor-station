@@ -11,7 +11,7 @@ depending on which.
 
 from __future__ import annotations
 
-__all__ = ["CAPABILITY_UNAVAILABLE_STATUS"]
+__all__ = ["CAPABILITY_UNAVAILABLE_STATUS", "POLL_INTERVAL_S"]
 
 #: Status for "the active adapter cannot do this". 501 rather than 4xx: the
 #: request is well-formed, the *server* has no implementation behind it. The
@@ -19,3 +19,8 @@ __all__ = ["CAPABILITY_UNAVAILABLE_STATUS"]
 #: reaching this response means a caller ignored a manifest/capabilities
 #: endpoint.
 CAPABILITY_UNAVAILABLE_STATUS = 501
+
+#: Shared 4 Hz poll rate: smooth on a map without flooding a tablet
+#: (``server.app``'s state stream), and short enough that a failure trigger's
+#: latency stays bounded at one frame (``server.failure_routes``'s watcher).
+POLL_INTERVAL_S: float = 0.25
