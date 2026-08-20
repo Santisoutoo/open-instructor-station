@@ -47,6 +47,7 @@ from core.failures import (
     InjectFailureRequest,
 )
 from core.sim_adapter import CapabilityNotSupported
+from server._shared import _require_capability
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.constants import POLL_INTERVAL_S as FAILURE_EVAL_INTERVAL_S
 from server.deps import get_adapter
@@ -104,16 +105,6 @@ class FailureCatalogueResponse(BaseModel):
 # ---------------------------------------------------------------------------
 # Capability gating (D14, §2.1)
 # ---------------------------------------------------------------------------
-
-
-def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:
-    """Refuse up front when the adapter has not declared what this needs."""
-    if not bool(getattr(adapter.capabilities, flag, False)):
-        raise HTTPException(
-            status_code=CAPABILITY_UNAVAILABLE_STATUS,
-            detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
-            f"declare {flag}, so it cannot {what}.",
-        )
 
 
 async def _require_failure_support(adapter: SimAdapter, ref: FailureRef) -> None:

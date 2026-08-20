@@ -26,9 +26,10 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, Field
 
 from core.navdata.provider import NavdataProvider
-from core.sim_adapter import CapabilityNotSupported, SimAdapter, WeatherRejected
+from core.sim_adapter import CapabilityNotSupported, WeatherRejected
 from core.weather.models import WeatherPresetId, WeatherRequest, WeatherSetup, WeatherState
 from core.weather.presets import WEATHER_PRESETS, resolve_request
+from server._shared import _require_capability
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_navdata
 
@@ -170,21 +171,11 @@ def _resolve(
 # ---------------------------------------------------------------------------
 
 
-def _require_capability(adapter: SimAdapter, what: str) -> None:
-    """Refuse up front when the adapter has not declared ``can_set_weather``."""
-    if not adapter.capabilities.can_set_weather:
-        raise HTTPException(
-            status_code=CAPABILITY_UNAVAILABLE_STATUS,
-            detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
-            f"declare can_set_weather, so it cannot {what}.",
-        )
-
-
 @router.get("", response_model=WeatherState)
 async def get_weather() -> WeatherState:
     """The commanded weather, read from the adapter."""
     adapter = get_adapter()
-    _require_capability(adapter, "report the commanded weather")
+    _require_capability(adapter, "can_set_weather", "report the commanded weather")
     try:
         return await adapter.get_weather()
     except CapabilityNotSupported as exc:  # defence in depth; gated above
@@ -231,7 +222,7 @@ def preview_weather(request: WeatherRequest) -> WeatherPreview:
 async def apply_weather(request: WeatherRequest) -> WeatherApplyResult:
     """Resolve, write, read back. See the module docstring for why apply re-resolves."""
     adapter = get_adapter()
-    _require_capability(adapter, "control the weather")
+    _require_capability(adapter, "can_set_weather", "control the weather")
 
     # Off the event loop, on purpose — the same blocking navdata work
     # ``preview`` does, run inline here would stall the loop that also serves

@@ -71,6 +71,7 @@ from core.placements import (
     WaypointPlacementRequest,
 )
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
+from server._shared import _require_capability
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_airframe_info, get_navdata
 
@@ -806,16 +807,6 @@ def _runway_schematic(
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
-
-def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:
-    """Refuse up front when the adapter has not declared what this needs."""
-    if not bool(getattr(adapter.capabilities, flag, False)):
-        raise HTTPException(
-            status_code=CAPABILITY_UNAVAILABLE_STATUS,
-            detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
-            f"declare {flag}, so it cannot {what}.",
-        )
 
 
 def _merge_setup(base: AircraftSetup, override: AircraftSetup | None) -> AircraftSetup:

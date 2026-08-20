@@ -39,6 +39,7 @@ from core.fuel_payload.models import (
 )
 from core.models import AircraftSetup, AirframeInfo, AirframeMassLimits, Loadout, LoadoutState
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
+from server._shared import _require_capability
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_airframe_info
 
@@ -139,16 +140,6 @@ class FuelPayloadApplyResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _require_capability(adapter: SimAdapter) -> None:
-    """Refuse up front when the adapter has not declared ``can_set_fuel_payload``."""
-    if not adapter.capabilities.can_set_fuel_payload:
-        raise HTTPException(
-            status_code=CAPABILITY_UNAVAILABLE_STATUS,
-            detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
-            f"declare can_set_fuel_payload, so it cannot set fuel or payload.",
-        )
-
-
 def _no_capacities_detail(preset_id: FuelPayloadPresetId, airframe: AirframeInfo) -> str:
     """The 422 detail for a preset requested against an airframe with no known capacities."""
     named = f" for {airframe.icao_type!r}" if airframe.icao_type else ""
@@ -242,7 +233,7 @@ def get_manifest() -> FuelPayloadManifest:
 async def get_fuel_payload() -> FuelPayloadState:
     """The current loadout plus its computed mass-and-balance."""
     adapter = get_adapter()
-    _require_capability(adapter)
+    _require_capability(adapter, "can_set_fuel_payload", "set fuel or payload")
     loadout = await adapter.get_loadout()
     limits = resolve_mass_limits(get_airframe_info())
     return FuelPayloadState(
@@ -258,7 +249,7 @@ async def preview_fuel_payload(request: FuelPayloadRequest) -> FuelPayloadPrevie
     called.
     """
     adapter = get_adapter()
-    _require_capability(adapter)
+    _require_capability(adapter, "can_set_fuel_payload", "set fuel or payload")
     resolved, result, notes, _limits = await _resolve_or_422(request, adapter)
     return FuelPayloadPreview(
         request=request, loadout=resolved, mass_and_balance=result, notes=notes
@@ -273,7 +264,7 @@ async def apply_fuel_payload(request: FuelPayloadRequest) -> FuelPayloadApplyRes
     replaying it writes the same numbers again.
     """
     adapter = get_adapter()
-    _require_capability(adapter)
+    _require_capability(adapter, "can_set_fuel_payload", "set fuel or payload")
     resolved, result, notes, limits = await _resolve_or_422(request, adapter)
 
     if result.within_envelope is False and not request.override_envelope:
