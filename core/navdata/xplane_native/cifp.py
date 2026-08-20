@@ -565,6 +565,29 @@ def _parse_procedure_record(
     resolver: FixResolver,
 ) -> tuple[tuple[ProcedureKind, str, str], str, ProcedureLeg] | None:
     """Decode one procedure record into its grouping key, route type and leg."""
+    identity = _procedure_record_identity(fields)
+    if identity is None:
+        return None
+    sequence, procedure_ident, terminator = identity
+
+    fix_ref, fix, navaid, is_positionable = _resolve_procedure_fixes(
+        fields, airport_icao, resolver, terminator
+    )
+
+    leg = _build_procedure_leg(
+        fields, raw, sequence, terminator, is_positionable, fix_ref, fix, navaid
+    )
+    if leg is None:
+        return None
+
+    key = (kind, procedure_ident, fields[_F_TRANSITION].strip().upper())
+    return key, fields[_F_ROUTE_TYPE], leg
+
+
+def _procedure_record_identity(
+    fields: Sequence[str],
+) -> tuple[int, str, PathTerminator] | None:
+    """The record's sequence number, procedure ident and path terminator, validated."""
     if len(fields) < _MIN_PROCEDURE_FIELDS:
         return None
 
@@ -573,8 +596,16 @@ def _parse_procedure_record(
     terminator_text = fields[_F_PATH_TERMINATOR].strip().upper()
     if sequence is None or not procedure_ident or terminator_text not in _ALL_TERMINATORS:
         return None
-    terminator = cast("PathTerminator", terminator_text)
+    return sequence, procedure_ident, cast("PathTerminator", terminator_text)
 
+
+def _resolve_procedure_fixes(
+    fields: Sequence[str],
+    airport_icao: str,
+    resolver: FixResolver,
+    terminator: PathTerminator,
+) -> tuple[FixRef | None, Waypoint | None, Waypoint | None, bool]:
+    """The leg's fix and recommended navaid, resolved, and whether the leg is positionable."""
     fix_ref = _build_fix_ref(fields, _F_FIX, airport_icao)
     fix = resolver(fix_ref) if fix_ref is not None else None
     navaid_ref = _build_fix_ref(fields, _F_NAVAID, airport_icao)
@@ -583,12 +614,25 @@ def _parse_procedure_record(
     # BOTH conditions. A CA leg has no defensible coordinate at all; an IF leg
     # whose fix is missing from the index has one that could not be looked up.
     is_positionable = terminator in POSITIONABLE_TERMINATORS and fix is not None
+    return fix_ref, fix, navaid, is_positionable
 
+
+def _build_procedure_leg(
+    fields: Sequence[str],
+    raw: str,
+    sequence: int,
+    terminator: PathTerminator,
+    is_positionable: bool,
+    fix_ref: FixRef | None,
+    fix: Waypoint | None,
+    navaid: Waypoint | None,
+) -> ProcedureLeg | None:
+    """Build the leg from its remaining fields, or ``None`` on failed model validation."""
     distance_nm, time_min = _parse_distance_or_time(fields[_F_ROUTE_DISTANCE])
     code = fields[_F_DESCRIPTION_CODE].ljust(4)
 
     try:
-        leg = ProcedureLeg(
+        return ProcedureLeg(
             sequence=sequence,
             path_terminator=terminator,
             is_positionable=is_positionable,
@@ -628,9 +672,6 @@ def _parse_procedure_record(
         # fails model validation is malformed, and one bad leg must never cost
         # the instructor the other thirty.
         return None
-
-    key = (kind, procedure_ident, fields[_F_TRANSITION].strip().upper())
-    return key, fields[_F_ROUTE_TYPE], leg
 
 
 def _unpositionable_reason(terminator: str, fix_ref: FixRef | None) -> str:
