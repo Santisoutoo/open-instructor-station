@@ -1,74 +1,86 @@
 /**
- * Client state of the Traffic panel. The property that matters is clamping: the
- * steppers write through the reducer, and a stepper cannot show an error, so an
- * out-of-range value is corrected instead of rejected.
+ * The traffic slice mirrors the `/ws/traffic` stream (design §7.2): every frame is the
+ * full picture and replaces the contact list wholesale — the stream never sends diffs,
+ * so the slice must never merge. Disconnection keeps the last frame (marked stale via
+ * `connected`) rather than pretending an empty sky.
  */
 
 import { describe, expect, it } from 'vitest';
 import reducer, {
-  countChanged,
-  distanceChanged,
-  initialTrafficUiState,
-  spawnKindSelected,
+  initialTrafficState,
+  shapeSelected,
+  trafficFrameReceived,
+  trafficStreamDisconnected,
 } from './trafficSlice';
+import type { TrafficContact } from '../../api/models';
 
-describe('initial state', () => {
-  it('starts with no card used and in-range defaults', () => {
-    expect(initialTrafficUiState).toEqual({
-      selectedSpawnKind: null,
-      params: { count: 1, distanceNm: 8 },
+function contact(overrides: Partial<TrafficContact> = {}): TrafficContact {
+  return {
+    traffic_id: 'a3f9',
+    kind: 'aircraft',
+    scenario_shape: 'tcas_conflict',
+    callsign: 'TFC01',
+    label: 'TCAS conflict, head-on',
+    latitude: 40.0,
+    longitude: -3.0,
+    altitude_ft: 10000,
+    heading_deg: 270,
+    ground_speed_kt: 250,
+    vertical_speed_fpm: 0,
+    on_ground: false,
+    ...overrides,
+  };
+}
+
+describe('trafficSlice', () => {
+  it('starts empty, disconnected, with the TCAS form selected', () => {
+    expect(initialTrafficState).toEqual({
+      contacts: [],
+      connected: false,
+      selectedShape: 'tcas_conflict',
     });
   });
-});
 
-describe('spawnKindSelected', () => {
-  it('remembers the last card tapped', () => {
-    const state = reducer(undefined, spawnKindSelected('tcas-conflict'));
-    expect(state.selectedSpawnKind).toBe('tcas-conflict');
+  it('replaces the contacts wholesale on every frame — never merges', () => {
+    const first = reducer(
+      initialTrafficState,
+      trafficFrameReceived([contact({ traffic_id: 'aaa' }), contact({ traffic_id: 'bbb' })]),
+    );
+    // The next frame no longer carries 'aaa': it must be gone, not merged in.
+    const second = reducer(
+      first,
+      trafficFrameReceived([contact({ traffic_id: 'bbb', callsign: 'SEQ02' })]),
+    );
+
+    expect(second.contacts.map((c) => c.traffic_id)).toEqual(['bbb']);
+    expect(second.contacts[0]?.callsign).toBe('SEQ02');
   });
 
-  it('clears the marker with null', () => {
-    const selected = reducer(undefined, spawnKindSelected('birds'));
-    expect(reducer(selected, spawnKindSelected(null)).selectedSpawnKind).toBeNull();
-  });
-});
+  it('an empty frame empties the list — "no traffic" is an honest answer', () => {
+    const populated = reducer(initialTrafficState, trafficFrameReceived([contact()]));
+    const emptied = reducer(populated, trafficFrameReceived([]));
 
-describe('countChanged', () => {
-  it('accepts values inside 1–4', () => {
-    expect(reducer(undefined, countChanged(3)).params.count).toBe(3);
+    expect(emptied.contacts).toEqual([]);
   });
 
-  it('clamps below the floor to 1', () => {
-    expect(reducer(undefined, countChanged(0)).params.count).toBe(1);
-    expect(reducer(undefined, countChanged(-7)).params.count).toBe(1);
+  it('a frame marks the stream connected', () => {
+    const state = reducer(initialTrafficState, trafficFrameReceived([]));
+
+    expect(state.connected).toBe(true);
   });
 
-  it('clamps above the ceiling to 4', () => {
-    expect(reducer(undefined, countChanged(5)).params.count).toBe(4);
-    expect(reducer(undefined, countChanged(99)).params.count).toBe(4);
+  it('disconnection keeps the last frame but marks it stale', () => {
+    const populated = reducer(initialTrafficState, trafficFrameReceived([contact()]));
+    const dropped = reducer(populated, trafficStreamDisconnected());
+
+    expect(dropped.connected).toBe(false);
+    expect(dropped.contacts).toHaveLength(1);
   });
 
-  it('rounds a fractional value to the nearest step', () => {
-    expect(reducer(undefined, countChanged(2.6)).params.count).toBe(3);
-  });
-});
+  it('remembers which spawn form is open — client-only state', () => {
+    const state = reducer(initialTrafficState, shapeSelected('runway_incursion'));
 
-describe('distanceChanged', () => {
-  it('accepts values inside 2–20 NM', () => {
-    expect(reducer(undefined, distanceChanged(12)).params.distanceNm).toBe(12);
-  });
-
-  it('clamps below the floor to 2 NM', () => {
-    expect(reducer(undefined, distanceChanged(0)).params.distanceNm).toBe(2);
-    expect(reducer(undefined, distanceChanged(-3)).params.distanceNm).toBe(2);
-  });
-
-  it('clamps above the ceiling to 20 NM', () => {
-    expect(reducer(undefined, distanceChanged(21)).params.distanceNm).toBe(20);
-    expect(reducer(undefined, distanceChanged(500)).params.distanceNm).toBe(20);
-  });
-
-  it('rounds a fractional value to a whole mile', () => {
-    expect(reducer(undefined, distanceChanged(7.4)).params.distanceNm).toBe(7);
+    expect(state.selectedShape).toBe('runway_incursion');
+    expect(state.contacts).toEqual([]);
   });
 });

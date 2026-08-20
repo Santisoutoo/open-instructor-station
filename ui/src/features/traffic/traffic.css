@@ -1,199 +1,19 @@
 /*
  * Traffic panel. Custom properties only — both themes are a value swap away
- * (see index.css). Amber budget in this view: focus rings only. The spawn grid's
- * primary action is plural (seven equal cards), a sanctioned exception to the
- * one-solid-amber rule — cards stay neutral with a hover border.
+ * (see index.css). Tablet-first: the contact list and CLEAR ALL sit at the top,
+ * thumb-reachable, and every control is at least 44 px tall. Amber budget in this
+ * view: focus rings and the one solid Spawn button of the active form.
  */
 
-/* ---------------------------------------------------------- bridge banner */
+/* ------------------------------------------------------------ contact list */
 
-.traffic-bridge {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.25rem 0.6rem;
-  min-height: 44px;
-  margin-bottom: 1rem;
-  padding: 0.35rem 0.75rem;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 0.85rem;
-}
-
-/* A dot, not a badge: dim while closed, ok-green once the bridge answers. */
-.traffic-bridge__dot {
-  flex: none;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: var(--text-dim);
-}
-
-.traffic-bridge--open .traffic-bridge__dot {
-  background: var(--ok);
-}
-
-.traffic-bridge__label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.traffic-bridge__state {
-  font-weight: 600;
-}
-
-.traffic-bridge--open .traffic-bridge__state {
-  color: var(--ok);
-}
-
-/* Never colour-only: the closed dot is always paired with this sentence. */
-.traffic-bridge__reason {
-  color: var(--warn);
-  font-size: 0.8rem;
-}
-
-/* -------------------------------------------------------------- spawn grid */
-
-.traffic-spawn {
+.traffic-contacts {
   display: grid;
-  gap: 0.75rem;
+  gap: 0.5rem;
   margin-bottom: 1.25rem;
 }
 
-.traffic-params {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem 1.5rem;
-}
-
-.traffic-stepper {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.traffic-stepper-label {
-  font-size: 0.72rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-dim);
-}
-
-.traffic-stepper-row {
-  display: inline-flex;
-  align-items: stretch;
-  gap: 2px;
-}
-
-.traffic-stepper-button {
-  min-width: 44px;
-  min-height: 44px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font-size: 1.15rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.traffic-stepper-button:not(:disabled):hover {
-  border-color: var(--text-dim);
-  transition: border-color 80ms ease-out;
-}
-
-.traffic-stepper-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.traffic-stepper-button:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.traffic-stepper-value {
-  align-self: center;
-  min-width: 4.5rem;
-  text-align: center;
-  font-family: var(--font-mono);
-  font-variant-numeric: tabular-nums;
-  font-size: 1.05rem;
-  font-weight: 600;
-}
-
-.traffic-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 0.5rem;
-}
-
-/* Neutral cards, hover border; amber appears only on the focus ring. */
-.traffic-card {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-  min-height: 64px;
-  padding: 0.6rem 0.75rem;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  color: var(--text);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.traffic-card:not(:disabled):hover {
-  border-color: var(--text-dim);
-  transition: border-color 80ms ease-out;
-}
-
-/* Last-used marker: a stronger neutral border, deliberately not amber. */
-.traffic-card--last {
-  border-color: var(--text-dim);
-}
-
-.traffic-card:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
-
-.traffic-card:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.traffic-card-label {
-  font-weight: 600;
-  font-size: 0.95rem;
-}
-
-.traffic-card-desc {
-  font-size: 0.78rem;
-  line-height: 1.35;
-  color: var(--text-dim);
-}
-
-/* ------------------------------------------------------------ active list */
-
-.traffic-empty {
-  margin: 0;
-  color: var(--text-dim);
-  font-style: italic;
-}
-
-.traffic-active {
-  display: grid;
-  gap: 0.5rem;
-}
-
-.traffic-active-head {
+.traffic-contacts__head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -202,7 +22,7 @@
 }
 
 /* A real section heading, matching the restyled `.panel h2` — not another micro-label. */
-.traffic-active-title {
+.traffic-contacts__title {
   display: inline-flex;
   align-items: baseline;
   gap: 0.5rem;
@@ -212,38 +32,56 @@
   color: var(--text);
 }
 
-.traffic-active-count {
+.traffic-contacts__count {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   color: var(--text);
 }
 
-/* The instructor's panic button: biggest control in the list, no confirmation. */
-.traffic-despawn-all {
-  min-height: 44px;
-  padding: 0 0.9rem;
+/* Never colour-only: the stale state is a sentence, not a dimmed row. */
+.traffic-contacts__stale {
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.8rem;
+}
+
+/* The instructor's panic button — the Failures panel's clear-all, verbatim:
+   destructive styling, no confirmation, biggest control in the list. */
+.traffic-clear-all {
+  min-height: 48px;
+  margin-left: auto;
+  padding: 0 1.5rem;
   background: transparent;
-  border: 1px solid var(--border);
+  border: 1px solid var(--danger);
   border-radius: 8px;
-  color: var(--text);
-  font-size: 0.9rem;
-  font-weight: 600;
+  color: var(--danger);
+  font-size: 1rem;
+  font-weight: 700;
   cursor: pointer;
 }
 
-.traffic-despawn-all:not(:disabled):hover {
-  border-color: var(--text-dim);
-  transition: border-color 80ms ease-out;
+.traffic-clear-all:not(:disabled):hover {
+  background: var(--danger);
+  color: var(--bg);
+  transition:
+    background-color 80ms ease-out,
+    color 80ms ease-out;
 }
 
-.traffic-despawn-all:disabled {
+.traffic-clear-all:disabled {
   cursor: not-allowed;
-  opacity: 0.55;
+  opacity: 0.45;
 }
 
-.traffic-despawn-all:focus-visible {
+.traffic-clear-all:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+.traffic-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-style: italic;
 }
 
 .traffic-list {
@@ -265,21 +103,25 @@
   border-radius: 8px;
 }
 
-.traffic-callsign {
+/* The kind marker: a compact mono badge, paired with a title — never colour-only. */
+.traffic-row__kind {
+  min-width: 3rem;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.traffic-row__callsign {
   min-width: 5.5rem;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
-.traffic-kind {
-  font-size: 0.78rem;
-  color: var(--text-dim);
-  white-space: nowrap;
-}
-
-/* The live readout: mono + tabular so a moving range never jitters the row. */
-.traffic-position {
+/* The live readout: mono + tabular so a moving value never jitters the row. */
+.traffic-row__readout {
   margin-left: auto;
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -287,19 +129,19 @@
   white-space: nowrap;
 }
 
-.traffic-despawn {
+.traffic-row__despawn {
+  min-width: 44px;
   min-height: 44px;
-  padding: 0 0.8rem;
   background: transparent;
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--text-dim);
-  font-size: 0.85rem;
+  font-size: 1.1rem;
   font-weight: 600;
   cursor: pointer;
 }
 
-.traffic-despawn:not(:disabled):hover {
+.traffic-row__despawn:not(:disabled):hover {
   color: var(--danger);
   border-color: var(--border);
   transition:
@@ -307,12 +149,272 @@
     border-color 80ms ease-out;
 }
 
-.traffic-despawn:disabled {
+.traffic-row__despawn:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
 
-.traffic-despawn:focus-visible {
+.traffic-row__despawn:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------ shape picker */
+
+.traffic-shapes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-bottom: 1rem;
+}
+
+.traffic-shapes__tab {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-shapes__tab:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.traffic-shapes__tab[aria-pressed='true'] {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.traffic-shapes__tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------- forms */
+
+.traffic-form {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.traffic-form__label {
+  padding: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+/* The plain-language line under a picker: what this preset does, in seconds and feet. */
+.traffic-form__sentence {
+  margin: 0;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: var(--text-dim);
+}
+
+.traffic-form__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.25rem;
+}
+
+.traffic-form__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+}
+
+.traffic-form__field span {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.traffic-form__field input {
+  min-height: 44px;
+  max-width: 11rem;
+  padding: 0 0.6rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+}
+
+.traffic-form__field input.mono {
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+}
+
+.traffic-form__field input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Segmented picker: bordered buttons, the pressed one filled — never colour-only,
+   aria-pressed carries the state. */
+.traffic-seg {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.traffic-seg__option {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-seg__option:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.traffic-seg__option[aria-pressed='true'] {
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.traffic-seg__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.traffic-seg__option:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Repeatable lists (approach distances, taxi route points). */
+
+.traffic-distances,
+.traffic-route {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.traffic-distances__list,
+.traffic-route__list {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.traffic-distances__row,
+.traffic-route__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.traffic-distances__remove,
+.traffic-route__remove {
+  min-width: 44px;
+  min-height: 44px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 1.1rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-distances__remove:not(:disabled):hover,
+.traffic-route__remove:not(:disabled):hover {
+  color: var(--danger);
+  transition: color 80ms ease-out;
+}
+
+.traffic-distances__remove:disabled,
+.traffic-route__remove:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.traffic-distances__add,
+.traffic-route__add {
+  justify-self: start;
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.traffic-distances__add:not(:disabled):hover,
+.traffic-route__add:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.traffic-distances__add:disabled,
+.traffic-route__add:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.traffic-distances__add:focus-visible,
+.traffic-route__add:focus-visible,
+.traffic-distances__remove:focus-visible,
+.traffic-route__remove:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The one solid-amber primary action per form: Spawn. */
+.traffic-form__spawn {
+  justify-self: start;
+  min-height: 48px;
+  padding: 0 1.5rem;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--bg);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.traffic-form__spawn:not(:disabled):hover {
+  filter: brightness(1.1);
+  transition: filter 80ms ease-out;
+}
+
+.traffic-form__spawn:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.traffic-form__spawn:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
