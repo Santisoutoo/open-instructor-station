@@ -984,30 +984,19 @@ def preview_placement(request: PlacementRequest) -> PlacementPreview:
     )
 
 
-async def execute_placement(
-    request: ApplyPlacementRequest,
-    *,
-    adapter: SimAdapter,
-    navdata: NavdataProvider,
-) -> PlacementResult:
-    """Place the aircraft. Setup first, then the teleport — see the module docstring.
+async def _resolve_placement_and_setup(
+    request: ApplyPlacementRequest, navdata: NavdataProvider
+) -> tuple[Placement, AircraftSetup]:
+    """Resolve the placement and merge in the staging bar's edits.
 
-    Factored out of ``POST /api/position/apply`` so the Scenario Generator's
-    engine reuses this exact state-before-teleport sequencing (#37, #39)
-    instead of re-deriving it — a plain function taking its adapter and
-    navdata explicitly, rather than reaching for the request-scoped
-    dependencies itself, is what makes it callable from a background task
-    with no HTTP request behind it.
+    Off the event loop, on purpose. The caller (``execute_placement``) has to
+    be ``async def`` because the adapter calls that follow are awaited, but
+    resolving the placement is the same blocking navdata work ``preview``
+    does — SQLite reads and, for a procedure, a lazy CIFP parse. Run inline it
+    would stall the loop that also serves ``/ws/state``, so the telemetry feed
+    the instructor is watching freezes during the one operation where the
+    aircraft is moving. Do not "optimise" this hop away.
     """
-    _require_capability(adapter, "can_set_position", "reposition the aircraft")
-
-    # Off the event loop, on purpose. This route has to be ``async def`` because
-    # the adapter calls below are awaited, but resolving the placement is the
-    # same blocking navdata work ``preview`` does — SQLite reads and, for a
-    # procedure, a lazy CIFP parse. Run inline it would stall the loop that also
-    # serves ``/ws/state``, so the telemetry feed the instructor is watching
-    # freezes during the one operation where the aircraft is moving. Do not
-    # "optimise" this hop away.
     placement, _schematic, _notes = await run_in_threadpool(_resolve, request.placement, navdata)
     setup = _merge_setup(placement.to_setup(), request.setup)
     # An edited altitude or heading has to move the PLACEMENT, because
@@ -1016,7 +1005,16 @@ async def execute_placement(
     # took. See _placed_as_edited. This is also what makes the returned
     # ``placement`` and ``applied`` describe the aircraft rather than the request.
     placement = _placed_as_edited(placement, setup)
+    return placement, setup
 
+
+async def _write_placement(adapter: SimAdapter, placement: Placement, setup: AircraftSetup) -> None:
+    """The two ordered adapter calls: setup first, then the teleport (#37, #39).
+
+    Gates ``can_set_aircraft_state`` immediately before them, exactly where
+    the original single function checked it — a placement whose setup has
+    nothing to write (a pure position/heading change) never needs it.
+    """
     if setup.model_dump(exclude_none=True):
         _require_capability(
             adapter, "can_set_aircraft_state", "set the speed and altitude a placement needs"
@@ -1041,6 +1039,34 @@ async def execute_placement(
         )
     except CapabilityNotSupported as exc:  # defence in depth; gated above
         raise HTTPException(status_code=CAPABILITY_UNAVAILABLE_STATUS, detail=str(exc)) from exc
+
+
+async def execute_placement(
+    request: ApplyPlacementRequest,
+    *,
+    adapter: SimAdapter,
+    navdata: NavdataProvider,
+) -> PlacementResult:
+    """Place the aircraft. Setup first, then the teleport — see the module docstring.
+
+    Factored out of ``POST /api/position/apply`` so the Scenario Generator's
+    engine reuses this exact state-before-teleport sequencing (#37, #39)
+    instead of re-deriving it — a plain function taking its adapter and
+    navdata explicitly, rather than reaching for the request-scoped
+    dependencies itself, is what makes it callable from a background task
+    with no HTTP request behind it.
+
+    Three phases, in the same order as before the split: capability gating
+    (``can_set_position``, immediately below), setup resolution and the
+    "placed-as-edited" correction (:func:`_resolve_placement_and_setup`), and
+    the two ordered adapter calls (:func:`_write_placement`, which also gates
+    ``can_set_aircraft_state`` exactly where the original checked it).
+    """
+    _require_capability(adapter, "can_set_position", "reposition the aircraft")
+
+    placement, setup = await _resolve_placement_and_setup(request, navdata)
+
+    await _write_placement(adapter, placement, setup)
 
     return PlacementResult(
         placement=placement,
