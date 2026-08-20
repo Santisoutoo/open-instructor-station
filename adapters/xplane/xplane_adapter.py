@@ -81,11 +81,14 @@ import binascii
 import math
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from itertools import pairwise
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 import httpx
 
+from adapters.xplane import traffic_bridge
 from adapters.xplane.failure_datarefs import (
     FAILURE_DATAREFS,
     STATE_FAILED,
@@ -130,7 +133,7 @@ from core.models import (
 )
 from core.pushback import PushbackRequest
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter, WeatherRejected
-from core.traffic import TrafficContact, TrafficTrack
+from core.traffic import TrafficCapacityExceeded, TrafficContact, TrafficScenarioShape, TrafficTrack
 from core.weather.models import (
     MAX_WIND_LAYERS,
     CloudLayer,
@@ -340,6 +343,12 @@ _CAPABILITIES = Capabilities(
     # resolved into fact, and two entries confirmed to have no matching
     # dataref on this build at all.
     can_inject_failures=True,
+    # The bridge-less baseline (ai-traffic.md §4.3/D3): connect() overrides
+    # this per-connection via model_copy() once the bridge probe (§5.2)
+    # answers. `pytest -m sim` with the bridge/ plugin installed is what
+    # would flip the live verdict to True for a real session — see
+    # docs/designs/ai-traffic.md §10.4 for the spike findings behind the
+    # transport this now drives.
     can_spawn_traffic=False,
     # `pytest -m sim` passed against a live X-Plane 12.4.3 (fuel-payload.md
     # §6.4, §9.4): the dataref mapping is real, not a stub. Two live findings
@@ -628,6 +637,21 @@ def _extract_text(data: bytes) -> str | None:
     return text.strip() or None
 
 
+def _int_or(candidate: Any, default: int) -> int:
+    """``int(candidate)``, or ``default`` when that is not possible.
+
+    Used to read a capacity-refusal ack's own ``capacity``/``active_count``
+    fields (ai-traffic.md §5.4) without trusting the bridge to always send
+    well-formed numbers — a malformed or absent field degrades to this
+    adapter's own known constant rather than raising out of an already
+    error-handling path.
+    """
+    try:
+        return int(candidate)
+    except (TypeError, ValueError):
+        return default
+
+
 def _resolve_known_slot_count(candidate: Any, array_length: int, max_allowed: int) -> int:
     """How many of a fuel/payload array's slots this adapter treats as real.
 
@@ -666,6 +690,36 @@ class XPlaneNotReachable(RuntimeError):
 
 class XPlaneRepositionFailed(RuntimeError):
     """The aircraft did not arrive where it was told to go."""
+
+
+class XPlaneTrafficCommandFailed(RuntimeError):
+    """The bridge processed a spawn/despawn/clear_all command and refused it.
+
+    Everything the bridge's own ``ok=False`` acks can mean *except* capacity
+    refusal, which is mapped to :class:`core.traffic.TrafficCapacityExceeded`
+    instead (ai-traffic.md D6, §5.4) — this is the catch-all for the rest: a
+    malformed track the bridge-side sanity check rejected, an unresolvable
+    object kind, or any other bridge-side ``error``.
+    """
+
+    def __init__(self, op: str, error: str | None) -> None:
+        self.op = op
+        self.error = error
+        super().__init__(f"the bridge refused {op!r}: {error or 'no reason given'}")
+
+
+@dataclass(frozen=True)
+class _TrafficMeta:
+    """The two :class:`~core.traffic.TrafficContact` fields the bridge's own
+    ``contacts`` wire shape omits (ai-traffic.md §5.1, §5.3): ``label`` and
+    ``scenario_shape`` are known only to whoever built the track, so this
+    adapter keeps them in its own per-``traffic_id`` ledger and merges them
+    back in on every :meth:`XPlaneSimAdapter.get_traffic_contacts` read.
+    """
+
+    scenario_shape: TrafficScenarioShape
+    callsign: str
+    label: str
 
 
 class XPlaneWeatherRejected(WeatherRejected):
@@ -707,6 +761,14 @@ class XPlaneSimAdapter:
         self._command_ids: dict[str, int] = {}
         self._failure_ids: dict[tuple[FailureId, int | None], tuple[int, ...]] = {}
         self._freeze_depth = 0
+        # ai-traffic.md §5.1: set from the connect()-time probe. None means
+        # no bridge on this connection — every traffic write refuses.
+        self._bridge: traffic_bridge.BridgeTransport | None = None
+        # traffic_id -> the two TrafficContact fields the bridge's own
+        # contacts wire shape does not carry (§5.3). Only this adapter's own
+        # spawns are ever in here, so get_traffic_contacts() silently ignores
+        # any traffic_id it does not recognise.
+        self._traffic_meta: dict[str, _TrafficMeta] = {}
         # ai-traffic.md §4.3 (D3/D4): capabilities are computed once per
         # connection, from the bridge probe inside connect(), and never move
         # again for that connection's lifetime. Before connect() the honest
@@ -835,17 +897,16 @@ class XPlaneSimAdapter:
     async def _probe_bridge(self, client: httpx.AsyncClient) -> bool:
         """Is the optional ``bridge/`` plugin loaded and alive on this connection?
 
-        **Track B stub** (ai-traffic.md §5.2, §9.2): the real probe looks for
-        the ``ois/bridge/heartbeat_s`` custom dataref in the index the same way
-        :data:`OPTIONAL_DATAREFS` are found, then reads it twice a short gap
-        apart, requiring the second read to be strictly greater — proving the
-        flight loop is actually ticking, not just that the plugin loaded and
-        then froze. Until that lands the honest answer is ``False`` — no
-        bridge, no traffic. Absence never raises and never fails
+        Delegates to :func:`adapters.xplane.traffic_bridge.probe` (ai-traffic.md
+        §5.2): looks for the four ``ois/*`` custom datarefs in the same index
+        scan :data:`OPTIONAL_DATAREFS` already uses, then reads the heartbeat
+        twice a short gap apart, requiring the second read to be strictly
+        greater — proving the flight loop is actually ticking, not just that
+        the plugin loaded and then froze. Absence never raises and never fails
         :meth:`connect`; that is the whole point of "optional".
         """
-        del client  # unused until Track B implements the real probe
-        return False
+        self._bridge = await traffic_bridge.probe(client)
+        return self._bridge is not None
 
     async def disconnect(self) -> None:
         """Close the HTTP client. Idempotent, never raises."""
@@ -853,6 +914,8 @@ class XPlaneSimAdapter:
         self._ids = {}
         self._command_ids = {}
         self._failure_ids = {}
+        self._bridge = None
+        self._traffic_meta = {}
         if client is not None:
             await client.aclose()
 
@@ -2528,39 +2591,152 @@ class XPlaneSimAdapter:
         del request
         raise CapabilityNotSupported(self.name, "can_pushback")
 
-    # -- AI traffic -------------------------------------------------------
-    # Track 0 stubs (ai-traffic.md §9.2): the capability plumbing is real —
-    # can_spawn_traffic is resolved from the bridge probe at connect() — but
-    # the probe is a stub returning False until Track B lands the bridge
-    # transport (adapters/xplane/traffic_bridge.py), so the writes below can
-    # only ever answer with the capability refusal, which is the truth.
+    # -- AI traffic (ai-traffic.md §5) -------------------------------------
+    # can_spawn_traffic is resolved from the bridge probe at connect()
+    # (§5.2); the six methods below are only ever reached with the
+    # capability declared, since self._bridge is set (non-None) exactly when
+    # it is. Every write still checks the flag explicitly, matching this
+    # module's own posture for can_inject_failures/can_set_weather — the
+    # explicit check is the contract, not an implementation detail of how
+    # self._bridge happens to be threaded through.
 
     async def get_traffic_contacts(self) -> tuple[TrafficContact, ...]:
-        """Capability-free read: with no probed bridge there is no traffic.
+        """Read the bridge's own ``ois/traffic/contacts``, merged with this
+        adapter's ``label``/``scenario_shape`` ledger (§5.1, §5.3).
 
-        Track B wires this to the bridge's ``ois/traffic/contacts`` dataref;
-        until then "none" is the honest, cheap answer — never an exception.
+        Capability-free (the ``get_active_failures`` posture): no probed
+        bridge, or a bridge that stopped answering mid-session (D4's
+        connectivity fault), both degrade to ``()`` rather than raising — a
+        read never needs to distinguish "no bridge" from "bridge silent" for
+        the caller to act correctly.
+
+        A contact whose ``traffic_id`` this adapter never spawned (nothing in
+        ``self._traffic_meta``) is silently dropped — there is no honest
+        ``label``/``scenario_shape`` to report for it, and fabricating one
+        would be exactly the invented data hard rule 3 forbids. This also
+        prunes ``self._traffic_meta`` of any id the bridge no longer reports
+        (an auto-despawn via ``despawn_after_s``), the Fake's own lazy-expiry
+        philosophy (§4.4) mirrored here rather than a background task.
         """
-        return ()
+        if self._bridge is None:
+            return ()
+        try:
+            raw_contacts = await self._bridge.read_contacts()
+        except traffic_bridge.BridgeNotReachable:
+            return ()
+
+        live_ids = {raw.get("traffic_id") for raw in raw_contacts}
+        for stale_id in set(self._traffic_meta) - live_ids:
+            del self._traffic_meta[stale_id]
+
+        contacts: list[TrafficContact] = []
+        for raw in raw_contacts:
+            traffic_id = raw.get("traffic_id")
+            if not isinstance(traffic_id, str):
+                continue
+            meta = self._traffic_meta.get(traffic_id)
+            if meta is None:
+                continue
+            try:
+                contacts.append(
+                    TrafficContact(
+                        traffic_id=traffic_id,
+                        kind=raw["kind"],
+                        scenario_shape=meta.scenario_shape,
+                        callsign=raw.get("callsign") or meta.callsign,
+                        label=meta.label,
+                        latitude=float(raw["latitude"]),
+                        longitude=float(raw["longitude"]),
+                        altitude_ft=float(raw["altitude_ft"]),
+                        heading_deg=float(raw["heading_deg"]) % 360.0,
+                        ground_speed_kt=max(0.0, float(raw["ground_speed_kt"])),
+                        vertical_speed_fpm=float(raw.get("vertical_speed_fpm", 0.0)),
+                        on_ground=bool(raw.get("on_ground", False)),
+                    )
+                )
+            except (KeyError, TypeError, ValueError):
+                # A malformed contact record skips this one entity rather
+                # than failing the whole read (the same "degrade the one
+                # thing that is wrong" posture as get_airframe's fields).
+                continue
+        return tuple(contacts)
 
     async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
-        """Refuse: this adapter never declares ``can_spawn_traffic`` today.
+        """Spawn one entity via the bridge and return its initial contact (D5).
 
-        The bridge probe is a Track B stub returning ``False``, so the flag is
-        ``False`` on every connection and a caller reaching this ignored the
-        capabilities — exactly what :class:`CapabilityNotSupported` means.
+        Assigns a fresh ``uuid4`` traffic_id (D5 — the adapter, never the
+        bridge or core/), sends the ``spawn`` command, and: a capacity
+        refusal (the bridge's own ``error_kind == "capacity"``, §5.4/D6)
+        raises :class:`~core.traffic.TrafficCapacityExceeded`; any other
+        refusal raises :class:`XPlaneTrafficCommandFailed`. On success, one
+        ``get_traffic_contacts()`` read supplies the live contact — the
+        bridge has already driven the entity to its first-frame position by
+        the time the ack was written (its ``_op_spawn`` places the entity
+        before returning, per the plugin's own flight-loop ordering), so this
+        is expected to find it immediately. The track's own first waypoint is
+        the documented fallback for the one race this cannot rule out (an
+        adapter poll landing between the ack and the very next
+        ``contacts`` publish) — an honest value computed from what was asked
+        for, never fabricated.
         """
-        del track
-        raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        if not self.capabilities.can_spawn_traffic or self._bridge is None:
+            raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        traffic_id = uuid4().hex
+        ack = await self._bridge.send_command(
+            {"op": "spawn", "traffic_id": traffic_id, "track": track.model_dump(mode="json")}
+        )
+        if not ack.get("ok"):
+            error = ack.get("error")
+            if ack.get("error_kind") == "capacity":
+                raise TrafficCapacityExceeded(
+                    self.name,
+                    _int_or(ack.get("capacity"), traffic_bridge.MAX_CONCURRENT_TRAFFIC_XPLANE),
+                    _int_or(ack.get("active_count"), traffic_bridge.MAX_CONCURRENT_TRAFFIC_XPLANE),
+                )
+            raise XPlaneTrafficCommandFailed("spawn", error)
+
+        self._traffic_meta[traffic_id] = _TrafficMeta(
+            scenario_shape=track.scenario_shape, callsign=track.callsign, label=track.label
+        )
+        for contact in await self.get_traffic_contacts():
+            if contact.traffic_id == traffic_id:
+                return contact
+
+        first = track.waypoints[0]
+        return TrafficContact(
+            traffic_id=traffic_id,
+            kind=track.kind,
+            scenario_shape=track.scenario_shape,
+            callsign=track.callsign,
+            label=track.label,
+            latitude=first.position.latitude,
+            longitude=first.position.longitude,
+            altitude_ft=first.position.altitude_ft,
+            heading_deg=(first.heading_deg or 0.0) % 360.0,
+            ground_speed_kt=first.speed_kt,
+            vertical_speed_fpm=0.0,
+            on_ground=first.on_ground,
+        )
 
     async def despawn_traffic(self, traffic_id: str) -> None:
-        """Refuse — see :meth:`spawn_traffic`."""
-        del traffic_id
-        raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        """Despawn one entity. Idempotent (§4.1): an unknown or already-gone
+        id is a no-op — the bridge's own ``despawn`` ack is ``ok=True``
+        regardless of whether the id existed, so this never raises for that
+        reason. It still raises :class:`~adapters.xplane.traffic_bridge.BridgeNotReachable`
+        if the bridge stops answering — that is a real connectivity fault
+        (D4), not the idempotent case.
+        """
+        if not self.capabilities.can_spawn_traffic or self._bridge is None:
+            raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        await self._bridge.send_command({"op": "despawn", "traffic_id": traffic_id})
+        self._traffic_meta.pop(traffic_id, None)
 
     async def clear_all_traffic(self) -> None:
-        """Refuse — see :meth:`spawn_traffic`."""
-        raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        """Despawn every entity this adapter is tracking. Idempotent (§4.1)."""
+        if not self.capabilities.can_spawn_traffic or self._bridge is None:
+            raise CapabilityNotSupported(self.name, "can_spawn_traffic")
+        await self._bridge.send_command({"op": "clear_all"})
+        self._traffic_meta.clear()
 
     # -- Streaming --------------------------------------------------------
 

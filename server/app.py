@@ -25,6 +25,8 @@ Surface:
 * ``/api/profiles/*`` — Training Profiles, in :mod:`server.profile_routes`.
 * ``/api/geodesy/*`` — the Instructor Map's exact measurement, in
   :mod:`server.geodesy_routes`.
+* ``/api/traffic/*`` and ``WS /ws/traffic`` — the AI Traffic Manager, in
+  :mod:`server.traffic_routes`.
 
 The UI (built separately into ``ui/dist``) is served from ``/`` when it exists;
 the server starts perfectly well without it.
@@ -55,6 +57,7 @@ from server import (
     profile_routes,
     pushback_routes,
     scenario_routes,
+    traffic_routes,
     weather_routes,
 )
 from server.deps import get_adapter, load_airframe_info
@@ -399,6 +402,7 @@ def create_app() -> FastAPI:
     app.include_router(pushback_routes.router)
     app.include_router(scenario_routes.router)
     app.include_router(profile_routes.router)
+    app.include_router(traffic_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
 
     _mount_ui(app)
