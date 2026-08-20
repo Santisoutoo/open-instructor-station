@@ -489,6 +489,80 @@ APPROACH_SEQUENCE_DEFAULT_DISTANCES_NM: tuple[float, ...] = (12.0, 8.0, 4.0)
 TAXI_DEFAULT_SPEED_KT: float = 12.0
 
 
+def _resolve_closure_ias_kt(closure_ias_kt: float | None) -> float:
+    """Default and validate the intruder's closure speed.
+
+    Raises:
+        ValueError: for a non-positive closure speed — a motionless "intruder"
+            is three co-located waypoints, not a conflict.
+    """
+    intruder_ias_kt = TCAS_DEFAULT_CLOSURE_IAS_KT if closure_ias_kt is None else closure_ias_kt
+    if intruder_ias_kt <= 0.0:
+        raise ValueError(
+            f"closure_ias_kt must be a positive speed in knots, got {intruder_ias_kt!r}."
+        )
+    return intruder_ias_kt
+
+
+def _user_projected_position(user_state: AircraftState, lead_s: float) -> GeoPosition:
+    """Where the user aircraft will be after ``lead_s``, at its current speed and heading."""
+    user_position = GeoPosition(
+        latitude=user_state.latitude,
+        longitude=user_state.longitude,
+        altitude_ft=user_state.altitude_ft,
+    )
+    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
+    return point_at_distance_and_bearing(
+        user_position, user_gs_kt * lead_s / SECONDS_PER_HOUR, user_state.heading_deg
+    )
+
+
+def _intruder_cpa(
+    user_projected: GeoPosition,
+    user_state: AircraftState,
+    profile: TcasSeverityProfile,
+    relative_bearing_deg: float,
+    miss_side: Literal["left", "right"],
+    vertical_offset: Literal["above", "below"],
+) -> tuple[GeoPosition, float]:
+    """The intruder's projected closest point of approach, and its track direction."""
+    intruder_track_deg = (user_state.heading_deg + relative_bearing_deg) % 360.0
+    intruder_altitude_ft = user_state.altitude_ft + (
+        profile.vertical_miss_distance_ft
+        if vertical_offset == "above"
+        else -profile.vertical_miss_distance_ft
+    )
+    cpa = user_projected
+    if profile.horizontal_miss_distance_nm > 0.0:
+        offset_bearing_deg = intruder_track_deg + (-90.0 if miss_side == "left" else 90.0)
+        cpa = point_at_distance_and_bearing(
+            user_projected, profile.horizontal_miss_distance_nm, offset_bearing_deg
+        )
+    cpa = GeoPosition(
+        latitude=cpa.latitude, longitude=cpa.longitude, altitude_ft=intruder_altitude_ft
+    )
+    return cpa, intruder_track_deg
+
+
+def _intruder_spawn_and_end_points(
+    cpa: GeoPosition, intruder_track_deg: float, intruder_gs_kt: float, lead_s: float
+) -> tuple[GeoPosition, GeoPosition]:
+    """Where the intruder's track starts and ends, either side of the CPA.
+
+    Negative distance walks backwards along the same geodesic, so spawn→CPA
+    measures exactly the distance the intruder covers in ``lead_s``. The
+    intruder flies level: the vertical miss is built into its altitude, not a
+    profile.
+    """
+    spawn_point = point_at_distance_and_bearing(
+        cpa, -(intruder_gs_kt * lead_s / SECONDS_PER_HOUR), intruder_track_deg
+    )
+    end_point = point_at_distance_and_bearing(
+        cpa, intruder_gs_kt * TCAS_TRACK_LEAD_TIME_S / SECONDS_PER_HOUR, intruder_track_deg
+    )
+    return spawn_point, end_point
+
+
 def tcas_conflict_track(
     user_state: AircraftState,
     *,
@@ -523,49 +597,18 @@ def tcas_conflict_track(
         ValueError: for a non-positive closure speed — a motionless "intruder"
             is three co-located waypoints, not a conflict.
     """
-    intruder_ias_kt = TCAS_DEFAULT_CLOSURE_IAS_KT if closure_ias_kt is None else closure_ias_kt
-    if intruder_ias_kt <= 0.0:
-        raise ValueError(
-            f"closure_ias_kt must be a positive speed in knots, got {intruder_ias_kt!r}."
-        )
+    intruder_ias_kt = _resolve_closure_ias_kt(closure_ias_kt)
     profile = TCAS_SEVERITY_PROFILES[severity]
     lead_s = profile.spawn_lead_time_s
 
-    user_position = GeoPosition(
-        latitude=user_state.latitude,
-        longitude=user_state.longitude,
-        altitude_ft=user_state.altitude_ft,
-    )
-    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
-    user_projected = point_at_distance_and_bearing(
-        user_position, user_gs_kt * lead_s / SECONDS_PER_HOUR, user_state.heading_deg
+    user_projected = _user_projected_position(user_state, lead_s)
+    cpa, intruder_track_deg = _intruder_cpa(
+        user_projected, user_state, profile, relative_bearing_deg, miss_side, vertical_offset
     )
 
-    intruder_track_deg = (user_state.heading_deg + relative_bearing_deg) % 360.0
-    intruder_altitude_ft = user_state.altitude_ft + (
-        profile.vertical_miss_distance_ft
-        if vertical_offset == "above"
-        else -profile.vertical_miss_distance_ft
-    )
-    cpa = user_projected
-    if profile.horizontal_miss_distance_nm > 0.0:
-        offset_bearing_deg = intruder_track_deg + (-90.0 if miss_side == "left" else 90.0)
-        cpa = point_at_distance_and_bearing(
-            user_projected, profile.horizontal_miss_distance_nm, offset_bearing_deg
-        )
-    cpa = GeoPosition(
-        latitude=cpa.latitude, longitude=cpa.longitude, altitude_ft=intruder_altitude_ft
-    )
-
-    intruder_gs_kt = tas_from_ias(intruder_ias_kt, intruder_altitude_ft)
-    # Negative distance walks backwards along the same geodesic, so spawn→CPA
-    # measures exactly the distance the intruder covers in lead_s. The intruder
-    # flies level: the vertical miss is built into its altitude, not a profile.
-    spawn_point = point_at_distance_and_bearing(
-        cpa, -(intruder_gs_kt * lead_s / SECONDS_PER_HOUR), intruder_track_deg
-    )
-    end_point = point_at_distance_and_bearing(
-        cpa, intruder_gs_kt * TCAS_TRACK_LEAD_TIME_S / SECONDS_PER_HOUR, intruder_track_deg
+    intruder_gs_kt = tas_from_ias(intruder_ias_kt, cpa.altitude_ft)
+    spawn_point, end_point = _intruder_spawn_and_end_points(
+        cpa, intruder_track_deg, intruder_gs_kt, lead_s
     )
 
     return TrafficTrack(
