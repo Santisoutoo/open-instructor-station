@@ -1,16 +1,16 @@
 /**
- * The one gate the Traffic panel opens on, and it **fails closed** — the same pattern
- * as `features/position/gate.ts`.
+ * The one gate the Traffic panel opens on, and it **fails closed** — the
+ * `position/gate.ts` / `failures/gate.ts` pattern verbatim (design §7.1).
  *
  * Hard rule 3: unsupported features are disabled in the UI, never left to throw at
- * runtime. That is only true if "I could not find out" counts as unsupported, so a
- * manifest that is still loading or failed to load disables everything exactly like
- * `available: false` does. Traffic is the strictest case of the rule: the whole manager
- * sits behind the bridge plugin (feature-spec §13), so there is no partial opening —
- * one gate for the entire panel.
+ * runtime. That is only true if "I could not find out" counts as unsupported, so
+ * capabilities that are still loading or failed to load disable everything exactly like
+ * `can_spawn_traffic: false` does. Traffic is the strictest case of the rule: the whole
+ * manager sits behind the optional in-sim bridge plugin, so there is no partial opening
+ * — one gate for the entire panel (design §7.3: no per-entry gating below it).
  */
 
-import type { TrafficManifest } from './types.mock';
+import type { Capabilities } from '../../api/models';
 
 export interface TrafficGate {
   readonly open: boolean;
@@ -21,23 +21,23 @@ export interface TrafficGate {
 const OPEN: TrafficGate = { open: true, reason: '' };
 
 export function trafficGate(
-  manifest: TrafficManifest | undefined,
+  capabilities: Capabilities | undefined,
   isError: boolean,
 ): TrafficGate {
-  if (manifest === undefined) {
+  if (capabilities === undefined) {
     return {
       open: false,
       reason: isError
-        ? 'The traffic bridge status could not be read, so spawning is disabled.'
-        : 'Waiting for the traffic bridge status…',
+        ? 'The adapter capabilities could not be read, so traffic spawning is disabled.'
+        : 'Waiting for the adapter capabilities…',
     };
   }
-  if (!manifest.available) {
+  if (!capabilities.can_spawn_traffic) {
     return {
       open: false,
       reason:
-        manifest.reason ??
-        'This adapter does not declare can_spawn_traffic, so AI traffic is disabled.',
+        'This adapter does not declare can_spawn_traffic, so AI traffic is disabled. ' +
+        'Traffic needs the in-sim bridge plugin; everything else works without it.',
     };
   }
   return OPEN;
