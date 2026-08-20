@@ -34,6 +34,7 @@ from pathlib import Path
 from threading import Lock, local
 from typing import Final, Literal, cast
 
+from core.atmosphere import METRES_PER_FOOT
 from core.models import GeoPosition
 from core.navdata.cifp_source import CifpAirport, CifpRunway, FixResolver
 from core.navdata.models import (
@@ -160,7 +161,6 @@ _AT_OR_BELOW_DESCRIPTORS: Final[frozenset[str]] = frozenset({"-"})
 _BETWEEN_DESCRIPTORS: Final[frozenset[str]] = frozenset({"B"})
 _AT_OR_ABOVE_ALTITUDE_2_DESCRIPTORS: Final[frozenset[str]] = frozenset({"C"})
 
-_METRES_PER_FOOT: Final = 0.3048
 _TENTHS: Final = 10.0
 _HUNDREDTHS: Final = 100.0
 _THOUSANDTHS: Final = 1000.0
@@ -441,7 +441,7 @@ def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
         # The source publishes the displacement in FEET and the model carries it
         # in metres — the unit change is the whole reason this line exists.
         displaced_threshold_m=(
-            None if displaced_ft is None or displaced_ft < 0 else displaced_ft * _METRES_PER_FOOT
+            None if displaced_ft is None or displaced_ft < 0 else displaced_ft * METRES_PER_FOOT
         ),
         threshold_crossing_height_ft=(
             None if crossing_height_ft is None or crossing_height_ft < 0 else crossing_height_ft

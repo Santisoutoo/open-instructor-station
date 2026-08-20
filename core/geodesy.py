@@ -81,7 +81,7 @@ from typing import Any, Literal, assert_never
 from geographiclib.geodesic import Geodesic
 from pydantic import BaseModel, ConfigDict, Field
 
-from core.atmosphere import tas_from_ias
+from core.atmosphere import METRES_PER_FOOT, tas_from_ias
 from core.models import AircraftSetup, GeoPosition, Ils, LightsSetup, Runway
 from core.navdata.models import Hold, Procedure, ProcedureLeg, Waypoint
 
@@ -154,7 +154,7 @@ __all__ = [
 
 #: Exact conversion: 1 international nautical mile = 1852 m = 1852 / 0.3048 ft.
 METRES_PER_NAUTICAL_MILE: float = 1852.0
-FEET_PER_NAUTICAL_MILE: float = METRES_PER_NAUTICAL_MILE / 0.3048  # 6076.115485564304
+FEET_PER_NAUTICAL_MILE: float = METRES_PER_NAUTICAL_MILE / METRES_PER_FOOT  # 6076.115485564304
 
 #: Legs of a standard rectangular traffic pattern.
 PatternLeg = Literal["downwind", "base", "crosswind", "upwind"]
