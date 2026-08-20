@@ -5,7 +5,11 @@
  * (threshold 40.46/-3.57, runway heading 323 — see `../telemetry/mockFeed.ts`), so the
  * demo aircraft actually lands on the drawn runway and flies down the drawn ILS
  * feather. LEMD-like layout: two parallel 32s, feathers on both, a handful of navaids.
- * Dies at backend integration — the real overlay comes from the user's own navdata.
+ *
+ * Since backend integration (instructor-map.md §7.6) the production overlay comes from
+ * the user's own navdata through `useOverlayData`/`overlays.ts`; this fixture is kept
+ * only for tests and isolated rendering, plus `MAP_HOME` — where the map opens, which
+ * is a view choice, not overlay data. Never import `MOCK_AIRPORT` from production code.
  */
 
 import { destinationPoint, type LatLon } from './measure';

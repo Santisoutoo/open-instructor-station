@@ -9,10 +9,43 @@
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import type { ProcedureKind } from '../../api/models';
 import type { LatLon } from './measure';
 
-/** The toggleable mock overlays, one key per left-edge button. */
-export type MapLayerKey = 'runways' | 'ils' | 'navaids' | 'trail';
+/**
+ * The toggleable overlays, one key per left-edge button. `traffic` is reserved for
+ * manager 13 (instructor-map.md D12): the key exists so traffic rendering can be added
+ * later by adding files, but nothing here draws it and no button offers it yet.
+ */
+export type MapLayerKey =
+  | 'runways'
+  | 'ils'
+  | 'navaids'
+  | 'waypoints'
+  | 'procedures'
+  | 'metar'
+  | 'traffic'
+  | 'trail';
+
+/** One procedure toggled ON for drawing, identified the way the API identifies it. */
+export interface OpenProcedure {
+  kind: ProcedureKind;
+  ident: string;
+  transition: string | null;
+}
+
+/** Membership test for {@link MapState.openProcedures}. */
+export function isProcedureOpen(
+  open: readonly OpenProcedure[],
+  procedure: OpenProcedure,
+): boolean {
+  return open.some(
+    (entry) =>
+      entry.kind === procedure.kind &&
+      entry.ident === procedure.ident &&
+      entry.transition === procedure.transition,
+  );
+}
 
 /** What a map click means right now. */
 export type MapMode = 'pan' | 'measure' | 'reposition';
@@ -34,16 +67,31 @@ export interface MapState {
   staged: LatLon | null;
   /** Recent aircraft positions, oldest first, capped at {@link TRAIL_LIMIT}. */
   trail: LatLon[];
+  /** The airport whose procedures are offered in the left rail, or `null`. */
+  referenceIcao: string | null;
+  /** Which procedures are toggled ON for drawing. Several may be shown at once. */
+  openProcedures: OpenProcedure[];
 }
 
 export const initialMapState: MapState = {
-  layers: { runways: true, ils: true, navaids: true, trail: true },
+  layers: {
+    runways: true,
+    ils: true,
+    navaids: true,
+    waypoints: true,
+    procedures: true,
+    metar: true,
+    traffic: false,
+    trail: true,
+  },
   follow: false,
   mode: 'pan',
   measureA: null,
   measureB: null,
   staged: null,
   trail: [],
+  referenceIcao: null,
+  openProcedures: [],
 };
 
 const mapSlice = createSlice({
@@ -105,6 +153,29 @@ const mapSlice = createSlice({
     trailCleared(state) {
       state.trail = [];
     },
+    /**
+     * Pick (or clear, with `null`) the reference airport. A different airport's
+     * procedures make no sense on screen, so changing it always resets the open set.
+     */
+    referenceAirportSelected(state, action: PayloadAction<string | null>) {
+      if (state.referenceIcao !== action.payload) {
+        state.openProcedures = [];
+      }
+      state.referenceIcao = action.payload;
+    },
+    /** Toggle one procedure's polyline on or off. Several may be shown at once. */
+    procedureLayerToggled(state, action: PayloadAction<OpenProcedure>) {
+      if (isProcedureOpen(state.openProcedures, action.payload)) {
+        state.openProcedures = state.openProcedures.filter(
+          (entry) =>
+            entry.kind !== action.payload.kind ||
+            entry.ident !== action.payload.ident ||
+            entry.transition !== action.payload.transition,
+        );
+      } else {
+        state.openProcedures.push(action.payload);
+      }
+    },
   },
 });
 
@@ -118,6 +189,8 @@ export const {
   stagedDiscarded,
   trailPointAppended,
   trailCleared,
+  referenceAirportSelected,
+  procedureLayerToggled,
 } = mapSlice.actions;
 
 export default mapSlice.reducer;
