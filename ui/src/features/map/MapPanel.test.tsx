@@ -157,6 +157,17 @@ describe('MapPanel', () => {
     });
     expect(state.position.activeTab).toBe('coordinate');
     expect(state.ui.activeTab).toBe('position');
+    // The Position screen consumes the hand-off from its own slice: the coordinate is
+    // adopted into the Custom location tab, which is what makes it visible and committable
+    // over there (docs/designs/instructor-map.md D5).
+    expect(state.positionDesign.activeTab).toBe('custom');
+    expect(state.positionDesign.custom).toEqual({
+      origin: 'coordinates',
+      latitude: 40.46,
+      longitude: -3.57,
+      altitudeFt: 0,
+      headingDeg: 0,
+    });
     // The map's own staging is consumed and the mode drops back to pan.
     expect(state.map.staged).toBeNull();
     expect(state.map.mode).toBe('pan');

@@ -44,26 +44,33 @@ export default function App() {
   const visitedTabs = useAppSelector((state) => state.ui.visitedTabs);
   const drawerOpen = useAppSelector((state) => state.ui.drawerOpen);
 
+  // The Position screen v3 replica owns the full viewport: no shell header, drawer or
+  // status bar around it. The map tab stays mounted (hidden) regardless — see the
+  // `TABS.map` loop below, which is never early-returned out of.
+  const fullBleed = activeTab === 'position';
+
   return (
-    <div className="app">
-      <header className="app__header">
-        <div className="app__title">
-          <h1>Open Instructor Station</h1>
-        </div>
-        <TabBar />
-        <div className="app__header-actions">
-          <ThemeToggle />
-          <button
-            type="button"
-            className="ghost-button"
-            aria-pressed={drawerOpen}
-            onClick={() => dispatch(drawerToggled())}
-          >
-            Context
-          </button>
-          <ConnectionBadge />
-        </div>
-      </header>
+    <div className={fullBleed ? 'app app--fullbleed' : 'app'}>
+      {!fullBleed && (
+        <header className="app__header">
+          <div className="app__title">
+            <h1>Open Instructor Station</h1>
+          </div>
+          <TabBar />
+          <div className="app__header-actions">
+            <ThemeToggle />
+            <button
+              type="button"
+              className="ghost-button"
+              aria-pressed={drawerOpen}
+              onClick={() => dispatch(drawerToggled())}
+            >
+              Context
+            </button>
+            <ConnectionBadge />
+          </div>
+        </header>
+      )}
 
       <div className="app__body">
         <main className="app__panelhost">
@@ -81,7 +88,7 @@ export default function App() {
                 id={`tabpanel-${tab.id}`}
                 className="app__tabpanel"
                 role="tabpanel"
-                aria-labelledby={`tab-${tab.id}`}
+                aria-labelledby={fullBleed && active ? undefined : `tab-${tab.id}`}
                 hidden={!active}
               >
                 {Panel === undefined ? (
@@ -95,10 +102,10 @@ export default function App() {
             );
           })}
         </main>
-        {drawerOpen && <ContextDrawer />}
+        {!fullBleed && drawerOpen && <ContextDrawer />}
       </div>
 
-      <StatusBar />
+      {!fullBleed && <StatusBar />}
     </div>
   );
 }

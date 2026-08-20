@@ -285,6 +285,33 @@ export type ClearFailureRequest = components['schemas']['ClearFailureRequest'];
 export type ArmFailureRequest = components['schemas']['ArmFailureRequest'];
 
 // ---------------------------------------------------------------------------
+// Pushback Manager
+// ---------------------------------------------------------------------------
+
+/** One pushback instruction — the body of both `POST /api/pushback/preview` and `/execute`. */
+export type PushbackRequest = components['schemas']['PushbackRequest'];
+
+/**
+ * Where the NOSE ends up (D5), as a closed union straight from the OpenAPI enum:
+ * `'right'` rotates the final heading clockwise, `'left'` counter-clockwise,
+ * `'straight'` not at all. A direction added on the server fails the typecheck here
+ * until the panel's segmented picker handles it.
+ */
+export type PushbackDirection = PushbackRequest['direction'];
+
+/** The resolved outcome of one request from a given starting state. */
+export type PushbackTarget = components['schemas']['PushbackTarget'];
+
+/** `POST /api/pushback/preview` — where the aircraft would end up. Writes nothing. */
+export type PushbackPreview = components['schemas']['PushbackPreview'];
+
+/** `POST /api/pushback/execute` — `state` is the read-back, the honest verdict. */
+export type PushbackResult = components['schemas']['PushbackResult'];
+
+/** `GET /api/pushback/manifest` — capability, reason, and the exact slider bounds. */
+export type PushbackManifest = components['schemas']['PushbackManifest'];
+
+// ---------------------------------------------------------------------------
 // Flight Scenario Generator
 // ---------------------------------------------------------------------------
 
