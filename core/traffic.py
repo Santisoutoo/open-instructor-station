@@ -41,6 +41,7 @@ __all__ = [
     "APPROACH_SEQUENCE_DEFAULT_DISTANCES_NM",
     "RUNWAY_INCURSION_DEFAULT_OFFSET_M",
     "RUNWAY_INCURSION_DEFAULT_SPEED_KT",
+    "SECONDS_PER_HOUR",
     "TAXI_DEFAULT_SPEED_KT",
     "TCAS_DEFAULT_CLOSURE_IAS_KT",
     "TCAS_SEVERITY_PROFILES",
@@ -67,7 +68,7 @@ __all__ = [
     "tcas_conflict_track",
 ]
 
-_SECONDS_PER_HOUR = 3600.0
+SECONDS_PER_HOUR = 3600.0
 
 # ---------------------------------------------------------------------------
 # Entity vocabulary (§3.1)
@@ -412,7 +413,7 @@ def interpolate_track(track: TrafficTrack, elapsed_s: float) -> TrafficSample:
             latitude=moved.latitude, longitude=moved.longitude, altitude_ft=altitude_ft
         ),
         heading_deg=heading_deg,
-        ground_speed_kt=leg_distance_nm / leg_time_s * _SECONDS_PER_HOUR,
+        ground_speed_kt=leg_distance_nm / leg_time_s * SECONDS_PER_HOUR,
         on_ground=start.on_ground,
     )
 
@@ -516,7 +517,7 @@ def tcas_conflict_track(
     )
     user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
     user_projected = point_at_distance_and_bearing(
-        user_position, user_gs_kt * lead_s / _SECONDS_PER_HOUR, user_state.heading_deg
+        user_position, user_gs_kt * lead_s / SECONDS_PER_HOUR, user_state.heading_deg
     )
 
     intruder_track_deg = (user_state.heading_deg + relative_bearing_deg) % 360.0
@@ -540,10 +541,10 @@ def tcas_conflict_track(
     # measures exactly the distance the intruder covers in lead_s. The intruder
     # flies level: the vertical miss is built into its altitude, not a profile.
     spawn_point = point_at_distance_and_bearing(
-        cpa, -(intruder_gs_kt * lead_s / _SECONDS_PER_HOUR), intruder_track_deg
+        cpa, -(intruder_gs_kt * lead_s / SECONDS_PER_HOUR), intruder_track_deg
     )
     end_point = point_at_distance_and_bearing(
-        cpa, intruder_gs_kt * TCAS_TRACK_LEAD_TIME_S / _SECONDS_PER_HOUR, intruder_track_deg
+        cpa, intruder_gs_kt * TCAS_TRACK_LEAD_TIME_S / SECONDS_PER_HOUR, intruder_track_deg
     )
 
     return TrafficTrack(
@@ -626,7 +627,7 @@ def runway_incursion_track(
         altitude_ft=user_state.altitude_ft,
     )
     distance_to_crossing_nm, _ = distance_and_bearing(user_position, crossing_point)
-    t_user_arrival_s = distance_to_crossing_nm / user_gs_kt * _SECONDS_PER_HOUR
+    t_user_arrival_s = distance_to_crossing_nm / user_gs_kt * SECONDS_PER_HOUR
     t_cross_s = max(0.0, t_user_arrival_s - lead_time_before_user_arrival_s)
 
     # A vehicle coming FROM the left crosses towards the right: its heading is
@@ -640,13 +641,13 @@ def runway_incursion_track(
     end_point = point_at_distance_and_bearing(crossing_point, offset_nm, vehicle_heading_deg)
     # §6.1 as written: the far side is reached at the time 2x offset takes at
     # the vehicle's speed, counted from the crossing moment.
-    t_end_s = t_cross_s + (2.0 * offset_nm) / speed_kt * _SECONDS_PER_HOUR
+    t_end_s = t_cross_s + (2.0 * offset_nm) / speed_kt * SECONDS_PER_HOUR
 
     waypoints: list[TrafficWaypoint] = []
     if t_cross_s > 0.0:
         # The staging leg is a timing artifact — its stated speed is the creep
         # the schedule implies, not the commanded crossing speed.
-        staging_speed_kt = offset_nm / t_cross_s * _SECONDS_PER_HOUR
+        staging_speed_kt = offset_nm / t_cross_s * SECONDS_PER_HOUR
         waypoints.append(
             TrafficWaypoint(
                 position=start_point, speed_kt=staging_speed_kt, t_offset_s=0.0, on_ground=True
@@ -718,10 +719,10 @@ def approach_sequence_tracks(
         if distance_nm <= 0.0:
             raise ValueError(f"distances_nm must be positive, got {distance_nm!r}.")
         start = final_approach_point(runway, distance_nm, DEFAULT_GLIDESLOPE_DEG)
-        t_threshold_s = distance_nm / speed_kt * _SECONDS_PER_HOUR
+        t_threshold_s = distance_nm / speed_kt * SECONDS_PER_HOUR
         # The ground roll decelerates from approach speed towards a stop, so
         # the leg is timed at half the approach speed — its average.
-        t_rollout_s = t_threshold_s + rollout_distance_nm / (speed_kt / 2.0) * _SECONDS_PER_HOUR
+        t_rollout_s = t_threshold_s + rollout_distance_nm / (speed_kt / 2.0) * SECONDS_PER_HOUR
         tracks.append(
             TrafficTrack(
                 kind=kind,
@@ -775,7 +776,7 @@ def taxi_traffic_track(
     for index, point in enumerate(route):
         if index > 0:
             leg_distance_nm, _ = distance_and_bearing(route[index - 1], point)
-            t_offset_s += leg_distance_nm / speed_kt * _SECONDS_PER_HOUR
+            t_offset_s += leg_distance_nm / speed_kt * SECONDS_PER_HOUR
         is_last = index == len(route) - 1
         waypoints.append(
             TrafficWaypoint(
