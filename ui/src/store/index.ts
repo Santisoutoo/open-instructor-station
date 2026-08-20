@@ -7,6 +7,7 @@ import failuresReducer from '../features/failures/failuresSlice';
 import fuelPayloadReducer from '../features/fuel-payload/fuelPayloadSlice';
 import landingReducer from '../features/landing/landingSlice';
 import mapReducer from '../features/map/mapSlice';
+import positionDesignReducer from '../features/position/positionDesignSlice';
 import positionReducer from '../features/position/positionSlice';
 import profilesReducer from '../features/profiles/profilesSlice';
 import pushbackReducer from '../features/pushback/pushbackSlice';
@@ -28,6 +29,7 @@ const reducerMap = {
   telemetry: telemetryReducer,
   aircraft: aircraftReducer,
   position: positionReducer,
+  positionDesign: positionDesignReducer,
   weather: weatherReducer,
   failures: failuresReducer,
   fuelPayload: fuelPayloadReducer,

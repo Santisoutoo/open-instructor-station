@@ -151,6 +151,25 @@ h2 {
   display: none;
 }
 
+/*
+ * Full-bleed mode (the Position screen v3 replica): no shell chrome around the panel host,
+ * and the tab panel stretches to fill it. Deliberately no `display:` here — `.app__tabpanel
+ * [hidden] { display: none }` above already owns that, and any `display:` in this block
+ * would out-specificity-tie it and un-hide the still-mounted (but not active) map panel.
+ */
+.app--fullbleed .app__panelhost {
+  padding: 0;
+  overflow: hidden;
+}
+
+.app--fullbleed .app__tabpanel {
+  max-width: none;
+  margin: 0;
+  gap: 0;
+  align-items: stretch;
+  height: 100%;
+}
+
 .app__loading {
   margin: 0;
   color: var(--text-dim);
