@@ -1,52 +1,57 @@
-import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-
 /**
- * Client-only UI state of the Traffic panel: which card was last used and the spawn
- * parameters. Server state (manifest, active entities) lives in RTK Query
- * (`trafficApi.ts`), never here.
+ * Traffic panel state — design §7.2.
+ *
+ * `contacts` and `connected` mirror the `WS /ws/traffic` stream: every frame replaces
+ * the contact list wholesale (the stream pushes the full picture, never a diff), and
+ * `connected` says whether frames are currently arriving — on a disconnect the last
+ * frame is kept on screen and the panel labels it stale rather than pretending an empty
+ * sky. `selectedShape` is client-only: which spawn form tab is open.
+ *
+ * `useTrafficSocket` is what dispatches into it; the writes themselves live in
+ * `trafficApi.ts`, because server state belongs to RTK Query and never to a slice.
  */
 
-export const COUNT_MIN = 1;
-export const COUNT_MAX = 4;
-export const DISTANCE_MIN_NM = 2;
-export const DISTANCE_MAX_NM = 20;
+import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import type { TrafficContact, TrafficScenarioShape } from '../../api/models';
 
-export interface TrafficUiState {
-  /** The last spawn card tapped, or `null` before the first tap. Display-only. */
-  selectedSpawnKind: string | null;
-  params: {
-    /** Entities per spawn for the plain-kind cards, clamped to 1–4. */
-    count: number;
-    /** Spawn distance in NM where the template uses one, clamped to 2–20. */
-    distanceNm: number;
-  };
+export interface TrafficState {
+  /** Replaced wholesale on every `/ws/traffic` frame. */
+  contacts: TrafficContact[];
+  /** True while the traffic stream is delivering frames. */
+  connected: boolean;
+  /** Which spawn form is open — client-only, never sent anywhere. */
+  selectedShape: TrafficScenarioShape;
 }
 
-export const initialTrafficUiState: TrafficUiState = {
-  selectedSpawnKind: null,
-  params: { count: 1, distanceNm: 8 },
+export const initialTrafficState: TrafficState = {
+  contacts: [],
+  connected: false,
+  selectedShape: 'tcas_conflict',
 };
-
-function clamp(value: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, Math.round(value)));
-}
 
 const trafficSlice = createSlice({
   name: 'traffic',
-  initialState: initialTrafficUiState,
+  initialState: initialTrafficState,
   reducers: {
-    spawnKindSelected(state, action: PayloadAction<string | null>) {
-      state.selectedSpawnKind = action.payload;
+    /** One `/ws/traffic` frame: the full contact list, replacing whatever was there. */
+    trafficFrameReceived(state, action: PayloadAction<TrafficContact[]>) {
+      state.contacts = action.payload;
+      state.connected = true;
     },
-    /** Stepper writes clamp instead of rejecting — a stepper cannot show an error. */
-    countChanged(state, action: PayloadAction<number>) {
-      state.params.count = clamp(action.payload, COUNT_MIN, COUNT_MAX);
+    /**
+     * The stream dropped. The contacts are kept — they are the last honest picture and
+     * the panel marks them stale via `connected` — never silently zeroed, which would
+     * read as "the sky is empty" when the truth is "I stopped hearing".
+     */
+    trafficStreamDisconnected(state) {
+      state.connected = false;
     },
-    distanceChanged(state, action: PayloadAction<number>) {
-      state.params.distanceNm = clamp(action.payload, DISTANCE_MIN_NM, DISTANCE_MAX_NM);
+    shapeSelected(state, action: PayloadAction<TrafficScenarioShape>) {
+      state.selectedShape = action.payload;
     },
   },
 });
 
-export const { spawnKindSelected, countChanged, distanceChanged } = trafficSlice.actions;
+export const { trafficFrameReceived, trafficStreamDisconnected, shapeSelected } =
+  trafficSlice.actions;
 export default trafficSlice.reducer;
