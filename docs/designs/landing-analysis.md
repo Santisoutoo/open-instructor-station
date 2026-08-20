@@ -108,6 +108,7 @@ delivered by Track 0 (§12.1), alone, before any of the three managers branches.
 ```python
 # core/frames.py
 
+
 class StateFrame(BaseModel):
     """One sample of the simulator's state, timestamped by whatever recorded it.
 
@@ -352,17 +353,17 @@ class TraceSample(BaseModel):
     vs_fpm: float
     pitch_deg: float
     roll_deg: float
-    loc_dev_dot: float | None   # None when the runway is unknown (D12)
+    loc_dev_dot: float | None  # None when the runway is unknown (D12)
     gs_dev_dot: float | None
     distance_from_threshold_m: float | None
 
     # --- added ---
-    groundspeed_kt: float       # every along-track distance integrates THIS, not ias_kt:
-                                # a 20 kt headwind is 300 m of float distance over 30 s.
-    normal_g: float             # the trace behind peak_g; a G spike with no context is
-                                # unreadable in a debrief.
-    cross_track_m: float | None # the physical truth behind loc_dev_dot, kept so the
-                                # dot convention (D9) destroys no information.
+    groundspeed_kt: float  # every along-track distance integrates THIS, not ias_kt:
+    # a 20 kt headwind is 300 m of float distance over 30 s.
+    normal_g: float  # the trace behind peak_g; a G spike with no context is
+    # unreadable in a debrief.
+    cross_track_m: float | None  # the physical truth behind loc_dev_dot, kept so the
+    # dot convention (D9) destroys no information.
 ```
 
 The three runway-dependent fields become `float | None` — the honest consequence of D12, and the
@@ -390,8 +391,8 @@ Plus two fields that are about the recording rather than the landing, and are th
 mechanism of D6:
 
 ```python
-    sample_rate_hz: float        # measured mean, frames / (t_last - t_first)
-    frame_count: int
+sample_rate_hz: float  # measured mean, frames / (t_last - t_first)
+frame_count: int
 ```
 
 ### 5.3 Nullability — exactly which numbers need a runway
@@ -431,25 +432,25 @@ class RunwayContext(BaseModel):
 
 
 class LandingSummary(BaseModel):
-    landing_id: str          # uuid4().hex, the ProfileStore id convention
-    recorded_at: datetime    # UTC wall clock of the FIRST frame — the only wall
-                             # clock in the whole model (§2.1)
+    landing_id: str  # uuid4().hex, the ProfileStore id convention
+    recorded_at: datetime  # UTC wall clock of the FIRST frame — the only wall
+    # clock in the whole model (§2.1)
     outcome: LandingOutcome
     runway: RunwayContext | None
-    runway_unavailable_reason: str | None   # instructor-facing, D12
-    touchdown_vs_fpm: float | None          # the headline number, for the picker
+    runway_unavailable_reason: str | None  # instructor-facing, D12
+    touchdown_vs_fpm: float | None  # the headline number, for the picker
     sample_rate_hz: float
 
 
 class LandingRecord(BaseModel):
     summary: LandingSummary
-    report: LandingReport | None   # None for go_around / aborted (D13)
+    report: LandingReport | None  # None for go_around / aborted (D13)
     samples: tuple[TraceSample, ...]
-    touchdown_index: int | None    # index INTO THE SERVED TRACE, recomputed per
-                                   # decimation (D5) — never an index into the
-                                   # full-rate buffer
-    trace_rate_hz: float           # what the served trace was decimated to
-    truncated: bool                # the buffer dropped its oldest frames
+    touchdown_index: int | None  # index INTO THE SERVED TRACE, recomputed per
+    # decimation (D5) — never an index into the
+    # full-rate buffer
+    trace_rate_hz: float  # what the served trace was decimated to
+    truncated: bool  # the buffer dropped its oldest frames
 
 
 #: "armed" = criteria met, buffering. "rollout" = on the ground, waiting for the
@@ -465,22 +466,22 @@ class RecorderStatus(BaseModel):
     elapsed_s: float
     frame_count: int
     achieved_rate_hz: float
-    runway_ident: str | None      # resolved early when navdata allows, for the badge
+    runway_ident: str | None  # resolved early when navdata allows, for the badge
 ```
 
 ### 5.5 Manifest
 
 ```python
 class LandingManifest(BaseModel):
-    supported: bool = True        # always. Kept for shape-consistency with every
-    reason: str | None = None     # other manager's manifest, and so the panel's
-                                  # gate helper has the same signature everywhere.
+    supported: bool = True  # always. Kept for shape-consistency with every
+    reason: str | None = None  # other manager's manifest, and so the panel's
+    # gate helper has the same signature everywhere.
     target_sample_hz: float = RECORDER_SAMPLE_HZ
     min_trustworthy_sample_hz: float = MIN_TRUSTWORTHY_SAMPLE_HZ
     trace_display_hz: float = TRACE_DISPLAY_HZ
     arm_max_agl_ft: float = ARM_MAX_AGL_FT
-    default_glide_path_deg: float = DEFAULT_GLIDESLOPE_DEG   # from core.geodesy
-    vref_kt: float | None         # D18: airframe Vref, for the UI's speed grading
+    default_glide_path_deg: float = DEFAULT_GLIDESLOPE_DEG  # from core.geodesy
+    vref_kt: float | None  # D18: airframe Vref, for the UI's speed grading
     vref_source: Literal["airframe_vso", "approach_category", "unknown"]
 ```
 
@@ -492,35 +493,35 @@ another angle; `vref_source` makes the assumption visible rather than fixing it 
 ### 5.6 Constants
 
 ```python
-RECORDER_SAMPLE_HZ: float = 20.0          # top of the spec's 10-20 Hz band; the pump
-                                          # escalates to it only while armed (D4)
-MIN_TRUSTWORTHY_SAMPLE_HZ: float = 10.0   # bottom of the band; below it the report is
-                                          # served with a warning, not withheld (D6)
-TRACE_DISPLAY_HZ: float = 4.0             # what /records/{id} serves by default (D5)
-LANDING_STATUS_INTERVAL_S: float = 0.5    # WS /ws/landing, 2 Hz
+RECORDER_SAMPLE_HZ: float = 20.0  # top of the spec's 10-20 Hz band; the pump
+# escalates to it only while armed (D4)
+MIN_TRUSTWORTHY_SAMPLE_HZ: float = 10.0  # bottom of the band; below it the report is
+# served with a warning, not withheld (D6)
+TRACE_DISPLAY_HZ: float = 4.0  # what /records/{id} serves by default (D5)
+LANDING_STATUS_INTERVAL_S: float = 0.5  # WS /ws/landing, 2 Hz
 
 ARM_MAX_AGL_FT: float = 1500.0
 ARM_MIN_GEAR_RATIO: float = 0.9
 ARM_MIN_DESCENT_FPM: float = -100.0
-ARM_ALIGNMENT_DEG: float = 45.0           # heading vs runway, when a runway is known
+ARM_ALIGNMENT_DEG: float = 45.0  # heading vs runway, when a runway is known
 ARM_CAPTURE_RANGE_NM: float = 12.0
 ARM_CAPTURE_HALF_ANGLE_DEG: float = 10.0  # feature spec 11's "localizer capture region"
 
-GO_AROUND_AGL_FT: float = 1500.0          # climbed back through it, never touched down
+GO_AROUND_AGL_FT: float = 1500.0  # climbed back through it, never touched down
 ROLLOUT_SETTLE_S: float = 3.0
-ROLLOUT_STOP_KT: float = 35.0             # taxi speed; also ends landing_roll_m
+ROLLOUT_STOP_KT: float = 35.0  # taxi speed; also ends landing_roll_m
 MAX_RECORDING_S: float = 900.0
-MAX_FRAMES: int = 20_000                  # ~16 min at 20 Hz; oldest dropped, `truncated` set
+MAX_FRAMES: int = 20_000  # ~16 min at 20 Hz; oldest dropped, `truncated` set
 MAX_RETAINED_LANDINGS: int = 20
 
-FLARE_VS_THRESHOLD_FPM: float = -200.0    # the flare begins when the sink rate first
-                                          # rises through this on the way to touchdown
-FLOAT_VS_THRESHOLD_FPM: float = -100.0    # "nearly level" — floating, not descending
+FLARE_VS_THRESHOLD_FPM: float = -200.0  # the flare begins when the sink rate first
+# rises through this on the way to touchdown
+FLOAT_VS_THRESHOLD_FPM: float = -100.0  # "nearly level" — floating, not descending
 DEVIATION_WINDOW_NM: float = 3.0
-LOC_DEG_PER_DOT: float = 1.25             # D9
-GS_DEG_PER_DOT: float = 0.35              # D9
+LOC_DEG_PER_DOT: float = 1.25  # D9
+GS_DEG_PER_DOT: float = 0.35  # D9
 DEFAULT_TCH_FT: float = 50.0
-RUNWAY_SEARCH_RADIUS_NM: float = 3.0      # touchdown point -> nearest runway
+RUNWAY_SEARCH_RADIUS_NM: float = 3.0  # touchdown point -> nearest runway
 ```
 
 Every threshold above is a **stated default, not a measured one**. §13.4 records that and says
