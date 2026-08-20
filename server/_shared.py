@@ -9,10 +9,12 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
+from core.navdata.provider import NavdataProvider
 from core.sim_adapter import SimAdapter
+from core.weather.models import WeatherRequest
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 
-__all__ = ["_require_capability"]
+__all__ = ["_require_capability", "_weather_context"]
 
 
 def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:
@@ -23,3 +25,42 @@ def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:
             detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
             f"declare {flag}, so it cannot {what}.",
         )
+
+
+def _weather_context(
+    provider: NavdataProvider, request: WeatherRequest
+) -> tuple[float | None, float | None]:
+    """The runway bearing / field elevation a weather request names, or ``(None, None)``.
+
+    Raises :class:`ValueError` — never :class:`~fastapi.HTTPException` — so it
+    is callable from both an HTTP request (``server.weather_routes._resolve_context``
+    wraps it into a 404) and a scenario run
+    (``server.scenario_engine``, which has no HTTP request to answer and
+    already only recognises :class:`ValueError` as a step failure, §6.3).
+
+    Returns ``(None, None)`` for a request that names no airport at all — it
+    never touches the provider and can therefore never raise
+    :class:`~core.navdata.provider.NavdataUnavailable` (weather-manager.md
+    §2.2: "a request with no airport context never touches navdata").
+    """
+    if request.airport_icao is None:
+        return None, None
+
+    airport = provider.get_airport(request.airport_icao)
+    if airport is None:
+        raise ValueError(
+            f"Airport {request.airport_icao.upper()!r} is not in the navigation index."
+        )
+    field_elevation_ft = airport.elevation_ft
+
+    runway_true_bearing_deg: float | None = None
+    if request.runway_ident is not None:
+        runway = provider.get_runway(request.airport_icao, request.runway_ident)
+        if runway is None:
+            raise ValueError(
+                f"Runway {request.runway_ident.upper()} is not published at "
+                f"{request.airport_icao.upper()}."
+            )
+        runway_true_bearing_deg = runway.true_bearing_deg
+
+    return runway_true_bearing_deg, field_elevation_ft

@@ -54,6 +54,7 @@ from core.scenarios.preflight import missing_capabilities
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
 from core.weather.models import WeatherRequest, WeatherSetup
 from core.weather.presets import resolve_request
+from server._shared import _weather_context
 from server.failure_routes import arm_failure
 from server.position_routes import ApplyPlacementRequest, execute_placement
 
@@ -202,43 +203,17 @@ def _done_step(state: _RunState, name: ScenarioStepName, detail: str | None = No
     state.steps[name].detail = detail
 
 
-def _weather_context(
-    navdata: NavdataProvider, request: WeatherRequest
-) -> tuple[float | None, float | None]:
-    """The runway bearing / field elevation a weather request names, or ``(None, None)``.
-
-    Mirrors ``server/weather_routes.py``'s own ``_resolve_context``, but
-    raises :class:`ValueError` rather than :class:`~fastapi.HTTPException`
-    for an unresolvable airport/runway — a scenario run has no HTTP request
-    to answer, and ``ValueError`` is one of the three exception types a step
-    is allowed to fail with (§6.3).
-    """
-    if request.airport_icao is None:
-        return None, None
-
-    airport = navdata.get_airport(request.airport_icao)
-    if airport is None:
-        raise ValueError(
-            f"Airport {request.airport_icao.upper()!r} is not in the navigation index."
-        )
-    field_elevation_ft = airport.elevation_ft
-
-    runway_true_bearing_deg: float | None = None
-    if request.runway_ident is not None:
-        runway = navdata.get_runway(request.airport_icao, request.runway_ident)
-        if runway is None:
-            raise ValueError(
-                f"Runway {request.runway_ident.upper()} is not published at "
-                f"{request.airport_icao.upper()}."
-            )
-        runway_true_bearing_deg = runway.true_bearing_deg
-
-    return runway_true_bearing_deg, field_elevation_ft
-
-
 def _resolve_weather(
     navdata: NavdataProvider, request: WeatherRequest
 ) -> tuple[WeatherSetup, tuple[str, ...]]:
+    """Resolve one weather request into a setup, or raise :class:`ValueError` (§6.3).
+
+    ``_weather_context`` (``server._shared``, shared with
+    ``server.weather_routes._resolve_context``) already raises
+    :class:`ValueError` for an unresolvable airport/runway — a scenario run
+    has no HTTP request to answer, and ``ValueError`` is one of the three
+    exception types a step is allowed to fail with.
+    """
     runway_true_bearing_deg, field_elevation_ft = _weather_context(navdata, request)
     return resolve_request(
         request,

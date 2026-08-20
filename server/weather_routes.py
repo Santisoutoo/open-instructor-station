@@ -29,7 +29,7 @@ from core.navdata.provider import NavdataProvider
 from core.sim_adapter import CapabilityNotSupported, WeatherRejected
 from core.weather.models import WeatherPresetId, WeatherRequest, WeatherSetup, WeatherState
 from core.weather.presets import WEATHER_PRESETS, resolve_request
-from server._shared import _require_capability
+from server._shared import _require_capability, _weather_context
 from server.constants import CAPABILITY_UNAVAILABLE_STATUS
 from server.deps import get_adapter, get_navdata
 
@@ -113,36 +113,18 @@ class WeatherManifest(BaseModel):
 def _resolve_context(
     provider: NavdataProvider, request: WeatherRequest
 ) -> tuple[float | None, float | None]:
-    """The runway bearing / field elevation the request names.
+    """The runway bearing / field elevation the request names, or a 404.
 
-    Returns ``(None, None)`` for a request that names no airport at all — it
-    never touches the provider and can therefore never raise
-    :class:`~core.navdata.provider.NavdataUnavailable` (weather-manager.md
-    §2.2: "a request with no airport context never touches navdata").
+    A thin wrapper around ``server._shared._weather_context`` (shared with
+    ``server.scenario_engine``, whose run has no HTTP request to translate
+    :class:`ValueError` into): this is the one call site with an actual
+    request to answer, so it is the one that turns the shared function's
+    :class:`ValueError` into an :class:`~fastapi.HTTPException`.
     """
-    if request.airport_icao is None:
-        return None, None
-
-    airport = provider.get_airport(request.airport_icao)
-    if airport is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Airport {request.airport_icao.upper()!r} is not in the navigation index.",
-        )
-    field_elevation_ft = airport.elevation_ft
-
-    runway_true_bearing_deg: float | None = None
-    if request.runway_ident is not None:
-        runway = provider.get_runway(request.airport_icao, request.runway_ident)
-        if runway is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Runway {request.runway_ident.upper()} is not published at "
-                f"{request.airport_icao.upper()}.",
-            )
-        runway_true_bearing_deg = runway.true_bearing_deg
-
-    return runway_true_bearing_deg, field_elevation_ft
+    try:
+        return _weather_context(provider, request)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 def _resolve(
