@@ -16,7 +16,7 @@ function renderTabBar() {
 }
 
 describe('<TabBar />', () => {
-  it('lists the ten modules as a tablist with Position active by default', () => {
+  it('lists the twelve modules as a tablist with Position active by default', () => {
     renderTabBar();
 
     expect(screen.getByRole('tablist')).toBeInTheDocument();
@@ -32,6 +32,8 @@ describe('<TabBar />', () => {
       'Aircraft',
       'Landing analysis',
       'Traffic',
+      'Camera',
+      'Pushback',
     ]);
     expect(screen.getByRole('tab', { name: 'Position' })).toHaveAttribute(
       'aria-selected',
@@ -68,7 +70,7 @@ describe('<TabBar />', () => {
     expect(store.getState().ui.activeTab).toBe('position');
 
     await user.keyboard('{End}');
-    expect(store.getState().ui.activeTab).toBe('traffic');
+    expect(store.getState().ui.activeTab).toBe('pushback');
 
     await user.keyboard('{Home}');
     expect(store.getState().ui.activeTab).toBe('position');

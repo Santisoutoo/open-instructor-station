@@ -48,17 +48,19 @@ describe('uiSlice', () => {
     expect(reducer(demoOn, demoFeedSet(false)).demoFeed).toBe(false);
   });
 
-  it('recognises exactly the nine tab ids', () => {
+  it('recognises exactly the eleven tab ids', () => {
     for (const id of [
       'position',
       'scenarios',
       'weather',
       'failures',
       'fuel-payload',
+      'profiles',
       'map',
       'aircraft',
       'landing',
       'traffic',
+      'camera',
     ]) {
       expect(isTabId(id)).toBe(true);
     }

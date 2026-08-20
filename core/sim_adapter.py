@@ -19,8 +19,10 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
+from core.camera.models import CameraOffset, CameraSupportManifest, CameraViewId
 from core.failures import ActiveFailure, FailureRef, FailureSupportManifest
 from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
+from core.pushback import PushbackRequest
 from core.traffic import TrafficContact, TrafficTrack
 from core.weather.models import WeatherSetup, WeatherState
 
@@ -200,6 +202,53 @@ class SimAdapter(Protocol):
           :attr:`Capabilities.can_set_fuel_payload`. When ``loadout`` and the
           scalar fields are both set, ``loadout`` is authoritative and the
           scalars are applied only when it is absent.
+        """
+        ...
+
+    async def pushback(self, request: PushbackRequest) -> None:
+        """Push the aircraft backward per ``request``, from wherever it is right now.
+
+        Re-reads position and heading itself (``core.pushback.pushback_target()``,
+        the same pure function ``POST /api/pushback/preview`` calls) rather than
+        trusting a target resolved earlier — a pushback is defined relative to
+        the CURRENT state, and re-resolving at write time is what keeps a
+        delayed request honest (the same lesson issue #39 taught
+        :meth:`set_position` about speed decay).
+
+        Raises :class:`core.pushback.PushbackNotOnGround` if the aircraft is
+        airborne. Requires :attr:`Capabilities.can_pushback`.
+        """
+        ...
+
+    async def get_camera_support(self) -> CameraSupportManifest:
+        """Which views and which sub-features this adapter can reach, one entry per
+        CAMERA_VIEW_IDS in catalogue order, plus custom_positions_supported. A
+        capability-free read: an adapter without can_control_camera returns every
+        view unsupported and custom_positions_supported=False, both with a stated
+        reason — "no" is an answer, never an exception.
+        """
+        ...
+
+    async def set_camera_view(self, view_id: CameraViewId) -> None:
+        """Switch to the named view now. Requires can_control_camera; a view_id the
+        manifest reports unsupported raises CapabilityNotSupported.
+        """
+        ...
+
+    async def get_camera_offset(self) -> CameraOffset | None:
+        """The current free/drone camera pose, resolved against the current
+        aircraft state, or None when there is nothing meaningful to report — not
+        currently in a free-camera view, or the adapter cannot read one. A
+        capability-free read, the get_airframe() posture: unknown is honest.
+        """
+        ...
+
+    async def set_camera_offset(self, offset: CameraOffset) -> None:
+        """Position the free/drone camera at `offset`, resolved against the
+        CURRENT aircraft state at write time (D4) — the same re-resolve-fresh
+        posture core.pushback.pushback_target() uses. Requires can_control_camera
+        AND the manifest's custom_positions_supported; raises
+        CapabilityNotSupported otherwise.
         """
         ...
 

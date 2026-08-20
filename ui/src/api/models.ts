@@ -285,6 +285,33 @@ export type ClearFailureRequest = components['schemas']['ClearFailureRequest'];
 export type ArmFailureRequest = components['schemas']['ArmFailureRequest'];
 
 // ---------------------------------------------------------------------------
+// Pushback Manager
+// ---------------------------------------------------------------------------
+
+/** One pushback instruction — the body of both `POST /api/pushback/preview` and `/execute`. */
+export type PushbackRequest = components['schemas']['PushbackRequest'];
+
+/**
+ * Where the NOSE ends up (D5), as a closed union straight from the OpenAPI enum:
+ * `'right'` rotates the final heading clockwise, `'left'` counter-clockwise,
+ * `'straight'` not at all. A direction added on the server fails the typecheck here
+ * until the panel's segmented picker handles it.
+ */
+export type PushbackDirection = PushbackRequest['direction'];
+
+/** The resolved outcome of one request from a given starting state. */
+export type PushbackTarget = components['schemas']['PushbackTarget'];
+
+/** `POST /api/pushback/preview` — where the aircraft would end up. Writes nothing. */
+export type PushbackPreview = components['schemas']['PushbackPreview'];
+
+/** `POST /api/pushback/execute` — `state` is the read-back, the honest verdict. */
+export type PushbackResult = components['schemas']['PushbackResult'];
+
+/** `GET /api/pushback/manifest` — capability, reason, and the exact slider bounds. */
+export type PushbackManifest = components['schemas']['PushbackManifest'];
+
+// ---------------------------------------------------------------------------
 // Flight Scenario Generator
 // ---------------------------------------------------------------------------
 
@@ -337,6 +364,47 @@ export type ProfileWeatherOutcome = components['schemas']['ProfileWeatherOutcome
 
 /** One failure entry's outcome, within a {@link ProfileApplyResult}. */
 export type ProfileFailureOutcome = components['schemas']['ProfileFailureOutcome'];
+
+// ---------------------------------------------------------------------------
+// Camera Manager
+// ---------------------------------------------------------------------------
+
+/** `GET /api/camera/manifest` — per-view support plus the custom-positions tier. */
+export type CameraManifest = components['schemas']['CameraManifest'];
+
+/** One catalogue entry resolved against the active adapter — `supported` gates the card. */
+export type CameraViewSupport = components['schemas']['CameraViewSupport'];
+
+/**
+ * The closed five-view catalogue.
+ *
+ * Read off the manifest entry rather than spelled out, the {@link ControlId} precedent:
+ * a view added on the server arrives here without an edit, and the panel's own wording
+ * table stops compiling until it names the newcomer.
+ */
+export type CameraViewId = CameraViewSupport['view_id'];
+
+/**
+ * A free/drone camera pose relative to the aircraft's reference point and current
+ * heading — never a world coordinate, so a recalled framing follows the aircraft.
+ */
+export type CameraOffset = components['schemas']['CameraOffset'];
+
+/** One row of `GET /api/camera/positions`, in creation order. */
+export type SavedCameraPosition = components['schemas']['SavedCameraPosition'];
+
+/** The body of `POST /api/camera/positions`: a 1–60 character name, nothing else. */
+export type SaveCameraPositionRequest =
+  components['schemas']['SaveCameraPositionRequest'];
+
+/** The body of `POST /api/camera/view`. */
+export type CameraViewRequest = components['schemas']['CameraViewRequest'];
+
+/**
+ * What `/view` and `/positions/{id}/apply` answer: an echo of the command, never a
+ * read-back — `SimAdapter` has no read of the current named view.
+ */
+export type CameraCommandResult = components['schemas']['CameraCommandResult'];
 
 // ---------------------------------------------------------------------------
 // AI Traffic Manager

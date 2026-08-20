@@ -1,10 +1,21 @@
 /**
- * The Position Manager panel: airport, runway, placement, staging bar.
+ * The Position screen's root: header, runway strip, tab strip + active tab body, right rail,
+ * bottom bar, inside the `.pos` scope class. The `data-theme` attribute the CSS reads
+ * (`[data-theme='light'] .pos { … }`) is already maintained on `<html>` by `uiSync`.
  *
- * The whole body is gated on the navdata status exactly as the rest of the app is gated on
- * adapter capabilities — there is no point offering an airport search over an index that
- * does not exist. The commit is gated separately, so a panel attached to an adapter that
- * cannot reposition is still fully explorable; only the button is dead, and it says why.
+ * **The body is gated on the navigation data, and the gate fails closed.** There is no point
+ * offering an airport search over an index that does not exist, so while it is missing or
+ * building the screen says so and offers to build it — the same contract the panel had
+ * before the redesign, reinstated here rather than reinvented. The header stays visible
+ * through the gate on purpose: this screen is full-bleed, so its screen menu is the only way
+ * off it.
+ *
+ * **An airport is not the only way in.** The Map's "Send to Position tab" hands over a bare
+ * coordinate (`docs/designs/instructor-map.md` D5), which is a whole placement on its own and
+ * frequently nowhere near a field. When one has been adopted with no airport loaded, the
+ * screen shows the Custom location tab, the rail and the commit bar — the runway strip and
+ * the other three tabs have nothing behind them and are not drawn. Sending a coordinate to a
+ * screen that answers "type an ICAO code" is the same as losing it.
  */
 
 import {
@@ -12,16 +23,17 @@ import {
   useBuildNavdataIndexMutation,
   useGetNavdataStatusQuery,
 } from '../../api/instructorApi';
-import { useAppDispatch, useAppSelector } from '../../store';
-import { AirportSearch } from './AirportSearch';
-import { CoordinateForm } from './CoordinateForm';
-import { ParkingList } from './ParkingList';
-import { PatternGrid } from './PatternGrid';
-import { ProcedureList } from './ProcedureList';
-import { RunwaySelector } from './RunwaySelector';
-import { StagingBar } from './StagingBar';
-import { airacLabel, navdataGate } from './gate';
-import { type PositionTab, tabSelected } from './positionSlice';
+import { useAppSelector } from '../../store';
+import { AirworkTab } from './AirworkTab';
+import { ApplyRail } from './ApplyRail';
+import { ApproachTrainingTab } from './ApproachTrainingTab';
+import { BottomBar } from './BottomBar';
+import { CustomLocationTab } from './CustomLocationTab';
+import { PositionHeaderBar } from './PositionHeaderBar';
+import { PositionTabs } from './PositionTabs';
+import { RunwayStrip } from './RunwayStrip';
+import { SidStarTab } from './SidStarTab';
+import { navdataGate } from './gate';
 import './position.css';
 
 /** How often to re-read the status while an index build is running. */
@@ -30,29 +42,22 @@ const BUILD_POLL_MS = 1000;
 /** Read the cached navdata status without subscribing to it or issuing a request. */
 const useGetNavdataStatusState = instructorApi.endpoints.getNavdataStatus.useQueryState;
 
-const TABS: readonly { id: PositionTab; label: string }[] = [
-  { id: 'pattern', label: 'Pattern & final' },
-  { id: 'procedures', label: 'Procedures' },
-  { id: 'parking', label: 'Gates & stands' },
-  { id: 'coordinate', label: 'Coordinate & fix' },
-];
-
 function NavdataCard({
   reason,
   canBuild,
   fraction,
 }: {
-  reason: string;
-  canBuild: boolean;
-  fraction: number | null;
+  readonly reason: string;
+  readonly canBuild: boolean;
+  readonly fraction: number | null;
 }) {
   const [buildIndex, buildState] = useBuildNavdataIndexMutation();
   return (
-    <div className="navdata-card">
-      <p className="navdata-card__reason">{reason}</p>
+    <div className="pos-navdata">
+      <p className="pos-navdata__reason">{reason}</p>
       {fraction !== null && (
         <div
-          className="navdata-card__bar"
+          className="pos-navdata__bar"
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}
@@ -64,7 +69,7 @@ function NavdataCard({
       {canBuild && (
         <button
           type="button"
-          className="navdata-card__build"
+          className="pos-navdata__build"
           disabled={buildState.isLoading}
           onClick={() => {
             void buildIndex();
@@ -78,36 +83,32 @@ function NavdataCard({
 }
 
 export function PositionPanel() {
-  const dispatch = useAppDispatch();
-  const selectedIcao = useAppSelector((state) => state.position.selectedIcao);
-  const selectedRunway = useAppSelector((state) => state.position.selectedRunwayIdent);
-  const activeTab = useAppSelector((state) => state.position.activeTab);
+  const activeTab = useAppSelector((state) => state.positionDesign.activeTab);
+  const loadedIcao = useAppSelector((state) => state.positionDesign.loadedIcao);
+  const hasCoordinate = useAppSelector(
+    (state) =>
+      state.positionDesign.custom.latitude !== null &&
+      state.positionDesign.custom.longitude !== null,
+  );
 
-  // Polled **only while a build is running**, which is what `BUILD_POLL_MS` says it is
-  // for. A ready index does not change under the panel, and a station left open on one for
-  // a lesson would otherwise ask the same question once a second, over the LAN, of the
-  // process that is also flying the aeroplane.
-  //
-  // The interval has to be decided before the query that answers it, hence reading the
-  // cache first: `useQueryState` is the same cache entry, without a second subscription or
-  // a second request. Starting a build invalidates `NavdataStatus`, so the refetch that
-  // reports `building` is what turns the polling on.
+  // Polled **only while a build is running**, which is what `BUILD_POLL_MS` says it is for.
+  // A ready index does not change under the screen, and a station left open on one for a
+  // lesson would otherwise ask the same question once a second, over the LAN, of the process
+  // that is also flying the aeroplane. The interval has to be decided before the query that
+  // answers it, hence reading the cache first: `useQueryState` is the same cache entry,
+  // without a second subscription or a second request.
   const cached = useGetNavdataStatusState();
   const { data: status, isError } = useGetNavdataStatusQuery(undefined, {
     pollingInterval: cached.data?.state === 'building' ? BUILD_POLL_MS : 0,
     skipPollingIfUnfocused: true,
   });
   const gate = navdataGate(status, isError);
-  const airac = airacLabel(status);
 
   return (
-    <section className="panel panel--position" aria-labelledby="position-heading">
-      <div className="panel__head">
-        <h2 id="position-heading">Position</h2>
-        {airac !== null && <span className="panel__badge mono">{airac}</span>}
-      </div>
+    <div className="pos">
+      <PositionHeaderBar />
 
-      {gate.kind === 'loading' && <p className="panel__empty">{gate.reason}</p>}
+      {gate.kind === 'loading' && <p className="pos-empty">{gate.reason}</p>}
       {gate.kind === 'blocked' && (
         <NavdataCard reason={gate.reason} canBuild={gate.canBuild} fraction={null} />
       )}
@@ -115,56 +116,45 @@ export function PositionPanel() {
         <NavdataCard reason={gate.reason} canBuild={false} fraction={gate.fraction} />
       )}
 
-      {gate.kind === 'ready' && (
+      {gate.kind === 'ready' && loadedIcao !== '' && (
         <>
-          <AirportSearch />
-
-          {selectedIcao === null ? (
-            <p className="panel__empty">
-              Search for an airport to begin. Every airport in the simulator&apos;s
-              navigation data is available.
-            </p>
-          ) : (
-            <>
-              <RunwaySelector icao={selectedIcao} />
-
-              <div className="tabs" role="tablist" aria-label="Placement type">
-                {TABS.map((tab) => (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    className={`tab${activeTab === tab.id ? ' tab--active' : ''}`}
-                    aria-selected={activeTab === tab.id}
-                    onClick={() => {
-                      dispatch(tabSelected(tab.id));
-                    }}
-                  >
-                    {tab.label}
-                  </button>
-                ))}
-              </div>
-
-              <div className="tabs__body">
-                {activeTab === 'pattern' &&
-                  (selectedRunway === null ? (
-                    <p className="panel__empty">
-                      Pick a runway end above. A final or a circuit leg is always relative
-                      to one end.
-                    </p>
-                  ) : (
-                    <PatternGrid icao={selectedIcao} runwayIdent={selectedRunway} />
-                  ))}
-                {activeTab === 'procedures' && <ProcedureList icao={selectedIcao} />}
-                {activeTab === 'parking' && <ParkingList icao={selectedIcao} />}
-                {activeTab === 'coordinate' && <CoordinateForm />}
-              </div>
-            </>
-          )}
-
-          <StagingBar />
+          <RunwayStrip />
+          <PositionTabs />
+          <div className="pos-body">
+            <div className="pos-main">
+              {activeTab === 'approach' && <ApproachTrainingTab />}
+              {activeTab === 'sidstar' && <SidStarTab />}
+              {activeTab === 'airwork' && <AirworkTab />}
+              {activeTab === 'custom' && <CustomLocationTab />}
+            </div>
+            <ApplyRail />
+          </div>
+          <BottomBar />
         </>
       )}
-    </section>
+
+      {gate.kind === 'ready' && loadedIcao === '' && hasCoordinate && (
+        <>
+          <p className="pos-empty">
+            A coordinate handed over from another screen. Load an airport to place on a
+            runway, a procedure or a stand.
+          </p>
+          <div className="pos-body">
+            <div className="pos-main">
+              <CustomLocationTab />
+            </div>
+            <ApplyRail />
+          </div>
+          <BottomBar />
+        </>
+      )}
+
+      {gate.kind === 'ready' && loadedIcao === '' && !hasCoordinate && (
+        <p className="pos-empty">
+          Type an ICAO code and press Load. Every airport in the simulator&apos;s
+          navigation data is available.
+        </p>
+      )}
+    </div>
   );
 }

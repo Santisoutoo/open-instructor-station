@@ -57,10 +57,21 @@ def test_declares_only_the_phase_0_capabilities() -> None:
     # (see xplane_adapter.py's _write_temperature_ladder and
     # _await_cloud_layers_settled docstrings).
     assert capabilities.can_set_weather is True
-    # Everything else arrives in a later phase and must stay off until then.
+    # can_pushback and can_control_camera flipped True WITHOUT a live run --
+    # deliberately, and the two reasons are different from the three above and
+    # from each other. See _CAPABILITIES in xplane_adapter.py for both in full:
+    # pushback writes no new dataref at all (it is pushback_target() plus the
+    # already-validated set_position()), and every pushback test skips itself
+    # while the flag is False, so False is a deadlock rather than caution;
+    # camera-manager.md §5.2 prescribes the flag with a *conservative
+    # manifest*, where per-view support comes from what the install's command
+    # index actually resolved and free positioning stays off.
+    assert capabilities.can_pushback is True
+    assert capabilities.can_control_camera is True
+    # can_spawn_traffic is the one flag still off, and unlike the others it is
+    # not a "later phase" placeholder: it is resolved per connection from the
+    # optional bridge probe (ai-traffic.md D3), and no bridge means no traffic.
     assert capabilities.can_spawn_traffic is False
-    assert capabilities.can_control_camera is False
-    assert capabilities.can_pushback is False
 
 
 def test_datarefs_are_fully_qualified_names() -> None:
