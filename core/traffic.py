@@ -351,6 +351,39 @@ def _heading_at_waypoint(track: TrafficTrack, index: int) -> float:
     return 0.0
 
 
+def _current_leg_index(
+    waypoints: tuple[TrafficWaypoint, ...], elapsed_s: float, last_index: int
+) -> int:
+    """The last waypoint at or before ``elapsed_s`` — the leg currently being flown."""
+    index = 0
+    for candidate in range(last_index):
+        if waypoints[candidate].t_offset_s <= elapsed_s:
+            index = candidate
+    return index
+
+
+def _leg_position_heading(
+    track: TrafficTrack,
+    index: int,
+    fraction: float,
+    leg_distance_nm: float,
+    leg_bearing_deg: float,
+) -> tuple[GeoPosition, float]:
+    """Position and heading a fraction of the way along the leg starting at ``index``."""
+    start = track.waypoints[index]
+    if leg_distance_nm > 0.0:
+        moved = point_at_distance_and_bearing(
+            start.position, leg_distance_nm * fraction, leg_bearing_deg
+        )
+        heading_deg = leg_bearing_deg if fraction > 0.0 else _heading_at_waypoint(track, index)
+    else:
+        # A stationary gap in time: the entity waits at the waypoint (its
+        # altitude may still interpolate — a climb in place).
+        moved = start.position
+        heading_deg = _heading_at_waypoint(track, index)
+    return moved, heading_deg
+
+
 def interpolate_track(track: TrafficTrack, elapsed_s: float) -> TrafficSample:
     """Where a traffic entity following ``track`` is, ``elapsed_s`` after spawn.
 
@@ -384,26 +417,14 @@ def interpolate_track(track: TrafficTrack, elapsed_s: float) -> TrafficSample:
         )
     elapsed_s = max(elapsed_s, 0.0)
 
-    # The leg the entity is on: the last waypoint at or before elapsed_s.
-    index = 0
-    for candidate in range(last_index):
-        if waypoints[candidate].t_offset_s <= elapsed_s:
-            index = candidate
+    index = _current_leg_index(waypoints, elapsed_s, last_index)
     start, end = waypoints[index], waypoints[index + 1]
     leg_time_s = end.t_offset_s - start.t_offset_s  # > 0, strict ordering is model-enforced
     fraction = (elapsed_s - start.t_offset_s) / leg_time_s
     leg_distance_nm, leg_bearing_deg = distance_and_bearing(start.position, end.position)
-
-    if leg_distance_nm > 0.0:
-        moved = point_at_distance_and_bearing(
-            start.position, leg_distance_nm * fraction, leg_bearing_deg
-        )
-        heading_deg = leg_bearing_deg if fraction > 0.0 else _heading_at_waypoint(track, index)
-    else:
-        # A stationary gap in time: the entity waits at the waypoint (its
-        # altitude may still interpolate — a climb in place).
-        moved = start.position
-        heading_deg = _heading_at_waypoint(track, index)
+    moved, heading_deg = _leg_position_heading(
+        track, index, fraction, leg_distance_nm, leg_bearing_deg
+    )
 
     altitude_ft = start.position.altitude_ft + fraction * (
         end.position.altitude_ft - start.position.altitude_ft
