@@ -105,4 +105,12 @@ export const TABS: readonly TabDefinition[] = [
         default: m.TrafficPanel,
       })),
   },
+  {
+    id: 'pushback',
+    label: 'Pushback',
+    load: () =>
+      import('../features/pushback/PushbackPanel').then((m) => ({
+        default: m.PushbackPanel,
+      })),
+  },
 ];

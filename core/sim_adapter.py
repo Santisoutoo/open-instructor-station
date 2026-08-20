@@ -21,6 +21,7 @@ from pydantic import BaseModel, ConfigDict
 
 from core.failures import ActiveFailure, FailureRef, FailureSupportManifest
 from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
+from core.pushback import PushbackRequest
 from core.traffic import TrafficContact, TrafficTrack
 from core.weather.models import WeatherSetup, WeatherState
 
@@ -200,6 +201,21 @@ class SimAdapter(Protocol):
           :attr:`Capabilities.can_set_fuel_payload`. When ``loadout`` and the
           scalar fields are both set, ``loadout`` is authoritative and the
           scalars are applied only when it is absent.
+        """
+        ...
+
+    async def pushback(self, request: PushbackRequest) -> None:
+        """Push the aircraft backward per ``request``, from wherever it is right now.
+
+        Re-reads position and heading itself (``core.pushback.pushback_target()``,
+        the same pure function ``POST /api/pushback/preview`` calls) rather than
+        trusting a target resolved earlier — a pushback is defined relative to
+        the CURRENT state, and re-resolving at write time is what keeps a
+        delayed request honest (the same lesson issue #39 taught
+        :meth:`set_position` about speed decay).
+
+        Raises :class:`core.pushback.PushbackNotOnGround` if the aircraft is
+        airborne. Requires :attr:`Capabilities.can_pushback`.
         """
         ...
 
