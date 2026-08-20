@@ -95,11 +95,23 @@ async def test_every_supported_named_view_is_accepted(
 
     A live *acceptance* check only: the Web API answering does not prove the
     render changed, which is what the ``sim-validator`` agent's visual smoke is
-    for. Until Track B lands the X-Plane mapping, ``can_control_camera`` is
-    still ``False`` there, the supported set is empty and this test passes
-    vacuously — that is the intended "refusing stub first, upgrade after
-    verification" state (§5.2), and the assertion below makes the vacuum
-    explicit rather than letting an empty loop look like a pass.
+    for. And acceptance is exactly the half that matters right now — every
+    command name in ``adapters/xplane/camera_commands.py`` is still a §5.1
+    candidate, so a view can perfectly well resolve, activate, and frame
+    something other than its label. Only a human looking at the screen settles
+    that; this test settles whether the name exists and fires.
+
+    The X-Plane mapping has landed and ``can_control_camera`` is now ``True``
+    (§5.2's "conservative manifest" posture), so the disjunction below no
+    longer has a false branch to hide in: it has collapsed into ``assert
+    supported``, and the loop runs for real. Which means a build that resolves
+    *none* of the five §5.1 candidates fails this test — deliberately. That is
+    not a false alarm and must not be softened into a skip: it is the finding
+    that every guessed command name is wrong, and the only thing that would
+    produce it is the case the spike exists to rule out. The adapter still
+    degrades honestly in that state (a manifest of five unsupported views with
+    reasons, and no runtime throw); this test is what stops it degrading
+    honestly in silence.
     """
     supported = await _supported_view_ids(live_adapter)
     assert supported or not live_adapter.capabilities.can_control_camera, (
