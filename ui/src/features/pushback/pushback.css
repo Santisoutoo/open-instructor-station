@@ -1,0 +1,239 @@
+/*
+ * Pushback panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Amber budget in this view: the one solid-amber slot goes to
+ * Execute pushback; everything else stays neutral.
+ */
+
+/* ------------------------------------------------------------------- gate */
+
+/* Never colour-only: the closed state is always this sentence, not just grey. */
+.pushback-gate {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+/*
+ * A refusal the server sent back. The two kinds read differently on purpose: a missing
+ * capability is a wall (danger), an airborne aircraft is a wait (warn). Never
+ * colour-only — the transient one also carries its own explanatory sentence.
+ */
+.pushback-refusal {
+  margin: 0 0 1rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--danger, var(--border));
+  border-radius: 8px;
+  color: var(--danger, var(--warn));
+  font-size: 0.85rem;
+}
+
+.pushback-refusal--transient {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.pushback-refusal__note {
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------ server facts */
+
+/* The preview's own numbers. Mono, because they are read, not skimmed. */
+.pushback-facts {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0 0 1rem;
+}
+
+.pushback-facts__row {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.pushback-facts dt {
+  flex: none;
+  width: 5.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  line-height: 1.6;
+}
+
+.pushback-facts dd {
+  margin: 0;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.pushback-actions__result {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+/* --------------------------------------------------------------- controls */
+
+.pushback-controls {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.pushback-direction {
+  display: flex;
+  gap: 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  width: fit-content;
+}
+
+.pushback-direction__button {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 0.5rem 1rem;
+  background: var(--bg-raised);
+  border: none;
+  color: inherit;
+  font: inherit;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.pushback-direction__button + .pushback-direction__button {
+  border-left: 1px solid var(--border);
+}
+
+.pushback-direction__button--active {
+  background: var(--border);
+  font-weight: 600;
+}
+
+.pushback-direction__button:disabled {
+  color: var(--text-dim);
+  cursor: not-allowed;
+}
+
+.pushback-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 44px;
+}
+
+.pushback-slider__label {
+  flex: none;
+  width: 5.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.pushback-slider input[type='range'] {
+  flex: 1;
+  max-width: 18rem;
+  accent-color: var(--accent);
+}
+
+/* A number the instructor can trust at a glance, mono like the telemetry readouts. */
+.pushback-slider__readout {
+  flex: none;
+  min-width: 3.5rem;
+  font-family: var(--font-mono, monospace);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+/* -------------------------------------------------------------- schematic */
+
+.pushback-preview {
+  display: block;
+  width: 220px;
+  height: 170px;
+  margin-bottom: 1rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.pushback-preview__path {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 2;
+  stroke-dasharray: 4 3;
+  stroke-linecap: round;
+}
+
+.pushback-preview__nose polygon {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+}
+
+/* The target nose is the point of the drawing — it gets the stronger stroke. */
+.pushback-preview__nose--end polygon {
+  stroke: var(--accent);
+  stroke-width: 2;
+}
+
+/* ---------------------------------------------------------------- actions */
+
+.pushback-actions {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.pushback-actions__staged {
+  margin: 0;
+  font-size: 0.85rem;
+}
+
+.pushback-actions__buttons {
+  display: flex;
+  gap: 0.75rem;
+}
+
+.pushback-actions__preview,
+.pushback-actions__execute {
+  min-height: 44px;
+  padding: 0.5rem 1.25rem;
+  border-radius: 8px;
+  font: inherit;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.pushback-actions__preview {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  color: inherit;
+}
+
+/* The panel's one solid-amber action. */
+.pushback-actions__execute {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: var(--bg, #1a1712);
+  font-weight: 600;
+}
+
+.pushback-actions__execute:hover:not(:disabled) {
+  background: var(--accent-strong);
+  border-color: var(--accent-strong);
+}
+
+.pushback-actions__preview:disabled,
+.pushback-actions__execute:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}

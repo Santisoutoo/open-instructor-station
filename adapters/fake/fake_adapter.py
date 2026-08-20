@@ -17,6 +17,13 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from core.camera.models import (
+    CAMERA_VIEW_CATALOGUE,
+    CameraOffset,
+    CameraSupportManifest,
+    CameraViewId,
+    CameraViewSupport,
+)
 from core.failures import (
     FAILURE_CATALOGUE,
     FAILURE_IDS,
@@ -38,8 +45,10 @@ from core.models import (
     PayloadStation,
     TankFuel,
 )
+from core.pushback import PushbackRequest, pushback_target, require_on_ground
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from core.traffic import (
+    SECONDS_PER_HOUR,
     TrafficCapacityExceeded,
     TrafficContact,
     TrafficTrack,
@@ -99,7 +108,6 @@ _ALL_CAPABILITIES = Capabilities(
     can_pushback=True,
 )
 
-_SECONDS_PER_HOUR = 3600.0
 _SECONDS_PER_MINUTE = 60.0
 
 #: The Fake's own traffic capacity (ai-traffic.md §4.4). Chosen to mirror
@@ -160,6 +168,11 @@ class FakeSimAdapter:
         # Spawned traffic, keyed by traffic_id. Contacts are derived from each
         # entity's track at read time (interpolate_track), never stored.
         self._traffic: dict[str, _FakeTrafficEntity] = {}
+        # The last-requested named view and the last-set free-camera offset.
+        # Mutually exclusive (camera-manager.md §4.1): setting one clears the
+        # other, because the view alone does not imply a pose.
+        self._camera_view: CameraViewId | None = None
+        self._camera_offset: CameraOffset | None = None
 
     # -- Identity ---------------------------------------------------------
 
@@ -321,6 +334,97 @@ class FakeSimAdapter:
         if ias_kt is not None:
             updates["ias_kt"] = ias_kt
         self._state = self._state.model_copy(update=updates)
+
+    async def pushback(self, request: PushbackRequest) -> None:
+        """Push the in-memory aircraft backward per ``request``.
+
+        Re-resolves the target from the *current* state via
+        :func:`core.pushback.pushback_target` — the same pure function the
+        preview route calls (pushback-manager.md D7) — then applies it. No
+        physics, no animation: the pushed-back aircraft is simply *there*,
+        stationary (``ias_kt=0``, ``vertical_speed_fpm=0``), exactly the
+        ledger philosophy the failures section states.
+
+        Raises:
+            CapabilityNotSupported: without ``can_pushback``.
+            PushbackNotOnGround: when the aircraft is airborne (D8 — a
+                precondition, not a capability; the aircraft is left unmoved).
+        """
+        if not self.capabilities.can_pushback:
+            raise CapabilityNotSupported(self.name, "can_pushback")
+        require_on_ground(self._state)
+        target = pushback_target(self._state, request)
+        self._state = self._state.model_copy(
+            update={
+                "latitude": target.position.latitude,
+                "longitude": target.position.longitude,
+                "heading_deg": target.heading_deg,
+                "ias_kt": 0.0,
+                "vertical_speed_fpm": 0.0,
+            }
+        )
+
+    # -- Camera -------------------------------------------------------------
+
+    async def get_camera_support(self) -> CameraSupportManifest:
+        """Every view supported, custom positions supported — the reference answer.
+
+        A capability-free read (camera-manager.md D2): an adapter without
+        ``can_control_camera`` still answers, every view unsupported with a
+        stated reason, but this is the Fake, which declares the flag, so
+        everything is ``True``.
+        """
+        supported = self.capabilities.can_control_camera
+        reason = None if supported else f"{self.name!r} does not declare can_control_camera."
+        return CameraSupportManifest(
+            caveat=None,
+            views=tuple(
+                CameraViewSupport(view_id=spec.view_id, supported=supported, reason=reason)
+                for spec in CAMERA_VIEW_CATALOGUE
+            ),
+            custom_positions_supported=supported,
+            custom_positions_reason=reason,
+        )
+
+    async def set_camera_view(self, view_id: CameraViewId) -> None:
+        """Record the requested view, clearing any previously set free-camera offset.
+
+        Switching to any named view — including re-selecting ``"drone"``
+        without an explicit offset — clears the last free-camera pose,
+        because the view alone does not imply one.
+        """
+        if not self.capabilities.can_control_camera:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        self._camera_view = view_id
+        self._camera_offset = None
+
+    async def get_camera_offset(self) -> CameraOffset | None:
+        """The last offset :meth:`set_camera_offset` recorded, or ``None``.
+
+        A capability-free read: an adapter that cannot control the camera, or
+        that has no free-camera pose to report right now, returns ``None``
+        rather than raising.
+        """
+        if not self.capabilities.can_control_camera:
+            return None
+        return self._camera_offset
+
+    async def set_camera_offset(self, offset: CameraOffset) -> None:
+        """Record ``offset`` and switch the current view to ``"drone"``.
+
+        Requires ``can_control_camera`` AND the manifest's
+        ``custom_positions_supported`` — read through :meth:`get_camera_support`
+        rather than a second top-level flag (D3), so a subclass that overrides
+        the manifest to force ``custom_positions_supported=False`` is honoured
+        here without needing its own override of this method too.
+        """
+        if not self.capabilities.can_control_camera:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        support = await self.get_camera_support()
+        if not support.custom_positions_supported:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        self._camera_offset = offset
+        self._camera_view = "drone"
 
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is set, leaving the rest untouched.
@@ -521,7 +625,7 @@ class FakeSimAdapter:
 
     def _advance(self, elapsed_s: float) -> None:
         """Integrate the aircraft one step forward (great-circle, no wind)."""
-        distance_nm = self._state.ias_kt * elapsed_s / _SECONDS_PER_HOUR
+        distance_nm = self._state.ias_kt * elapsed_s / SECONDS_PER_HOUR
         climb_ft = self._state.vertical_speed_fpm * elapsed_s / _SECONDS_PER_MINUTE
         if distance_nm == 0.0 and climb_ft == 0.0:
             return

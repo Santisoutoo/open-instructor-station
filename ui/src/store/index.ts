@@ -3,12 +3,15 @@ import { setupListeners } from '@reduxjs/toolkit/query';
 import { useDispatch, useSelector, useStore } from 'react-redux';
 import { instructorApi } from '../api/instructorApi';
 import aircraftReducer from '../features/aircraft/aircraftSlice';
+import cameraReducer from '../features/camera/cameraSlice';
 import failuresReducer from '../features/failures/failuresSlice';
 import fuelPayloadReducer from '../features/fuel-payload/fuelPayloadSlice';
 import landingReducer from '../features/landing/landingSlice';
 import mapReducer from '../features/map/mapSlice';
+import positionDesignReducer from '../features/position/positionDesignSlice';
 import positionReducer from '../features/position/positionSlice';
 import profilesReducer from '../features/profiles/profilesSlice';
+import pushbackReducer from '../features/pushback/pushbackSlice';
 import scenariosReducer from '../features/scenarios/scenariosSlice';
 import telemetryReducer from '../features/telemetry/telemetrySlice';
 import trafficReducer from '../features/traffic/trafficSlice';
@@ -27,6 +30,7 @@ const reducerMap = {
   telemetry: telemetryReducer,
   aircraft: aircraftReducer,
   position: positionReducer,
+  positionDesign: positionDesignReducer,
   weather: weatherReducer,
   failures: failuresReducer,
   fuelPayload: fuelPayloadReducer,
@@ -35,6 +39,8 @@ const reducerMap = {
   map: mapReducer,
   landing: landingReducer,
   traffic: trafficReducer,
+  camera: cameraReducer,
+  pushback: pushbackReducer,
   [instructorApi.reducerPath]: instructorApi.reducer,
 };
 

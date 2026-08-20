@@ -41,6 +41,7 @@ __all__ = [
     "APPROACH_SEQUENCE_DEFAULT_DISTANCES_NM",
     "RUNWAY_INCURSION_DEFAULT_OFFSET_M",
     "RUNWAY_INCURSION_DEFAULT_SPEED_KT",
+    "SECONDS_PER_HOUR",
     "TAXI_DEFAULT_SPEED_KT",
     "TCAS_DEFAULT_CLOSURE_IAS_KT",
     "TCAS_SEVERITY_PROFILES",
@@ -67,7 +68,7 @@ __all__ = [
     "tcas_conflict_track",
 ]
 
-_SECONDS_PER_HOUR = 3600.0
+SECONDS_PER_HOUR = 3600.0
 
 # ---------------------------------------------------------------------------
 # Entity vocabulary (§3.1)
@@ -350,6 +351,39 @@ def _heading_at_waypoint(track: TrafficTrack, index: int) -> float:
     return 0.0
 
 
+def _current_leg_index(
+    waypoints: tuple[TrafficWaypoint, ...], elapsed_s: float, last_index: int
+) -> int:
+    """The last waypoint at or before ``elapsed_s`` — the leg currently being flown."""
+    index = 0
+    for candidate in range(last_index):
+        if waypoints[candidate].t_offset_s <= elapsed_s:
+            index = candidate
+    return index
+
+
+def _leg_position_heading(
+    track: TrafficTrack,
+    index: int,
+    fraction: float,
+    leg_distance_nm: float,
+    leg_bearing_deg: float,
+) -> tuple[GeoPosition, float]:
+    """Position and heading a fraction of the way along the leg starting at ``index``."""
+    start = track.waypoints[index]
+    if leg_distance_nm > 0.0:
+        moved = point_at_distance_and_bearing(
+            start.position, leg_distance_nm * fraction, leg_bearing_deg
+        )
+        heading_deg = leg_bearing_deg if fraction > 0.0 else _heading_at_waypoint(track, index)
+    else:
+        # A stationary gap in time: the entity waits at the waypoint (its
+        # altitude may still interpolate — a climb in place).
+        moved = start.position
+        heading_deg = _heading_at_waypoint(track, index)
+    return moved, heading_deg
+
+
 def interpolate_track(track: TrafficTrack, elapsed_s: float) -> TrafficSample:
     """Where a traffic entity following ``track`` is, ``elapsed_s`` after spawn.
 
@@ -383,26 +417,14 @@ def interpolate_track(track: TrafficTrack, elapsed_s: float) -> TrafficSample:
         )
     elapsed_s = max(elapsed_s, 0.0)
 
-    # The leg the entity is on: the last waypoint at or before elapsed_s.
-    index = 0
-    for candidate in range(last_index):
-        if waypoints[candidate].t_offset_s <= elapsed_s:
-            index = candidate
+    index = _current_leg_index(waypoints, elapsed_s, last_index)
     start, end = waypoints[index], waypoints[index + 1]
     leg_time_s = end.t_offset_s - start.t_offset_s  # > 0, strict ordering is model-enforced
     fraction = (elapsed_s - start.t_offset_s) / leg_time_s
     leg_distance_nm, leg_bearing_deg = distance_and_bearing(start.position, end.position)
-
-    if leg_distance_nm > 0.0:
-        moved = point_at_distance_and_bearing(
-            start.position, leg_distance_nm * fraction, leg_bearing_deg
-        )
-        heading_deg = leg_bearing_deg if fraction > 0.0 else _heading_at_waypoint(track, index)
-    else:
-        # A stationary gap in time: the entity waits at the waypoint (its
-        # altitude may still interpolate — a climb in place).
-        moved = start.position
-        heading_deg = _heading_at_waypoint(track, index)
+    moved, heading_deg = _leg_position_heading(
+        track, index, fraction, leg_distance_nm, leg_bearing_deg
+    )
 
     altitude_ft = start.position.altitude_ft + fraction * (
         end.position.altitude_ft - start.position.altitude_ft
@@ -412,7 +434,7 @@ def interpolate_track(track: TrafficTrack, elapsed_s: float) -> TrafficSample:
             latitude=moved.latitude, longitude=moved.longitude, altitude_ft=altitude_ft
         ),
         heading_deg=heading_deg,
-        ground_speed_kt=leg_distance_nm / leg_time_s * _SECONDS_PER_HOUR,
+        ground_speed_kt=leg_distance_nm / leg_time_s * SECONDS_PER_HOUR,
         on_ground=start.on_ground,
     )
 
@@ -467,6 +489,80 @@ APPROACH_SEQUENCE_DEFAULT_DISTANCES_NM: tuple[float, ...] = (12.0, 8.0, 4.0)
 TAXI_DEFAULT_SPEED_KT: float = 12.0
 
 
+def _resolve_closure_ias_kt(closure_ias_kt: float | None) -> float:
+    """Default and validate the intruder's closure speed.
+
+    Raises:
+        ValueError: for a non-positive closure speed — a motionless "intruder"
+            is three co-located waypoints, not a conflict.
+    """
+    intruder_ias_kt = TCAS_DEFAULT_CLOSURE_IAS_KT if closure_ias_kt is None else closure_ias_kt
+    if intruder_ias_kt <= 0.0:
+        raise ValueError(
+            f"closure_ias_kt must be a positive speed in knots, got {intruder_ias_kt!r}."
+        )
+    return intruder_ias_kt
+
+
+def _user_projected_position(user_state: AircraftState, lead_s: float) -> GeoPosition:
+    """Where the user aircraft will be after ``lead_s``, at its current speed and heading."""
+    user_position = GeoPosition(
+        latitude=user_state.latitude,
+        longitude=user_state.longitude,
+        altitude_ft=user_state.altitude_ft,
+    )
+    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
+    return point_at_distance_and_bearing(
+        user_position, user_gs_kt * lead_s / SECONDS_PER_HOUR, user_state.heading_deg
+    )
+
+
+def _intruder_cpa(
+    user_projected: GeoPosition,
+    user_state: AircraftState,
+    profile: TcasSeverityProfile,
+    relative_bearing_deg: float,
+    miss_side: Literal["left", "right"],
+    vertical_offset: Literal["above", "below"],
+) -> tuple[GeoPosition, float]:
+    """The intruder's projected closest point of approach, and its track direction."""
+    intruder_track_deg = (user_state.heading_deg + relative_bearing_deg) % 360.0
+    intruder_altitude_ft = user_state.altitude_ft + (
+        profile.vertical_miss_distance_ft
+        if vertical_offset == "above"
+        else -profile.vertical_miss_distance_ft
+    )
+    cpa = user_projected
+    if profile.horizontal_miss_distance_nm > 0.0:
+        offset_bearing_deg = intruder_track_deg + (-90.0 if miss_side == "left" else 90.0)
+        cpa = point_at_distance_and_bearing(
+            user_projected, profile.horizontal_miss_distance_nm, offset_bearing_deg
+        )
+    cpa = GeoPosition(
+        latitude=cpa.latitude, longitude=cpa.longitude, altitude_ft=intruder_altitude_ft
+    )
+    return cpa, intruder_track_deg
+
+
+def _intruder_spawn_and_end_points(
+    cpa: GeoPosition, intruder_track_deg: float, intruder_gs_kt: float, lead_s: float
+) -> tuple[GeoPosition, GeoPosition]:
+    """Where the intruder's track starts and ends, either side of the CPA.
+
+    Negative distance walks backwards along the same geodesic, so spawn→CPA
+    measures exactly the distance the intruder covers in ``lead_s``. The
+    intruder flies level: the vertical miss is built into its altitude, not a
+    profile.
+    """
+    spawn_point = point_at_distance_and_bearing(
+        cpa, -(intruder_gs_kt * lead_s / SECONDS_PER_HOUR), intruder_track_deg
+    )
+    end_point = point_at_distance_and_bearing(
+        cpa, intruder_gs_kt * TCAS_TRACK_LEAD_TIME_S / SECONDS_PER_HOUR, intruder_track_deg
+    )
+    return spawn_point, end_point
+
+
 def tcas_conflict_track(
     user_state: AircraftState,
     *,
@@ -501,49 +597,18 @@ def tcas_conflict_track(
         ValueError: for a non-positive closure speed — a motionless "intruder"
             is three co-located waypoints, not a conflict.
     """
-    intruder_ias_kt = TCAS_DEFAULT_CLOSURE_IAS_KT if closure_ias_kt is None else closure_ias_kt
-    if intruder_ias_kt <= 0.0:
-        raise ValueError(
-            f"closure_ias_kt must be a positive speed in knots, got {intruder_ias_kt!r}."
-        )
+    intruder_ias_kt = _resolve_closure_ias_kt(closure_ias_kt)
     profile = TCAS_SEVERITY_PROFILES[severity]
     lead_s = profile.spawn_lead_time_s
 
-    user_position = GeoPosition(
-        latitude=user_state.latitude,
-        longitude=user_state.longitude,
-        altitude_ft=user_state.altitude_ft,
-    )
-    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
-    user_projected = point_at_distance_and_bearing(
-        user_position, user_gs_kt * lead_s / _SECONDS_PER_HOUR, user_state.heading_deg
+    user_projected = _user_projected_position(user_state, lead_s)
+    cpa, intruder_track_deg = _intruder_cpa(
+        user_projected, user_state, profile, relative_bearing_deg, miss_side, vertical_offset
     )
 
-    intruder_track_deg = (user_state.heading_deg + relative_bearing_deg) % 360.0
-    intruder_altitude_ft = user_state.altitude_ft + (
-        profile.vertical_miss_distance_ft
-        if vertical_offset == "above"
-        else -profile.vertical_miss_distance_ft
-    )
-    cpa = user_projected
-    if profile.horizontal_miss_distance_nm > 0.0:
-        offset_bearing_deg = intruder_track_deg + (-90.0 if miss_side == "left" else 90.0)
-        cpa = point_at_distance_and_bearing(
-            user_projected, profile.horizontal_miss_distance_nm, offset_bearing_deg
-        )
-    cpa = GeoPosition(
-        latitude=cpa.latitude, longitude=cpa.longitude, altitude_ft=intruder_altitude_ft
-    )
-
-    intruder_gs_kt = tas_from_ias(intruder_ias_kt, intruder_altitude_ft)
-    # Negative distance walks backwards along the same geodesic, so spawn→CPA
-    # measures exactly the distance the intruder covers in lead_s. The intruder
-    # flies level: the vertical miss is built into its altitude, not a profile.
-    spawn_point = point_at_distance_and_bearing(
-        cpa, -(intruder_gs_kt * lead_s / _SECONDS_PER_HOUR), intruder_track_deg
-    )
-    end_point = point_at_distance_and_bearing(
-        cpa, intruder_gs_kt * TCAS_TRACK_LEAD_TIME_S / _SECONDS_PER_HOUR, intruder_track_deg
+    intruder_gs_kt = tas_from_ias(intruder_ias_kt, cpa.altitude_ft)
+    spawn_point, end_point = _intruder_spawn_and_end_points(
+        cpa, intruder_track_deg, intruder_gs_kt, lead_s
     )
 
     return TrafficTrack(
@@ -561,6 +626,100 @@ def tcas_conflict_track(
             ),
         ),
     )
+
+
+def _validate_incursion_speeds(
+    vehicle_speed_kt: float | None, user_state: AircraftState
+) -> tuple[float, float]:
+    """Resolve the vehicle speed and the user's ground speed, validating both.
+
+    Raises:
+        ValueError: for a stationary user aircraft (its arrival time is
+            undefined, so no honest crossing time exists) or a non-positive
+            vehicle speed.
+    """
+    speed_kt = RUNWAY_INCURSION_DEFAULT_SPEED_KT if vehicle_speed_kt is None else vehicle_speed_kt
+    if speed_kt <= 0.0:
+        raise ValueError(f"vehicle_speed_kt must be a positive speed in knots, got {speed_kt!r}.")
+    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
+    if user_gs_kt <= 0.0:
+        raise ValueError(
+            "Cannot time a runway incursion against a stationary aircraft: its arrival "
+            "at the crossing point is undefined."
+        )
+    return speed_kt, user_gs_kt
+
+
+def _incursion_crossing_point_and_timing(
+    runway: Runway,
+    user_state: AircraftState,
+    user_gs_kt: float,
+    cross_at_along_track_nm: float,
+    lead_time_before_user_arrival_s: float,
+) -> tuple[GeoPosition, float]:
+    """The crossing point on the centreline, and the elapsed time the vehicle reaches it."""
+    on_centreline = point_at_distance_and_bearing(
+        runway.threshold, cross_at_along_track_nm, runway.true_bearing_deg
+    )
+    crossing_point = GeoPosition(
+        latitude=on_centreline.latitude,
+        longitude=on_centreline.longitude,
+        altitude_ft=runway.elevation_ft,
+    )
+    user_position = GeoPosition(
+        latitude=user_state.latitude,
+        longitude=user_state.longitude,
+        altitude_ft=user_state.altitude_ft,
+    )
+    distance_to_crossing_nm, _ = distance_and_bearing(user_position, crossing_point)
+    t_user_arrival_s = distance_to_crossing_nm / user_gs_kt * SECONDS_PER_HOUR
+    t_cross_s = max(0.0, t_user_arrival_s - lead_time_before_user_arrival_s)
+    return crossing_point, t_cross_s
+
+
+def _incursion_waypoints(
+    crossing_point: GeoPosition,
+    t_cross_s: float,
+    speed_kt: float,
+    runway: Runway,
+    from_side: Literal["left", "right"],
+) -> tuple[TrafficWaypoint, ...]:
+    """The vehicle's waypoints: an optional staging leg, the crossing, and the far side."""
+    # A vehicle coming FROM the left crosses towards the right: its heading is
+    # the runway axis + 90°, and it starts one offset behind the centreline
+    # along its own (negative) track.
+    vehicle_heading_deg = (
+        runway.true_bearing_deg + (90.0 if from_side == "left" else -90.0)
+    ) % 360.0
+    offset_nm = RUNWAY_INCURSION_DEFAULT_OFFSET_M / METRES_PER_NAUTICAL_MILE
+    start_point = point_at_distance_and_bearing(crossing_point, -offset_nm, vehicle_heading_deg)
+    end_point = point_at_distance_and_bearing(crossing_point, offset_nm, vehicle_heading_deg)
+    # §6.1 as written: the far side is reached at the time 2x offset takes at
+    # the vehicle's speed, counted from the crossing moment.
+    t_end_s = t_cross_s + (2.0 * offset_nm) / speed_kt * SECONDS_PER_HOUR
+
+    waypoints: list[TrafficWaypoint] = []
+    if t_cross_s > 0.0:
+        # The staging leg is a timing artifact — its stated speed is the creep
+        # the schedule implies, not the commanded crossing speed.
+        staging_speed_kt = offset_nm / t_cross_s * SECONDS_PER_HOUR
+        waypoints.append(
+            TrafficWaypoint(
+                position=start_point, speed_kt=staging_speed_kt, t_offset_s=0.0, on_ground=True
+            )
+        )
+    # When t_cross_s clamps to 0.0 the vehicle is already crossing at spawn:
+    # the track starts on the centreline (two tied t=0 waypoints would be
+    # rejected by the model, and rightly — spawn is t=0, once).
+    waypoints.append(
+        TrafficWaypoint(
+            position=crossing_point, speed_kt=speed_kt, t_offset_s=t_cross_s, on_ground=True
+        )
+    )
+    waypoints.append(
+        TrafficWaypoint(position=end_point, speed_kt=0.0, t_offset_s=t_end_s, on_ground=True)
+    )
+    return tuple(waypoints)
 
 
 def runway_incursion_track(
@@ -602,74 +761,92 @@ def runway_incursion_track(
             undefined, so no honest crossing time exists) or a non-positive
             vehicle speed.
     """
-    speed_kt = RUNWAY_INCURSION_DEFAULT_SPEED_KT if vehicle_speed_kt is None else vehicle_speed_kt
-    if speed_kt <= 0.0:
-        raise ValueError(f"vehicle_speed_kt must be a positive speed in knots, got {speed_kt!r}.")
-    user_gs_kt = tas_from_ias(user_state.ias_kt, user_state.altitude_ft)
-    if user_gs_kt <= 0.0:
-        raise ValueError(
-            "Cannot time a runway incursion against a stationary aircraft: its arrival "
-            "at the crossing point is undefined."
-        )
-
-    on_centreline = point_at_distance_and_bearing(
-        runway.threshold, cross_at_along_track_nm, runway.true_bearing_deg
+    speed_kt, user_gs_kt = _validate_incursion_speeds(vehicle_speed_kt, user_state)
+    crossing_point, t_cross_s = _incursion_crossing_point_and_timing(
+        runway, user_state, user_gs_kt, cross_at_along_track_nm, lead_time_before_user_arrival_s
     )
-    crossing_point = GeoPosition(
-        latitude=on_centreline.latitude,
-        longitude=on_centreline.longitude,
-        altitude_ft=runway.elevation_ft,
-    )
-    user_position = GeoPosition(
-        latitude=user_state.latitude,
-        longitude=user_state.longitude,
-        altitude_ft=user_state.altitude_ft,
-    )
-    distance_to_crossing_nm, _ = distance_and_bearing(user_position, crossing_point)
-    t_user_arrival_s = distance_to_crossing_nm / user_gs_kt * _SECONDS_PER_HOUR
-    t_cross_s = max(0.0, t_user_arrival_s - lead_time_before_user_arrival_s)
-
-    # A vehicle coming FROM the left crosses towards the right: its heading is
-    # the runway axis + 90°, and it starts one offset behind the centreline
-    # along its own (negative) track.
-    vehicle_heading_deg = (
-        runway.true_bearing_deg + (90.0 if from_side == "left" else -90.0)
-    ) % 360.0
-    offset_nm = RUNWAY_INCURSION_DEFAULT_OFFSET_M / METRES_PER_NAUTICAL_MILE
-    start_point = point_at_distance_and_bearing(crossing_point, -offset_nm, vehicle_heading_deg)
-    end_point = point_at_distance_and_bearing(crossing_point, offset_nm, vehicle_heading_deg)
-    # §6.1 as written: the far side is reached at the time 2x offset takes at
-    # the vehicle's speed, counted from the crossing moment.
-    t_end_s = t_cross_s + (2.0 * offset_nm) / speed_kt * _SECONDS_PER_HOUR
-
-    waypoints: list[TrafficWaypoint] = []
-    if t_cross_s > 0.0:
-        # The staging leg is a timing artifact — its stated speed is the creep
-        # the schedule implies, not the commanded crossing speed.
-        staging_speed_kt = offset_nm / t_cross_s * _SECONDS_PER_HOUR
-        waypoints.append(
-            TrafficWaypoint(
-                position=start_point, speed_kt=staging_speed_kt, t_offset_s=0.0, on_ground=True
-            )
-        )
-    # When t_cross_s clamps to 0.0 the vehicle is already crossing at spawn:
-    # the track starts on the centreline (two tied t=0 waypoints would be
-    # rejected by the model, and rightly — spawn is t=0, once).
-    waypoints.append(
-        TrafficWaypoint(
-            position=crossing_point, speed_kt=speed_kt, t_offset_s=t_cross_s, on_ground=True
-        )
-    )
-    waypoints.append(
-        TrafficWaypoint(position=end_point, speed_kt=0.0, t_offset_s=t_end_s, on_ground=True)
-    )
+    waypoints = _incursion_waypoints(crossing_point, t_cross_s, speed_kt, runway, from_side)
 
     return TrafficTrack(
         kind=kind,
         scenario_shape="runway_incursion",
         callsign=callsign,
         label=f"Runway incursion, {runway.airport_icao} {runway.ident}",
-        waypoints=tuple(waypoints),
+        waypoints=waypoints,
+    )
+
+
+def _resolve_sequence_speed_kt(ias_kt: float | None, category: ApproachCategory) -> float:
+    """The approach speed shared by every track in the sequence, validated.
+
+    Raises:
+        ValueError: for a non-positive approach speed.
+    """
+    speed_kt = APPROACH_CATEGORY_VAT_KT[category] if ias_kt is None else ias_kt
+    if speed_kt <= 0.0:
+        raise ValueError(f"ias_kt must be a positive speed in knots, got {speed_kt!r}.")
+    return speed_kt
+
+
+def _runway_threshold_and_rollout(runway: Runway) -> tuple[GeoPosition, GeoPosition, float]:
+    """The threshold at field elevation, and where the ground roll ends."""
+    threshold = GeoPosition(
+        latitude=runway.threshold.latitude,
+        longitude=runway.threshold.longitude,
+        altitude_ft=runway.elevation_ft,
+    )
+    # The rollout ends half the pavement down the runway — far enough to be
+    # clearly a landed aircraft, never past the far end.
+    rollout_distance_nm = (runway.length_m / 2.0) / METRES_PER_NAUTICAL_MILE
+    rollout_point = point_at_distance_and_bearing(
+        threshold, rollout_distance_nm, runway.true_bearing_deg
+    )
+    return threshold, rollout_point, rollout_distance_nm
+
+
+def _approach_sequence_track(
+    runway: Runway,
+    distance_nm: float,
+    index: int,
+    speed_kt: float,
+    threshold: GeoPosition,
+    rollout_point: GeoPosition,
+    rollout_distance_nm: float,
+    kind: TrafficKind,
+    callsign_prefix: str,
+) -> TrafficTrack:
+    """One aircraft's track in the sequence: final approach, threshold, rollout.
+
+    Raises:
+        ValueError: for a non-positive distance.
+    """
+    if distance_nm <= 0.0:
+        raise ValueError(f"distances_nm must be positive, got {distance_nm!r}.")
+    start = final_approach_point(runway, distance_nm, DEFAULT_GLIDESLOPE_DEG)
+    t_threshold_s = distance_nm / speed_kt * SECONDS_PER_HOUR
+    # The ground roll decelerates from approach speed towards a stop, so
+    # the leg is timed at half the approach speed — its average.
+    t_rollout_s = t_threshold_s + rollout_distance_nm / (speed_kt / 2.0) * SECONDS_PER_HOUR
+    return TrafficTrack(
+        kind=kind,
+        scenario_shape="approach_sequence",
+        callsign=f"{callsign_prefix}{index + 1:02d}",
+        label=f"{runway.airport_icao} {runway.ident} final, {distance_nm:g} NM",
+        waypoints=(
+            TrafficWaypoint(position=start, speed_kt=speed_kt, t_offset_s=0.0),
+            TrafficWaypoint(
+                position=threshold,
+                speed_kt=speed_kt,
+                t_offset_s=t_threshold_s,
+                on_ground=True,
+            ),
+            TrafficWaypoint(
+                position=rollout_point,
+                speed_kt=0.0,
+                t_offset_s=t_rollout_s,
+                on_ground=True,
+            ),
+        ),
     )
 
 
@@ -697,55 +874,22 @@ def approach_sequence_tracks(
     Raises:
         ValueError: for a non-positive approach speed or distance.
     """
-    speed_kt = APPROACH_CATEGORY_VAT_KT[category] if ias_kt is None else ias_kt
-    if speed_kt <= 0.0:
-        raise ValueError(f"ias_kt must be a positive speed in knots, got {speed_kt!r}.")
-
-    threshold = GeoPosition(
-        latitude=runway.threshold.latitude,
-        longitude=runway.threshold.longitude,
-        altitude_ft=runway.elevation_ft,
-    )
-    # The rollout ends half the pavement down the runway — far enough to be
-    # clearly a landed aircraft, never past the far end.
-    rollout_distance_nm = (runway.length_m / 2.0) / METRES_PER_NAUTICAL_MILE
-    rollout_point = point_at_distance_and_bearing(
-        threshold, rollout_distance_nm, runway.true_bearing_deg
-    )
-
-    tracks: list[TrafficTrack] = []
-    for index, distance_nm in enumerate(distances_nm):
-        if distance_nm <= 0.0:
-            raise ValueError(f"distances_nm must be positive, got {distance_nm!r}.")
-        start = final_approach_point(runway, distance_nm, DEFAULT_GLIDESLOPE_DEG)
-        t_threshold_s = distance_nm / speed_kt * _SECONDS_PER_HOUR
-        # The ground roll decelerates from approach speed towards a stop, so
-        # the leg is timed at half the approach speed — its average.
-        t_rollout_s = t_threshold_s + rollout_distance_nm / (speed_kt / 2.0) * _SECONDS_PER_HOUR
-        tracks.append(
-            TrafficTrack(
-                kind=kind,
-                scenario_shape="approach_sequence",
-                callsign=f"{callsign_prefix}{index + 1:02d}",
-                label=f"{runway.airport_icao} {runway.ident} final, {distance_nm:g} NM",
-                waypoints=(
-                    TrafficWaypoint(position=start, speed_kt=speed_kt, t_offset_s=0.0),
-                    TrafficWaypoint(
-                        position=threshold,
-                        speed_kt=speed_kt,
-                        t_offset_s=t_threshold_s,
-                        on_ground=True,
-                    ),
-                    TrafficWaypoint(
-                        position=rollout_point,
-                        speed_kt=0.0,
-                        t_offset_s=t_rollout_s,
-                        on_ground=True,
-                    ),
-                ),
-            )
+    speed_kt = _resolve_sequence_speed_kt(ias_kt, category)
+    threshold, rollout_point, rollout_distance_nm = _runway_threshold_and_rollout(runway)
+    return tuple(
+        _approach_sequence_track(
+            runway,
+            distance_nm,
+            index,
+            speed_kt,
+            threshold,
+            rollout_point,
+            rollout_distance_nm,
+            kind,
+            callsign_prefix,
         )
-    return tuple(tracks)
+        for index, distance_nm in enumerate(distances_nm)
+    )
 
 
 def taxi_traffic_track(
@@ -775,7 +919,7 @@ def taxi_traffic_track(
     for index, point in enumerate(route):
         if index > 0:
             leg_distance_nm, _ = distance_and_bearing(route[index - 1], point)
-            t_offset_s += leg_distance_nm / speed_kt * _SECONDS_PER_HOUR
+            t_offset_s += leg_distance_nm / speed_kt * SECONDS_PER_HOUR
         is_last = index == len(route) - 1
         waypoints.append(
             TrafficWaypoint(
