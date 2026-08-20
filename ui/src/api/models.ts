@@ -90,6 +90,21 @@ export type ProcedureKind = ProcedureSummary['kind'];
 /** A published holding pattern. */
 export type Hold = components['schemas']['Hold'];
 
+/** A ground-based navigation aid — `GET /api/navdata/navaids`. */
+export type Navaid = components['schemas']['Navaid'];
+
+/** The closed set of navaid kinds, straight from the server's enum. */
+export type NavaidKind = Navaid['kind'];
+
+/** A named waypoint from the enroute/terminal fix tables — `GET /api/navdata/fixes`. */
+export type Fix = components['schemas']['Fix'];
+
+/** Anything positionable, reduced to what a placement needs (procedure legs, holds). */
+export type Waypoint = components['schemas']['Waypoint'];
+
+/** The exact WGS84 answer of `GET /api/geodesy/measure`. */
+export type MeasureResult = components['schemas']['MeasureResult'];
+
 /** A point on the WGS84 ellipsoid. */
 export type GeoPosition = components['schemas']['GeoPosition'];
 
@@ -122,6 +137,10 @@ export type ApplyPlacementRequest = components['schemas']['ApplyPlacementRequest
  * `switch` on `type` stops compiling until the panel handles it.
  */
 export type PlacementRequest = ApplyPlacementRequest['placement'];
+
+/** The bare where-and-how placement the map's drag/click staging builds. */
+export type CoordinatePlacementRequest =
+  components['schemas']['CoordinatePlacementRequest'];
 
 /** The named runway-relative placements: the six finals, short final, and eight circuit legs. */
 export type RunwayPlacementName =

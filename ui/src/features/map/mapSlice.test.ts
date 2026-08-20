@@ -10,11 +10,14 @@ import reducer, {
   layerToggled,
   measurePointAdded,
   modeSelected,
+  procedureLayerToggled,
+  referenceAirportSelected,
   repositionStaged,
   stagedDiscarded,
   TRAIL_LIMIT,
   trailPointAppended,
   type MapState,
+  type OpenProcedure,
 } from './mapSlice';
 
 const A = { lat: 40.46, lon: -3.57 };
@@ -66,6 +69,44 @@ describe('layerToggled', () => {
     const state = reducer(initialMapState, layerToggled('ils'));
     expect(state.layers.ils).toBe(false);
     expect(state.layers.runways).toBe(true);
+  });
+});
+
+describe('referenceAirportSelected', () => {
+  const SID: OpenProcedure = { kind: 'sid', ident: 'BARD3B', transition: null };
+
+  it('sets the reference airport and clears it on null', () => {
+    const selected = reducer(initialMapState, referenceAirportSelected('LEMD'));
+    expect(selected.referenceIcao).toBe('LEMD');
+    expect(reducer(selected, referenceAirportSelected(null)).referenceIcao).toBeNull();
+  });
+
+  it('resets the open procedures when the airport changes — never when re-selected', () => {
+    let state = reducer(initialMapState, referenceAirportSelected('LEMD'));
+    state = reducer(state, procedureLayerToggled(SID));
+    expect(reducer(state, referenceAirportSelected('LEMD')).openProcedures).toEqual([SID]);
+    expect(reducer(state, referenceAirportSelected('LEBL')).openProcedures).toEqual([]);
+  });
+});
+
+describe('procedureLayerToggled', () => {
+  const SID: OpenProcedure = { kind: 'sid', ident: 'BARD3B', transition: null };
+
+  it('adds a procedure, keeps others, and removes it on the second toggle', () => {
+    const other: OpenProcedure = { kind: 'approach', ident: 'I32L', transition: 'ADUXO' };
+    let state = reducer(initialMapState, procedureLayerToggled(SID));
+    state = reducer(state, procedureLayerToggled(other));
+    expect(state.openProcedures).toEqual([SID, other]);
+
+    state = reducer(state, procedureLayerToggled(SID));
+    expect(state.openProcedures).toEqual([other]);
+  });
+
+  it('treats the same ident with a different transition as a different layer', () => {
+    const viaAduxo: OpenProcedure = { kind: 'sid', ident: 'BARD3B', transition: 'ADUXO' };
+    let state = reducer(initialMapState, procedureLayerToggled(SID));
+    state = reducer(state, procedureLayerToggled(viaAduxo));
+    expect(state.openProcedures).toHaveLength(2);
   });
 });
 

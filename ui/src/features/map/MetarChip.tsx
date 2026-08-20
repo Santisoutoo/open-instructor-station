@@ -17,8 +17,9 @@
  * because `GET /api/weather` itself 501s without it (the same reasoning as
  * `features/weather/gate.ts`).
  *
- * Not mounted anywhere yet: the overlays track (#113) owns `MapPanel.tsx` this wave and
- * mounts the chip next to its reference-airport picker.
+ * Mounted by `MapPanel.tsx` next to the reference-airport picker, which passes that
+ * airport's elevation so cloud bases render AGL, real-METAR style; `null` (elevation
+ * not known yet) leaves them MSL, the wire value verbatim.
  */
 
 import { useGetCapabilitiesQuery } from '../../api/instructorApi';
@@ -26,7 +27,12 @@ import { useGetWeatherStateQuery } from '../weather/weatherApi';
 import { formatMetar } from './metar';
 import './metar.css';
 
-export function MetarChip() {
+export function MetarChip({
+  fieldElevationFt = null,
+}: {
+  /** The reference airport's elevation, feet MSL, for AGL cloud bases. */
+  fieldElevationFt?: number | null;
+}) {
   const { data: capabilities } = useGetCapabilitiesQuery();
   const supported = capabilities?.can_set_weather === true;
   const { data: weather, isError: weatherFailed } = useGetWeatherStateQuery(undefined, {
@@ -61,7 +67,7 @@ export function MetarChip() {
 
   return (
     <p className="map-metar" role="note" aria-label="Commanded weather">
-      <span className="map-metar__string">{formatMetar(weather)}</span>
+      <span className="map-metar__string">{formatMetar(weather, fieldElevationFt)}</span>
       <span className="map-metar__source">commanded weather — not a live observation</span>
     </p>
   );
