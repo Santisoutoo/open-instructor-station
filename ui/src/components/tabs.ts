@@ -106,6 +106,14 @@ export const TABS: readonly TabDefinition[] = [
       })),
   },
   {
+    id: 'camera',
+    label: 'Camera',
+    load: () =>
+      import('../features/camera/CameraPanel').then((m) => ({
+        default: m.CameraPanel,
+      })),
+  },
+  {
     id: 'pushback',
     label: 'Pushback',
     load: () =>

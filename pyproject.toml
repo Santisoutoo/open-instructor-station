@@ -63,6 +63,7 @@ instructor-station = "server.__main__:main"
 [tool.setuptools]
 packages = [
     "core",
+    "core.camera",
     "core.navdata",
     "core.navdata.xplane_native",
     "core.weather",

@@ -69,6 +69,17 @@ flattened: the master switch and the flight director are one three-valued
 dataref, and the lateral modes are selected by command because their status
 datarefs are read-only. See :meth:`XPlaneSimAdapter._write_autopilot`.
 
+**Two capabilities here are declared without a live run, and say so.**
+``can_pushback`` and ``can_control_camera`` are ``True`` while weather,
+failures and fuel/payload each waited for ``pytest -m sim``, because the
+reasons differ and both are written out at :data:`_CAPABILITIES`: pushback
+writes no new dataref at all (it is :func:`core.pushback.pushback_target`
+plus the already-validated :meth:`XPlaneSimAdapter.set_position`), and the
+camera ships the *conservative manifest* camera-manager.md §5.2 prescribes —
+per-view support probed from the install's own command index, free
+positioning refused with a stated reason. Neither flag asserts anything has
+been flown.
+
 This module imports cleanly with no simulator present and opens no sockets
 until :meth:`XPlaneSimAdapter.connect` is awaited.
 """
@@ -89,6 +100,11 @@ from uuid import uuid4
 import httpx
 
 from adapters.xplane import traffic_bridge
+from adapters.xplane.camera_commands import (
+    CAMERA_COMMAND_PATHS,
+    CAMERA_COMMANDS,
+    command_key_for,
+)
 from adapters.xplane.failure_datarefs import (
     FAILURE_DATAREFS,
     STATE_FAILED,
@@ -102,6 +118,13 @@ from core.atmosphere import (
     pressure_ratio,
     tas_from_ias,
     temperature_from_deviation_c,
+)
+from core.camera.models import (
+    CAMERA_VIEW_CATALOGUE,
+    CameraOffset,
+    CameraSupportManifest,
+    CameraViewId,
+    CameraViewSupport,
 )
 from core.failures import (
     FAILURE_CATALOGUE,
@@ -131,7 +154,7 @@ from core.models import (
     PayloadStation,
     TankFuel,
 )
-from core.pushback import PushbackRequest
+from core.pushback import PushbackRequest, pushback_target, require_on_ground
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter, WeatherRejected
 from core.traffic import TrafficCapacityExceeded, TrafficContact, TrafficScenarioShape, TrafficTrack
 from core.weather.models import (
@@ -144,7 +167,14 @@ from core.weather.models import (
     WindLayer,
 )
 
-__all__ = ["COMMANDS", "DATAREFS", "DEFAULT_BASE_URL", "OPTIONAL_DATAREFS", "XPlaneSimAdapter"]
+__all__ = [
+    "COMMANDS",
+    "DATAREFS",
+    "DEFAULT_BASE_URL",
+    "OPTIONAL_COMMANDS",
+    "OPTIONAL_DATAREFS",
+    "XPlaneSimAdapter",
+]
 
 DEFAULT_BASE_URL = "http://localhost:8086"
 
@@ -322,6 +352,15 @@ COMMANDS: dict[str, str] = {
     "autopilot_wing_leveler": "sim/autopilot/wing_leveler",
 }
 
+#: Commands this adapter *would like* but can live without — the two-tier
+#: posture :data:`OPTIONAL_DATAREFS` already applies to datarefs, extended to
+#: commands for the camera mapping (camera-manager.md §5.1). A path here that
+#: the install does not publish is simply absent from ``_command_ids`` after
+#: :meth:`XPlaneSimAdapter.connect`; it degrades one control with a stated
+#: reason instead of failing the whole connection the way a missing
+#: :data:`COMMANDS` entry does. Nothing load-bearing may be added here.
+OPTIONAL_COMMANDS: dict[str, str] = dict(CAMERA_COMMAND_PATHS)
+
 _CAPABILITIES = Capabilities(
     can_set_position=True,
     can_set_aircraft_state=True,
@@ -357,8 +396,34 @@ _CAPABILITIES = Capabilities(
     # "wholesale replace" test needed to assert by mass, not list length,
     # since a real airframe's tank/station count is fixed, not shrinkable.
     can_set_fuel_payload=True,
-    can_control_camera=False,
-    can_pushback=False,
+    # Flipped True WITHOUT a live run, and camera-manager.md §5.2 prescribes
+    # exactly that for the Phase 3 adapter: "a conservative manifest (named
+    # views probed at connect time per §5.1; custom_positions_supported=False
+    # until the spike says otherwise)". The flag does not claim any particular
+    # view works — get_camera_support() answers that per view, from what the
+    # install's own command index actually resolved at connect() time. If
+    # nothing resolves, every entry is unsupported-with-a-reason and the panel
+    # is honestly inert, which is the correct degraded state; the alternative,
+    # a False flag, would make the panel claim the *adapter* cannot do cameras
+    # at all, which is a different and less accurate statement. Free-camera
+    # positioning stays off regardless (§5.2's spike is unrun) — that is the
+    # manifest's job, not this flag's (D3).
+    can_control_camera=True,
+    # Flipped True WITHOUT a live run — deliberately, and unlike weather,
+    # failures and fuel/payload, which each waited for `pytest -m sim` because
+    # each wrote NEW, UNVERIFIED datarefs and flipping early would have been a
+    # guess. Pushback writes none: pushback-manager.md §5.1/D2 resolves it to
+    # `pushback_target()` plus the already-validated set_position() procedure,
+    # so its entire dataref surface is one the contract suite and a live run
+    # have both already exercised.
+    #
+    # And leaving it False is a deadlock rather than caution: every pushback
+    # test — the contract suite's four cases and tests/sim/test_live_pushback.py
+    # — skips itself while the flag is False, so the flag can never be
+    # validated into being True. Flipping is what lets the live test run at all.
+    #
+    # Said plainly: this asserts the code is right, not that it has been flown.
+    can_pushback=True,
 )
 
 #: §5.4 — rendered once in the Failures panel, verbatim. Study-level add-ons
@@ -368,6 +433,21 @@ _CAPABILITIES = Capabilities(
 _FAILURE_MANIFEST_CAVEAT = (
     "Aircraft with their own failure model (many study-level add-ons) may ignore "
     "simulator failures. Verify against your aircraft before a lesson depends on one."
+)
+
+#: camera-manager.md §5.2, verbatim — the design's own sentence for the case
+#: its spike has not resolved, and the exact shape ``can_spawn_traffic``
+#: already uses for a bridge dependency.
+_CUSTOM_CAMERA_POSITIONS_REASON = (
+    "Free-camera positioning needs the optional in-sim bridge on this X-Plane build."
+)
+
+#: Rendered once in the Camera panel. A probe can only prove a command *name*
+#: exists on this build (§5.1) — it cannot prove the camera it selects is the
+#: one the label promises, and no live run has checked yet.
+_CAMERA_MANIFEST_CAVEAT = (
+    "The named-view commands have not been verified against a live X-Plane yet: a view "
+    "listed as available exists on this install, but which camera it selects is unconfirmed."
 )
 
 _METRES_PER_FOOT = 0.3048
@@ -859,14 +939,23 @@ class XPlaneSimAdapter:
             )
 
         commands: dict[str, int] = {}
-        for key, path in COMMANDS.items():
-            command_response = await client.get("/api/v2/commands", params={"filter[name]": path})
-            command_response.raise_for_status()
-            entries = command_response.json().get("data", [])
-            if not entries:
-                await client.aclose()
-                raise XPlaneNotReachable(f"X-Plane does not expose the command {path!r}.")
-            commands[key] = int(entries[0]["id"])
+        try:
+            for key, path in COMMANDS.items():
+                command_id = await self._lookup_command_id(client, path)
+                if command_id is None:
+                    raise XPlaneNotReachable(f"X-Plane does not expose the command {path!r}.")
+                commands[key] = command_id
+            # The optional tier (camera-manager.md §5.1): a candidate command
+            # name that this build does not publish leaves its key out of
+            # ``commands`` and is reported as one unsupported view with a
+            # reason by get_camera_support(). It never fails the connect.
+            for key, path in OPTIONAL_COMMANDS.items():
+                optional_id = await self._lookup_command_id(client, path)
+                if optional_id is not None:
+                    commands[key] = optional_id
+        except BaseException:
+            await client.aclose()
+            raise
 
         # A combo counts as supported only when *every* one of its datarefs
         # resolved — a partial resolve (one bus of two, say) is treated the
@@ -893,6 +982,23 @@ class XPlaneSimAdapter:
         self._ids = index
         self._command_ids = commands
         self._failure_ids = failure_ids
+
+    @staticmethod
+    async def _lookup_command_id(client: httpx.AsyncClient, path: str) -> int | None:
+        """The numeric id X-Plane gives one command path, or ``None`` if it has none.
+
+        Takes the client explicitly because it runs inside :meth:`connect`,
+        before ``self._client`` is set — the same reason :meth:`_probe_bridge`
+        does. "This build does not publish that command" is answered with
+        ``None``, never an exception: whether that is fatal is the caller's
+        decision (:data:`COMMANDS` says yes, :data:`OPTIONAL_COMMANDS` no).
+        """
+        response = await client.get("/api/v2/commands", params={"filter[name]": path})
+        response.raise_for_status()
+        entries = response.json().get("data", [])
+        if not entries:
+            return None
+        return int(entries[0]["id"])
 
     async def _probe_bridge(self, client: httpx.AsyncClient) -> bool:
         """Is the optional ``bridge/`` plugin loaded and alive on this connection?
@@ -2579,17 +2685,156 @@ class XPlaneSimAdapter:
     # -- Pushback ---------------------------------------------------------
 
     async def pushback(self, request: PushbackRequest) -> None:
-        """Refuse: this adapter does not declare ``can_pushback`` yet.
+        """Push the aircraft back per ``request``, via the computed path (D2, §5.1).
 
-        The contract-foundation stub (pushback-manager.md §9.2 Track 0),
-        mirroring the traffic stubs below: the flag is ``False``, so a caller
-        reaching this ignored the capabilities — exactly what
-        :class:`CapabilityNotSupported` means. Issue #123's track replaces it
-        with the §5.1 computed path (``pushback_target`` + the
-        already-validated :meth:`set_position`) and flips the flag.
+        Four steps, exactly as the design specifies them, and the notable part
+        is what is *missing*: no new dataref. Step 4 is the already-validated
+        five-step repositioning procedure — freeze, local frame, velocity
+        vector and heading, release, ``fix_all_systems`` — so the entire
+        dataref surface this manager touches is one :meth:`set_position`
+        already writes and the contract suite already exercises. A native tug
+        command is a follow-up spike (§5.3) with zero interface impact:
+        ``can_pushback`` means "pushback works", not "pushback is animated".
+
+        The state is re-read here rather than taken from whatever the caller
+        previewed (D7): the target is defined relative to where the aircraft is
+        *right now*, so staleness matters more than it does for an
+        airport-anchored placement.
+
+        ``ias_kt=0.0`` is passed explicitly, not left to default: ``None``
+        would preserve the aircraft's current speed, and a pushback that ends
+        with the aeroplane still rolling is not a pushback. ``0.0`` is also the
+        one placement speed the issue-#39 gotcha calls correct on the ground.
+
+        **Inherited, not introduced:** step 5 of :meth:`set_position` fires
+        ``fix_all_systems``, which repairs every active failure. That is
+        failures-manager.md §5.5's cross-manager interaction for *any*
+        reposition, pushback-manager.md §5.2 restates it, and it needs no
+        pushback-specific handling — whatever fix lands inside
+        :meth:`set_position` covers this call for free, which is the whole
+        dividend of reusing the procedure instead of writing a second one.
+
+        Raises:
+            CapabilityNotSupported: without ``can_pushback``.
+            PushbackNotOnGround: when the aircraft is airborne (D8 — a
+                precondition, not a capability; nothing is written, so the
+                aircraft is left exactly where it was).
         """
-        del request
-        raise CapabilityNotSupported(self.name, "can_pushback")
+        if not self.capabilities.can_pushback:
+            raise CapabilityNotSupported(self.name, "can_pushback")
+        state = await self.get_aircraft_state()
+        require_on_ground(state)
+        target = pushback_target(state, request)
+        await self.set_position(
+            target.position,
+            target.heading_deg,
+            ias_kt=0.0,
+            vertical_speed_fpm=0.0,
+        )
+
+    # -- Camera -------------------------------------------------------------
+    # camera-manager.md §5.1/§5.2. Named views are fired as commands, the
+    # mechanism `fix_all_systems` already proves reachable over the Web API,
+    # and each candidate command name (adapters/xplane/camera_commands.py) is
+    # probed against the install's own command index at connect() time. Free
+    # positioning is a different reliability tier on the same adapter (D3) and
+    # stays refused: XPLMCameraControl is plugin-only and §5.2's spike has not
+    # been run, so there is no honest mapping to write.
+
+    async def get_camera_support(self) -> CameraSupportManifest:
+        """Per-view support, built from what actually resolved at :meth:`connect`.
+
+        A capability-free read (camera-manager.md D2): "no" is an answer, never
+        an exception. Three ways a view lands unsupported, each with its own
+        sentence — the flag is not declared, this adapter has never connected
+        so nothing has been probed, or the candidate command
+        (:mod:`adapters.xplane.camera_commands`) is not published by this
+        build. The last one is what makes shipping unverified command names
+        safe: a wrong guess costs one disabled button, never a runtime throw.
+
+        What the probe cannot cover is a name that resolves and selects the
+        *wrong* camera. :data:`_CAMERA_MANIFEST_CAVEAT` says that out loud
+        rather than letting "supported" imply more than it has earned.
+        """
+        if not self.capabilities.can_control_camera:
+            return self._uniform_camera_manifest(
+                f"{self.name!r} does not declare can_control_camera."
+            )
+        if not self.is_connected:
+            return self._uniform_camera_manifest(
+                "Not connected to X-Plane, so the named-view commands have not been probed yet."
+            )
+        return CameraSupportManifest(
+            caveat=_CAMERA_MANIFEST_CAVEAT,
+            views=tuple(self._camera_view_support(spec.view_id) for spec in CAMERA_VIEW_CATALOGUE),
+            custom_positions_supported=False,
+            custom_positions_reason=_CUSTOM_CAMERA_POSITIONS_REASON,
+        )
+
+    def _uniform_camera_manifest(self, reason: str) -> CameraSupportManifest:
+        """One reason applied to the whole catalogue — the "not even asked yet" answers."""
+        return CameraSupportManifest(
+            caveat=None,
+            views=tuple(
+                CameraViewSupport(view_id=spec.view_id, supported=False, reason=reason)
+                for spec in CAMERA_VIEW_CATALOGUE
+            ),
+            custom_positions_supported=False,
+            custom_positions_reason=reason,
+        )
+
+    def _camera_view_support(self, view_id: CameraViewId) -> CameraViewSupport:
+        """Resolve one view against this connection's probed command ids."""
+        mapping = CAMERA_COMMANDS[view_id]
+        if mapping.unsupported_reason is not None:
+            return CameraViewSupport(
+                view_id=view_id, supported=False, reason=mapping.unsupported_reason
+            )
+        if command_key_for(view_id) in self._command_ids:
+            return CameraViewSupport(view_id=view_id, supported=True)
+        return CameraViewSupport(
+            view_id=view_id,
+            supported=False,
+            reason=f"No {mapping.command!r} command on this X-Plane install.",
+        )
+
+    async def set_camera_view(self, view_id: CameraViewId) -> None:
+        """Fire the command this view resolved to at :meth:`connect` time.
+
+        Raises:
+            CapabilityNotSupported: without ``can_control_camera``, or when
+                this particular view is not supported on this install. The
+                second case should never be reached once the UI gates on
+                :meth:`get_camera_support` — it is the same defence in depth
+                :meth:`_resolved_failure_dataref_ids` provides for failures.
+        """
+        if not self.capabilities.can_control_camera:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        if not self._camera_view_support(view_id).supported:
+            raise CapabilityNotSupported(self.name, "can_control_camera")
+        await self._activate(command_key_for(view_id))
+
+    async def get_camera_offset(self) -> CameraOffset | None:
+        """``None``: this adapter never places a free camera, so none is ever at a pose.
+
+        A capability-free read, and the honest counterpart of
+        ``custom_positions_supported=False`` — see :meth:`set_camera_offset`.
+        """
+        return None
+
+    async def set_camera_offset(self, offset: CameraOffset) -> None:
+        """Refuse: free-camera positioning is unmapped on this adapter (§5.2, D7).
+
+        The native API for it, ``XPLMCameraControl``, is plugin-only, and
+        whether an equivalent is reachable as a writable dataref through the
+        Web API is the design's own central open question — unresolved,
+        because §5.2's spike has not been run. Guessing a dataref mapping here
+        is precisely what D3's per-feature granularity exists to avoid: the
+        named views work, this one feature says why it does not, and nothing
+        pretends.
+        """
+        del offset
+        raise CapabilityNotSupported(self.name, "can_control_camera")
 
     # -- AI traffic (ai-traffic.md §5) -------------------------------------
     # can_spawn_traffic is resolved from the bridge probe at connect()

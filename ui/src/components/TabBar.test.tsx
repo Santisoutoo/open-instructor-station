@@ -16,7 +16,7 @@ function renderTabBar() {
 }
 
 describe('<TabBar />', () => {
-  it('lists the eleven modules as a tablist with Position active by default', () => {
+  it('lists the twelve modules as a tablist with Position active by default', () => {
     renderTabBar();
 
     expect(screen.getByRole('tablist')).toBeInTheDocument();
@@ -32,6 +32,7 @@ describe('<TabBar />', () => {
       'Aircraft',
       'Landing analysis',
       'Traffic',
+      'Camera',
       'Pushback',
     ]);
     expect(screen.getByRole('tab', { name: 'Position' })).toHaveAttribute(

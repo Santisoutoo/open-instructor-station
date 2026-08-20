@@ -15,6 +15,7 @@ export const TAB_IDS = [
   'aircraft',
   'landing',
   'traffic',
+  'camera',
   'pushback',
 ] as const;
 

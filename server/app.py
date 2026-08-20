@@ -25,6 +25,7 @@ Surface:
 * ``/api/profiles/*`` — Training Profiles, in :mod:`server.profile_routes`.
 * ``/api/geodesy/*`` — the Instructor Map's exact measurement, in
   :mod:`server.geodesy_routes`.
+* ``/api/camera/*`` — the Camera Manager, in :mod:`server.camera_routes`.
 * ``/api/traffic/*`` and ``WS /ws/traffic`` — the AI Traffic Manager, in
   :mod:`server.traffic_routes`.
 
@@ -49,6 +50,7 @@ from core.models import AircraftSetup, AircraftState
 from core.navdata.provider import NavdataUnavailable
 from core.sim_adapter import Capabilities, CapabilityNotSupported, SimAdapter
 from server import (
+    camera_routes,
     failure_routes,
     fuel_payload_routes,
     geodesy_routes,
@@ -402,6 +404,7 @@ def create_app() -> FastAPI:
     app.include_router(pushback_routes.router)
     app.include_router(scenario_routes.router)
     app.include_router(profile_routes.router)
+    app.include_router(camera_routes.router)
     app.include_router(traffic_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
 
