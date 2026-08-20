@@ -44,6 +44,7 @@ from server.deps import get_adapter, get_airframe_info
 
 __all__ = [
     "ENVELOPE_VIOLATION_STATUS",
+    "UNRESOLVABLE_STATUS",
     "FuelPayloadApplyResult",
     "FuelPayloadManifest",
     "FuelPayloadPresetInfo",
@@ -57,6 +58,13 @@ __all__ = [
 #: well-formed and the numbers are known — this is a refusal, not a data error
 #: — but 422 is still the right family: the body as given cannot be honoured.
 ENVELOPE_VIOLATION_STATUS = 422
+
+#: A request the resolver cannot honour — a preset needing tank/station
+#: capacities the airframe has none of, or ``resolve_request`` itself raising
+#: because the body's numbers do not add up. The request is well-formed, the
+#: *data* cannot answer it (mirrors ``server.position_routes.UNPOSITIONABLE_STATUS``
+#: and ``server.weather_routes.UNRESOLVABLE_STATUS``).
+UNRESOLVABLE_STATUS = 422
 
 router = APIRouter(prefix="/api/fuel-payload", tags=["fuel-payload"])
 
@@ -177,11 +185,13 @@ async def _resolve_or_422(
     airframe = get_airframe_info()
     limits = resolve_mass_limits(airframe)
     if request.preset is not None and limits is None:
-        raise HTTPException(status_code=422, detail=_no_capacities_detail(request.preset, airframe))
+        raise HTTPException(
+            status_code=UNRESOLVABLE_STATUS, detail=_no_capacities_detail(request.preset, airframe)
+        )
     try:
         resolved, result, notes = resolve_request(request, current=current, limits=limits)
     except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        raise HTTPException(status_code=UNRESOLVABLE_STATUS, detail=str(exc)) from exc
     return resolved, result, notes, limits
 
 
