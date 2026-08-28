@@ -141,7 +141,7 @@ export function PositionHeaderBar() {
 
       <div className="pos-header__spacer" />
 
-      {demoFeed && <span className="pos-header__demo">Demo data</span>}
+      {demoFeed && !connected && <span className="pos-header__demo">Demo data</span>}
 
       <div className="pos-header__connection" role="status" aria-live="polite">
         <span
