@@ -113,8 +113,18 @@ export interface AircraftConfigState {
   gearDown: boolean | null;
   /** `null` = leave the preview's flap setting alone. */
   flapsPercent: number | null;
+  /**
+   * `null` = derive "is Flaps ticked" from the merged setup, exactly like `gearDown`.
+   *
+   * Needed alongside `flapsPercent`: while the % box is mid-edit (cleared to retype a new
+   * value, `flapsPercent === null`), deriving the checkbox from `flaps_ratio` alone can also
+   * read falsy and force-untick it out from under the instructor. The checkbox's own onChange
+   * still writes both fields together — "tick sets a concrete %, untick sets exactly 0".
+   */
+  flapsOn: boolean | null;
   altitudeOverride: boolean;
-  altitudeOverrideFt: number;
+  /** `null` = the box is blank, mid-edit. Never sent as `0 ft` by accident — see `setup.ts`. */
+  altitudeOverrideFt: number | null;
 }
 
 /**
@@ -136,6 +146,10 @@ export interface SendWithPositionState {
   ilsFrequency: boolean;
 }
 
+/** The six circuit markers whose distance an instructor can override — every marker but the
+ * threshold and the two finals, which are driven by `finalPlacement` instead. */
+export type EditableDistanceMarkerId = Exclude<MarkerId, 'takeoff' | 'final-3nm' | 'final-8nm'>;
+
 export interface PositionDesignState {
   /** The header's editable ICAO text field. */
   icaoInput: string;
@@ -144,6 +158,8 @@ export interface PositionDesignState {
   screenMenuOpen: boolean;
   startAtOpen: boolean;
   airportMenuOpen: boolean;
+  /** The "Airplane switches" placeholder panel — a future feature's entry point only. */
+  switchesModalOpen: boolean;
   parkingFilter: ParkingFilter;
   /** Mutually exclusive with `selectedStand`. */
   selectedRunway: RunwayId | null;
@@ -152,6 +168,12 @@ export interface PositionDesignState {
   selectedMarker: MarkerId;
   /** Which of the server's seven finals the two final markers place on. */
   finalPlacement: FinalPlacementName;
+  /**
+   * The instructor's edits to the circuit markers' NM distances — abeam offset for the two
+   * downwind markers, leg distance for base/vectors. Absent means `markers.ts`'s own default
+   * applies. Airport-scoped: cleared alongside `config`/`custom` on `airportLoaded`.
+   */
+  markerDistances: Partial<Record<EditableDistanceMarkerId, number>>;
   procedureFamily: ProcedureFamily;
   procedure: ProcedureSelection | null;
   procedureMenuOpen: boolean;
@@ -174,8 +196,9 @@ const initialConfig: AircraftConfigState = {
   pitchDeg: null,
   gearDown: null,
   flapsPercent: null,
+  flapsOn: null,
   altitudeOverride: false,
-  altitudeOverrideFt: 0,
+  altitudeOverrideFt: null,
 };
 
 export const initialPositionDesignState: PositionDesignState = {
@@ -184,12 +207,14 @@ export const initialPositionDesignState: PositionDesignState = {
   screenMenuOpen: false,
   startAtOpen: false,
   airportMenuOpen: false,
+  switchesModalOpen: false,
   parkingFilter: 'all',
   selectedRunway: null,
   selectedStand: null,
   activeTab: 'approach',
   selectedMarker: 'final-3nm',
   finalPlacement: DEFAULT_FINAL,
+  markerDistances: {},
   procedureFamily: 'sid',
   procedure: null,
   procedureMenuOpen: false,
@@ -206,6 +231,7 @@ function clearAirportScopedState(state: PositionDesignState) {
   state.procedure = null;
   state.custom = initialCustom;
   state.config = initialConfig;
+  state.markerDistances = {};
 }
 
 const positionDesignSlice = createSlice({
@@ -234,6 +260,7 @@ const positionDesignSlice = createSlice({
       state.airportMenuOpen = true;
       state.screenMenuOpen = false;
       state.startAtOpen = false;
+      state.switchesModalOpen = false;
     },
     airportMenuClosed(state) {
       state.airportMenuOpen = false;
@@ -243,12 +270,23 @@ const positionDesignSlice = createSlice({
       if (state.screenMenuOpen) {
         state.startAtOpen = false;
         state.airportMenuOpen = false;
+        state.switchesModalOpen = false;
       }
     },
     startAtToggled(state) {
       state.startAtOpen = !state.startAtOpen;
       if (state.startAtOpen) {
         state.screenMenuOpen = false;
+        state.airportMenuOpen = false;
+        state.switchesModalOpen = false;
+      }
+    },
+    /** The "Airplane switches" placeholder popover — closes the header's popovers with it. */
+    switchesModalToggled(state) {
+      state.switchesModalOpen = !state.switchesModalOpen;
+      if (state.switchesModalOpen) {
+        state.screenMenuOpen = false;
+        state.startAtOpen = false;
         state.airportMenuOpen = false;
       }
     },
@@ -271,6 +309,22 @@ const positionDesignSlice = createSlice({
     },
     finalPlacementSelected(state, action: PayloadAction<FinalPlacementName>) {
       state.finalPlacement = action.payload;
+    },
+    /**
+     * An instructor's edit to a circuit marker's NM distance. `value: null` deletes the
+     * override, so `markers.ts`'s `markerDistanceNm()` default applies cleanly again — the
+     * same "absent, not zero" idiom `configChanged` uses for the bottom bar's own fields.
+     */
+    markerDistanceChanged(
+      state,
+      action: PayloadAction<{ id: EditableDistanceMarkerId; value: number | null }>,
+    ) {
+      const { id, value } = action.payload;
+      if (value === null) {
+        delete state.markerDistances[id];
+      } else {
+        state.markerDistances[id] = value;
+      }
     },
     procedureFamilySelected(state, action: PayloadAction<ProcedureFamily>) {
       state.procedureFamily = action.payload;
@@ -378,12 +432,14 @@ export const {
   airportMenuClosed,
   screenMenuToggled,
   startAtToggled,
+  switchesModalToggled,
   parkingFilterSelected,
   startRunwaySelected,
   startStandSelected,
   designTabSelected,
   markerSelected,
   finalPlacementSelected,
+  markerDistanceChanged,
   procedureFamilySelected,
   procedureSelected,
   procedureLegSelected,

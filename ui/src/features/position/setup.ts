@@ -49,7 +49,9 @@ export function instructorSetup(
   if (config.flapsPercent !== null) {
     overrides.flaps_ratio = config.flapsPercent / 100;
   }
-  if (config.altitudeOverride) {
+  // Ticked but still blank (mid-edit, or never typed) falls back to the preview's own
+  // resolved altitude rather than silently sending `0 ft` — ground level by accident.
+  if (config.altitudeOverride && config.altitudeOverrideFt !== null) {
     overrides.altitude_ft = config.altitudeOverrideFt;
   }
   // The OBS is a MAGNETIC course (AircraftSetup.obs1_deg says so), and the only magnetic

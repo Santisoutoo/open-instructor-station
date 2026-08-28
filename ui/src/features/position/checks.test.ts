@@ -22,6 +22,7 @@ function inputs(overrides: Partial<CheckInputs> = {}): CheckInputs {
     activeTab: 'approach',
     marker: 'final-3nm',
     finalPlacement: 'final_3nm',
+    markerDistances: {},
     gearDown: true,
     iasKt: 121,
     altitudeFt: 968,
@@ -86,6 +87,18 @@ describe('rule 2 — gear up on a final/base/vectors marker', () => {
   it('does not fire on the threshold or downwind', () => {
     expect(checks(inputs({ gearDown: false, marker: 'takeoff' }))).toEqual([]);
     expect(checks(inputs({ gearDown: false, marker: 'downwind-left' }))).toEqual([]);
+  });
+
+  it('quotes an instructor-edited circuit distance rather than the compile-time default', () => {
+    expect(
+      checks(
+        inputs({
+          gearDown: false,
+          marker: 'base-left',
+          markerDistances: { 'base-left': 9 },
+        }),
+      )[0]?.text,
+    ).toBe('Gear up 9.0 NM from the threshold');
   });
 
   it('does not fire once the gear is down, or before the gear is known', () => {
@@ -179,6 +192,16 @@ describe('rule 5 — altitude override active', () => {
         dot: 'caution',
         text: 'Altitude override active',
         note: 'Replaces the altitude the placement resolved, with 5,500 ft',
+      },
+    ]);
+  });
+
+  it('still fires, without a figure, while the box is ticked but blank', () => {
+    expect(checks(inputs({ altitudeOverride: true, altitudeOverrideFt: null }))).toEqual([
+      {
+        dot: 'caution',
+        text: 'Altitude override active',
+        note: 'Replaces the altitude the placement resolved — no value typed yet',
       },
     ]);
   });

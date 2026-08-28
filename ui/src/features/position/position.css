@@ -971,6 +971,7 @@
 /* ------------------------------------------------------------- bottom bar */
 
 .pos-bottombar {
+  position: relative;
   flex: none;
   display: flex;
   align-items: flex-start;
@@ -1045,6 +1046,37 @@
 
 .pos-bottombar__na {
   color: var(--pos-caution);
+}
+
+/* Reuses `.pos-checkbox`'s row layout without its toggle glyph — this opens a panel, it does
+   not carry a boolean that is sent with the position. */
+.pos-bottombar__switches {
+  background: none;
+  border: 1px solid var(--pos-line);
+  border-radius: 6px;
+  font: inherit;
+}
+
+.pos-switchesmodal {
+  /* The bottom bar sits at the foot of the screen, unlike the header's popovers — open
+     upward from the trigger rather than inheriting `.pos-popover`'s header-relative `top`. */
+  top: auto;
+  bottom: 100%;
+  right: 1rem;
+  max-width: 260px;
+  padding: 1rem;
+}
+
+.pos-switchesmodal__title {
+  margin: 0 0 0.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.pos-switchesmodal__body {
+  margin: 0;
+  color: var(--pos-t3);
+  font-size: 0.85rem;
 }
 
 /* ----------------------------------------------------------------- checkbox */

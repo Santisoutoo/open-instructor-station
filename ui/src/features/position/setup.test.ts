@@ -49,6 +49,18 @@ describe('instructorSetup', () => {
     ).toBe(5500);
   });
 
+  it('sends no altitude_ft when the switch is on but the box is still blank', () => {
+    // A ticked-but-empty override must fall back to the preview's own resolved altitude,
+    // never silently send `0 ft` (ground level) by accident.
+    const { overrides, overridden } = instructorSetup(
+      { ...CONFIG, altitudeOverride: true, altitudeOverrideFt: null },
+      NOTHING_SENT,
+      ILS_04R,
+    );
+    expect(overrides.altitude_ft).toBeUndefined();
+    expect(overridden.has('altitude_ft')).toBe(false);
+  });
+
   it('never overrides the heading — the placement always resolves its own', () => {
     // `Placement.to_setup()` sets `heading_deg` on every placement and `execute_placement`
     // writes it regardless, so an override here could only copy the preview's own heading
