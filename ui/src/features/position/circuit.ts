@@ -17,6 +17,17 @@ export const CY = 252;
 /** Along-track offset (NM) between the geometric centre and the runway threshold. */
 export const UMID = -3.2;
 
+/**
+ * The runway pavement bar's two ends, along-track NM from the threshold — drawn from
+ * `RUNWAY_NEAR_U` to `RUNWAY_FAR_U` at `place(u, 0, 0)`.
+ *
+ * `RUNWAY_FAR_U` is the "cabecera" end: the extended-centreline dashes and the approach
+ * corridor arrive at the pavement bar on that side, which is why `CIRCUIT_MARKERS.takeoff`
+ * (`markers.ts`) is pinned to it rather than to `RUNWAY_NEAR_U`.
+ */
+export const RUNWAY_NEAR_U = 0.3;
+export const RUNWAY_FAR_U = -1.8;
+
 export interface ScreenPoint {
   readonly x: number;
   readonly y: number;

@@ -23,7 +23,15 @@
  * scale for free.
  */
 
-import { CX, CY, centrelineTicks, place, windArrowRotation } from './circuit';
+import {
+  CX,
+  CY,
+  RUNWAY_FAR_U,
+  RUNWAY_NEAR_U,
+  centrelineTicks,
+  place,
+  windArrowRotation,
+} from './circuit';
 import { CIRCUIT_MARKERS, labelPlacement } from './markers';
 import { MARKER_IDS, type MarkerId } from './positionDesignSlice';
 
@@ -76,8 +84,8 @@ export function CircuitDiagram({
   readonly onSelectMarker: (id: MarkerId) => void;
 }) {
   const ticks = centrelineTicks(TICK_FROM_NM, TICK_TO_NM, 2);
-  const runwayNear = place(0.3, 0, 0);
-  const runwayFar = place(-1.8, 0, 0);
+  const runwayNear = place(RUNWAY_NEAR_U, 0, 0);
+  const runwayFar = place(RUNWAY_FAR_U, 0, 0);
   const threshold = place(0, 0, 0);
   const centrelineFar = place(TICK_FROM_NM, 0, 0);
   const centrelineNear = place(TICK_TO_NM, 0, 0);
@@ -139,28 +147,45 @@ export function CircuitDiagram({
             const marker = CIRCUIT_MARKERS[id];
             const p = place(marker.u, marker.v, 0);
             const selected = id === selectedMarker;
+            return (
+              <circle
+                key={id}
+                cx={p.x}
+                cy={p.y}
+                r={selected ? 7 : 5}
+                aria-hidden="true"
+                className={
+                  selected
+                    ? 'pos-circuit__marker-dot pos-circuit__marker-dot--selected'
+                    : 'pos-circuit__marker-dot'
+                }
+              />
+            );
+          })}
+        </g>
+
+        {/*
+         * The labels are deliberately **not** inside the rotated `<g>` above: an SVG `<text>`
+         * glyph rotates 1:1 with its ancestor's `transform`, so a label drawn there would
+         * read upside down for any runway course past ~90°/270°. `place(u, v, courseDeg)`
+         * already bakes the rotation into the *position* — the same trick the marker
+         * `<button>`s below use — so the glyphs themselves stay upright.
+         */}
+        <g aria-hidden="true">
+          {MARKER_IDS.map((id) => {
+            const marker = CIRCUIT_MARKERS[id];
+            const p = place(marker.u, marker.v, courseDeg);
             const offset = labelOffset(labelPlacement(id, courseDeg));
             return (
-              <g key={id} aria-hidden="true">
-                <circle
-                  cx={p.x}
-                  cy={p.y}
-                  r={selected ? 7 : 5}
-                  className={
-                    selected
-                      ? 'pos-circuit__marker-dot pos-circuit__marker-dot--selected'
-                      : 'pos-circuit__marker-dot'
-                  }
-                />
-                <text
-                  x={p.x + offset.dx}
-                  y={p.y + offset.dy}
-                  textAnchor={offset.textAnchor}
-                  className="pos-circuit__marker-label"
-                >
-                  {marker.label}
-                </text>
-              </g>
+              <text
+                key={id}
+                x={p.x + offset.dx}
+                y={p.y + offset.dy}
+                textAnchor={offset.textAnchor}
+                className="pos-circuit__marker-label"
+              >
+                {marker.label}
+              </text>
             );
           })}
         </g>
