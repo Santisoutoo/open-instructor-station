@@ -36,6 +36,13 @@ const OSM_STYLE: StyleSpecification = {
   layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
 };
 
+export interface MapLibreOptions {
+  /** [lon, lat]. Defaults to MAP_HOME (today's exact behaviour) when omitted. */
+  readonly center?: readonly [number, number];
+  /** Defaults to MAP_HOME_ZOOM when omitted. */
+  readonly zoom?: number;
+}
+
 export interface MapLibreHandle {
   /** Attach to the map's container div. */
   containerRef: RefObject<HTMLDivElement | null>;
@@ -43,20 +50,34 @@ export interface MapLibreHandle {
   map: MapLibreMap | null;
 }
 
-export function useMapLibre(): MapLibreHandle {
+export function useMapLibre(options: MapLibreOptions = {}): MapLibreHandle {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
+
+  // `useRef(options)` only ever takes `options` on the very first render — every render
+  // after that, React returns the same ref object untouched, so `optionsRef.current` stays
+  // whatever the caller passed the first time forever. That is exactly what is wanted here:
+  // a fresh `options` object literal arrives on every re-render of the caller (e.g.
+  // `StartAtMap` on every keystroke in the airport search), and if the mount effect below
+  // depended on `options` directly it would tear down and recreate the `maplibre-gl` `Map`
+  // — and re-fetch every tile — on every one of those re-renders. Reading `optionsRef.current`
+  // *inside* the effect (rather than hoisting it into a plain variable beforehand) is what
+  // keeps this exempt from `react-hooks/exhaustive-deps`: the ref object itself, not its
+  // contents, is what the effect closes over.
+  const optionsRef = useRef(options);
 
   useEffect(() => {
     const container = containerRef.current;
     if (container === null) {
       return;
     }
+    const initialOptions = optionsRef.current;
+    const [centerLon, centerLat] = initialOptions.center ?? [MAP_HOME.lon, MAP_HOME.lat];
     const instance = new MaplibreMapCtor({
       container,
       style: OSM_STYLE,
-      center: [MAP_HOME.lon, MAP_HOME.lat],
-      zoom: MAP_HOME_ZOOM,
+      center: [centerLon, centerLat],
+      zoom: initialOptions.zoom ?? MAP_HOME_ZOOM,
     });
     // Async by nature, so this is not a synchronous set-state-in-effect.
     instance.once('load', () => {

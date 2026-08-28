@@ -72,8 +72,12 @@ export class Map extends StubEvented {
   /** Every instance constructed since the last `resetMaplibreStub()`. */
   static created: Map[] = [];
 
-  constructor() {
+  /** What the map was constructed with — how a test asserts `center`/`zoom`. */
+  readonly options: Record<string, unknown>;
+
+  constructor(options: Record<string, unknown> = {}) {
     super();
+    this.options = options;
     Map.created.push(this);
   }
 
@@ -88,6 +92,7 @@ export class Map extends StubEvented {
   zoomIn(): void {}
   zoomOut(): void {}
   easeTo(): void {}
+  fitBounds(): void {}
 }
 
 /** The subset of `MarkerOptions` the app constructs markers with. */

@@ -1,6 +1,6 @@
 /**
  * The Start-at popover: the airport's runway ends and the parking-kind filter on the left,
- * its real diagram and a filtered, scrollable stand list on the right.
+ * its real MapLibre map and a filtered, scrollable stand list on the right.
  *
  * Selecting a runway here is one of the two places the mirrored `runwaySelected` dispatch
  * happens (the other is the runway strip); both use the same same-value guard against the
@@ -15,8 +15,8 @@
 import type { RefObject } from 'react';
 import { useGetParkingQuery } from '../../api/instructorApi';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { AirportDiagram } from './AirportDiagram';
 import { Popover } from './Popover';
+import { StartAtMap } from './StartAtMap';
 import {
   PARKING_FILTERS,
   parkingFilterSelected,
@@ -26,7 +26,7 @@ import {
   type ParkingFilter,
 } from './positionDesignSlice';
 import { runwaySelected } from './positionSlice';
-import { useLoadedIcao, useRunways } from './usePositionData';
+import { useAirport, useLoadedIcao, useRunways } from './usePositionData';
 
 /**
  * `Record<ParkingFilter, string>` and not a loose map: `ParkingFilter` is `'all'` plus the
@@ -61,6 +61,7 @@ export function StartAtPopover({
   const parkingFilter = useAppSelector((state) => state.positionDesign.parkingFilter);
   const legacyRunwayIdent = useAppSelector((state) => state.position.selectedRunwayIdent);
 
+  const { airport } = useAirport();
   const { runways } = useRunways();
   // Fetched unfiltered so the "N of M" count can say how many were filtered OUT; the
   // filtering itself is one predicate over a list the popover already holds.
@@ -149,13 +150,16 @@ export function StartAtPopover({
         </div>
       </div>
 
-      <AirportDiagram
-        stands={shownStands}
+      <StartAtMap
         runways={runways}
+        stands={shownStands}
+        selectedRunway={selectedRunway}
         selectedStand={selectedStand}
-        onSelect={(name) => {
+        onSelectRunway={selectRunway}
+        onSelectStand={(name) => {
           dispatch(startStandSelected(name));
         }}
+        centerHint={airport?.position ?? null}
       />
 
       <div className="pos-startat__stands">
@@ -175,6 +179,7 @@ export function StartAtPopover({
                     ? 'pos-startat__stand pos-startat__stand--selected'
                     : 'pos-startat__stand'
                 }
+                aria-label={`Stand ${stand.name}`}
                 onClick={() => {
                   dispatch(startStandSelected(stand.name));
                 }}

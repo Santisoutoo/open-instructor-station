@@ -9,6 +9,11 @@ import { initialPositionDesignState } from './positionDesignSlice';
 import { callsTo, stubApi } from './testApi';
 import { ICAO, positionRoutes } from './testFixtures';
 
+// `PositionHeaderBar` statically imports `StartAtPopover` → `StartAtMap` → `useMapLibre` →
+// `'maplibre-gl'` at module-load time, regardless of whether a given test here ever opens
+// the Start-at popover.
+vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });

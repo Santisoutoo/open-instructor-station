@@ -135,7 +135,7 @@ export function PositionHeaderBar() {
           dispatch(startAtToggled());
         }}
       >
-        Start at <span className="pos-mono">{startAtLabel}</span>
+        Start position · <span className="pos-mono">{startAtLabel}</span>
       </button>
       <StartAtPopover triggerRef={startAtTriggerRef} />
 
