@@ -1018,6 +1018,8 @@
 
 .pos-bottombar__commit {
   display: flex;
+  flex-direction: column;
+  align-items: center;
 }
 
 .pos-bottombar__set {
