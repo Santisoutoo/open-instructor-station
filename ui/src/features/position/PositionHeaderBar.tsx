@@ -1,6 +1,6 @@
 /**
- * The 64px header: screen-menu trigger, ICAO input + airport name + Load/Search, Start-at
- * trigger, connection dot, theme toggle.
+ * The 64px header: the shared module `TabBar`, ICAO input + airport name + Load/Search,
+ * Start-at trigger, connection dot, theme toggle.
  *
  * "Load" is one of the two places (with the runway strip / Start-at popover) the mirrored
  * dispatch happens: `airportSelected(icao)` fires on the shared `positionSlice` only when
@@ -9,18 +9,12 @@
  */
 
 import { useRef } from 'react';
+import { TabBar } from '../../components/TabBar';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { themeToggled } from '../../store/uiSlice';
 import { AirportMenu } from './AirportMenu';
-import { ScreenMenu } from './ScreenMenu';
 import { StartAtPopover } from './StartAtPopover';
-import {
-  airportLoaded,
-  airportMenuOpened,
-  icaoTyped,
-  screenMenuToggled,
-  startAtToggled,
-} from './positionDesignSlice';
+import { airportLoaded, airportMenuOpened, icaoTyped, startAtToggled } from './positionDesignSlice';
 import { airportSelected } from './positionSlice';
 import { useAirport } from './usePositionData';
 
@@ -29,7 +23,6 @@ export function PositionHeaderBar() {
   const icaoInput = useAppSelector((state) => state.positionDesign.icaoInput);
   const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
   const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
-  const screenMenuOpen = useAppSelector((state) => state.positionDesign.screenMenuOpen);
   const startAtOpen = useAppSelector((state) => state.positionDesign.startAtOpen);
   const airportMenuOpen = useAppSelector((state) => state.positionDesign.airportMenuOpen);
   const connectionStatus = useAppSelector((state) => state.connection.status);
@@ -39,7 +32,6 @@ export function PositionHeaderBar() {
 
   const { airport, isFetching, isError } = useAirport();
 
-  const screenMenuTriggerRef = useRef<HTMLButtonElement>(null);
   const startAtTriggerRef = useRef<HTMLButtonElement>(null);
   const icaoInputRef = useRef<HTMLInputElement>(null);
 
@@ -68,20 +60,7 @@ export function PositionHeaderBar() {
 
   return (
     <header className="pos-header">
-      <button
-        ref={screenMenuTriggerRef}
-        type="button"
-        className="pos-header__menu-trigger"
-        aria-haspopup="menu"
-        aria-expanded={screenMenuOpen}
-        aria-controls="pos-screen-menu"
-        onClick={() => {
-          dispatch(screenMenuToggled());
-        }}
-      >
-        Position ▾
-      </button>
-      <ScreenMenu triggerRef={screenMenuTriggerRef} />
+      <TabBar />
 
       <div className="pos-header__airport">
         <input

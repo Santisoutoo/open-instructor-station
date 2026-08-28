@@ -135,15 +135,31 @@
   position: relative;
 }
 
-.pos-header__menu-trigger {
-  min-height: 44px;
-  padding: 0 0.75rem;
-  background: transparent;
-  border: 1px solid var(--pos-line);
-  border-radius: 8px;
+.pos-header .tabbar {
+  flex: 0 1 auto;
+}
+
+.pos-header .tabbar__tab {
+  color: var(--pos-t2);
+}
+
+.pos-header .tabbar__tab:hover {
   color: var(--pos-t1);
-  font-weight: 600;
-  cursor: pointer;
+}
+
+.pos-header .tabbar__tab[aria-selected='true'] {
+  color: var(--pos-t1);
+  border-bottom-color: var(--pos-accent);
+}
+
+.pos-header .tabbar__tab:focus-visible {
+  outline-color: var(--pos-focus);
+}
+
+.pos-header__airport,
+.pos-header__startat-trigger,
+.pos-header__connection {
+  flex: none;
 }
 
 .pos-header__airport {
@@ -239,34 +255,6 @@
   border-radius: 10px;
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
   padding: 0.75rem;
-}
-
-.pos-screenmenu {
-  left: 1rem;
-  width: 220px;
-}
-
-.pos-screenmenu__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.pos-screenmenu__item {
-  min-height: 44px;
-  padding: 0 0.6rem;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--pos-t1);
-  text-align: left;
-  cursor: pointer;
-}
-
-.pos-screenmenu__item:hover {
-  background: var(--pos-hover);
 }
 
 .pos-startat {
@@ -1105,8 +1093,8 @@
 
 /*
  * The navdata gate's card, and the "nothing loaded yet" prompt. Both replace the screen
- * body while the header stays put — this screen is full-bleed, so its screen menu is the
- * only way off it and must never be gated away.
+ * body while the header stays put — this screen is full-bleed, so its embedded module tab
+ * bar is the only way off it and must never be gated away.
  */
 .pos-navdata {
   margin: 2rem auto;

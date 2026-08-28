@@ -23,15 +23,14 @@ function renderHeader(preloadedState: Partial<RootState> = {}) {
   return store;
 }
 
-describe('the screen menu', () => {
-  it('lists every module tab', async () => {
+describe('the module tab bar', () => {
+  it('renders every module as a tab', () => {
     stubApi(positionRoutes());
     renderHeader();
 
-    await userEvent.click(screen.getByRole('button', { name: /^Position/ }));
-
+    expect(screen.getAllByRole('tab')).toHaveLength(TABS.length);
     for (const tab of TABS) {
-      expect(screen.getByRole('menuitem', { name: tab.label })).toBeInTheDocument();
+      expect(screen.getByRole('tab', { name: tab.label })).toBeInTheDocument();
     }
   });
 
@@ -39,8 +38,7 @@ describe('the screen menu', () => {
     stubApi(positionRoutes());
     const store = renderHeader();
 
-    await userEvent.click(screen.getByRole('button', { name: /^Position/ }));
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Weather' }));
+    await userEvent.click(screen.getByRole('tab', { name: 'Weather' }));
 
     expect(store.getState().ui.activeTab).toBe('weather');
   });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import reducer, {
   airportLoaded,
+  airportMenuOpened,
   configChanged,
   coordinateHandoffReceived,
   designTabSelected,
@@ -10,7 +11,6 @@ import reducer, {
   procedureFamilySelected,
   procedureLegSelected,
   procedureSelected,
-  screenMenuToggled,
   situationReset,
   startAtToggled,
   startRunwaySelected,
@@ -74,14 +74,23 @@ describe('coordinateHandoffReceived', () => {
   });
 });
 
-describe('screenMenuToggled / startAtToggled', () => {
-  it('opening one popover closes the other', () => {
-    const menuOpen = reducer(undefined, screenMenuToggled());
-    expect(menuOpen.screenMenuOpen).toBe(true);
+describe('airportMenuOpened / startAtToggled', () => {
+  it('opening the airport menu closes the Start-at popover', () => {
+    const startAtOpen = reducer(undefined, startAtToggled());
+    expect(startAtOpen.startAtOpen).toBe(true);
+
+    const menuOpen = reducer(startAtOpen, airportMenuOpened());
+    expect(menuOpen.airportMenuOpen).toBe(true);
+    expect(menuOpen.startAtOpen).toBe(false);
+  });
+
+  it('opening the Start-at popover closes the airport menu', () => {
+    const menuOpen = reducer(undefined, airportMenuOpened());
+    expect(menuOpen.airportMenuOpen).toBe(true);
 
     const startAtOpen = reducer(menuOpen, startAtToggled());
     expect(startAtOpen.startAtOpen).toBe(true);
-    expect(startAtOpen.screenMenuOpen).toBe(false);
+    expect(startAtOpen.airportMenuOpen).toBe(false);
   });
 });
 
