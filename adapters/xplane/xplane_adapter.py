@@ -89,12 +89,14 @@ from __future__ import annotations
 import asyncio
 import base64
 import binascii
+import logging
 import math
-from collections.abc import AsyncGenerator, AsyncIterator
+import time
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 from uuid import uuid4
 
 import httpx
@@ -175,6 +177,10 @@ __all__ = [
     "OPTIONAL_DATAREFS",
     "XPlaneSimAdapter",
 ]
+
+logger = logging.getLogger(__name__)
+
+_T = TypeVar("_T")
 
 DEFAULT_BASE_URL = "http://localhost:8086"
 
@@ -495,6 +501,22 @@ _REPOSITION_TIMEOUT_S = 30.0
 #: treating "the frame keeps moving" as something to out-wait, and it is not —
 #: at that point the placement has failed and the instructor should be told.
 _MAX_REPOSITION_WRITES = 3
+
+#: A restart reassigns every dataref/command id X-Plane hands out, and every
+#: poller sharing this connection (telemetry, the failure watcher, a write in
+#: flight) can hit a now-stale id within the same tick. Without a debounce,
+#: the second caller to notice would tear down the connection the first one
+#: just repaired. Chosen to comfortably outlast one round of :meth:`connect`
+#: against a live install, not tuned against a measurement.
+_RERESOLVE_DEBOUNCE_S = 5.0
+
+#: How many consecutive stale-id failures :meth:`XPlaneSimAdapter.stream_state`
+#: tolerates before giving up and propagating. Re-resolving is only useful
+#: when X-Plane is reachable but handed out new ids; if it is not reachable at
+#: all, :meth:`_reresolve` itself raises immediately (via :meth:`connect`), so
+#: this cap exists for the case where reads keep failing for some other
+#: reason and retrying forever would just spin.
+_MAX_RERESOLVE_ATTEMPTS = 3
 
 #: Two frame-origin measurements further apart than this describe different
 #: frames. Measured off the frozen aircraft they agree to millimetres; a scenery
@@ -841,6 +863,11 @@ class XPlaneSimAdapter:
         self._command_ids: dict[str, int] = {}
         self._failure_ids: dict[tuple[FailureId, int | None], tuple[int, ...]] = {}
         self._freeze_depth = 0
+        # A restart reassigns ids; these back _reresolve()'s debounce so
+        # concurrent callers hitting stale ids around the same moment share
+        # one reconnect instead of each tearing down what the last repaired.
+        self._reconnect_lock = asyncio.Lock()
+        self._last_resolved_at = 0.0
         # ai-traffic.md §5.1: set from the connect()-time probe. None means
         # no bridge on this connection — every traffic write refuses.
         self._bridge: traffic_bridge.BridgeTransport | None = None
@@ -992,8 +1019,19 @@ class XPlaneSimAdapter:
         does. "This build does not publish that command" is answered with
         ``None``, never an exception: whether that is fatal is the caller's
         decision (:data:`COMMANDS` says yes, :data:`OPTIONAL_COMMANDS` no).
+
+        Confirmed live against X-Plane 12: an unmatched ``filter[name]``
+        answers **404** ``invalid_command_name``, not 200 with an empty
+        ``data`` list — the datarefs index scan this same :meth:`connect`
+        does is a bulk fetch with no such filter, so this is the one place
+        that distinction bites. Every optional command probe (camera views,
+        pushback, the autopilot modes) hits this, so an unfiltered
+        ``raise_for_status()`` here previously failed the whole connect for
+        any build missing even one of them.
         """
         response = await client.get("/api/v2/commands", params={"filter[name]": path})
+        if response.status_code == 404:
+            return None
         response.raise_for_status()
         entries = response.json().get("data", [])
         if not entries:
@@ -1025,6 +1063,61 @@ class XPlaneSimAdapter:
         if client is not None:
             await client.aclose()
 
+    async def _reresolve(self) -> None:
+        """Re-fetch dataref/command/failure ids after X-Plane reassigns them (e.g. a restart).
+
+        Debounced by :data:`_RERESOLVE_DEBOUNCE_S` (see its docstring): concurrent
+        callers that all hit a stale id around the same moment share one
+        reconnect. Re-runs the whole of :meth:`connect`, including the traffic
+        bridge probe — a restart is a new connection, so ``can_spawn_traffic``
+        can legitimately flip here, the same as it would on first connect
+        (ai-traffic.md §4.3/D4: it never moves *within* one connection's
+        lifetime, and this is not that).
+        """
+        async with self._reconnect_lock:
+            if time.monotonic() - self._last_resolved_at < _RERESOLVE_DEBOUNCE_S:
+                return  # another caller just refreshed this
+            logger.warning("Dataref reads failing; re-resolving ids against %s", self._base_url)
+            await self.disconnect()
+            await self.connect()
+            self._last_resolved_at = time.monotonic()
+            logger.info("Dataref ids re-resolved")
+
+    async def _resilient(self, call: Callable[[], Awaitable[_T]]) -> _T:
+        """Run ``call()``; on a stale-id failure, re-resolve ids once and retry.
+
+        ``call`` must close over ``self`` and re-do its own id lookup (e.g.
+        ``self._ids[key]``) rather than capture an already-resolved numeric id
+        — the retry only helps if it sees whatever :meth:`_reresolve` just
+        refreshed, not the same stale id again.
+
+        Catches :class:`httpx.HTTPError` (a stale id answering with an HTTP
+        error — confirmed live: X-Plane 12 answers 404 ``invalid_dataref_id``
+        for one) and :class:`XPlaneNotReachable` (:meth:`_read_by_id`/
+        :meth:`_write_by_id` call :meth:`_require_client` too, which can raise
+        it if this call races a *different* in-flight :meth:`_reresolve` that
+        already got past this call's own outer guard). Deliberately does
+        **not** retry the outer ``_require_client()`` guard every caller of
+        this adapter runs first: that one exists to fail a never-connected
+        adapter fast and without touching the network — retrying it would
+        make a genuinely disconnected adapter attempt a real ``connect()``,
+        which is wrong on first principles and would make
+        ``test_reads_refuse_to_run_while_disconnected`` reach a real socket.
+        A write whose *own* outer guard call lands in the narrow window a
+        concurrent caller's :meth:`_reresolve` has open (between
+        :meth:`disconnect` and :meth:`connect`) therefore still raises —
+        loudly and immediately, for the instructor to retry, not a hang.
+        Anything else — notably a :class:`RuntimeError` from a request
+        already in flight against a client :meth:`_reresolve` just closed —
+        is left alone too; that is the browser's own reconnect's job, not
+        this adapter's.
+        """
+        try:
+            return await call()
+        except (httpx.HTTPError, XPlaneNotReachable):
+            await self._reresolve()
+            return await call()
+
     # -- Dataref plumbing -------------------------------------------------
 
     def _require_client(self) -> httpx.AsyncClient:
@@ -1035,12 +1128,12 @@ class XPlaneSimAdapter:
     async def _read(self, key: str) -> Any:
         """Read one dataref value by its short :data:`DATAREFS` key."""
         self._require_client()
-        return await self._read_by_id(self._ids[key])
+        return await self._resilient(lambda: self._read_by_id(self._ids[key]))
 
     async def _write(self, key: str, value: float | int | bool, index: int | None = None) -> None:
         """Write one dataref value, optionally a single element of an array."""
         self._require_client()
-        await self._write_by_id(self._ids[key], value, index=index)
+        await self._resilient(lambda: self._write_by_id(self._ids[key], value, index=index))
 
     async def _read_by_id(self, dataref_id: int) -> Any:
         """Read one dataref value by its already-resolved numeric id.
@@ -1070,12 +1163,17 @@ class XPlaneSimAdapter:
 
     async def _activate(self, key: str) -> None:
         """Fire one X-Plane command by its short :data:`COMMANDS` key."""
-        client = self._require_client()
-        response = await client.post(
-            f"/api/v2/command/{self._command_ids[key]}/activate",
-            json={"duration": 0},
-        )
-        response.raise_for_status()
+        self._require_client()
+
+        async def _do() -> None:
+            client = self._require_client()
+            response = await client.post(
+                f"/api/v2/command/{self._command_ids[key]}/activate",
+                json={"duration": 0},
+            )
+            response.raise_for_status()
+
+        await self._resilient(_do)
 
     # -- Reads ------------------------------------------------------------
 
@@ -1798,19 +1896,29 @@ class XPlaneSimAdapter:
         """Write :data:`~adapters.xplane.failure_datarefs.STATE_FAILED` to every mapped dataref.
 
         Idempotent: writing the same "failed now" value twice is a no-op as
-        far as the simulator is concerned.
+        far as the simulator is concerned — which is what makes it safe for
+        :meth:`_resilient` to retry the whole loop rather than a single write
+        if a stale id partway through forces a re-resolve.
         """
         if not self.capabilities.can_inject_failures:
             raise CapabilityNotSupported(self.name, "can_inject_failures")
-        for dataref_id in self._resolved_failure_dataref_ids(failure):
-            await self._write_by_id(dataref_id, STATE_FAILED)
+
+        async def _do() -> None:
+            for dataref_id in self._resolved_failure_dataref_ids(failure):
+                await self._write_by_id(dataref_id, STATE_FAILED)
+
+        await self._resilient(_do)
 
     async def clear_failure(self, failure: FailureRef) -> None:
         """Write :data:`~adapters.xplane.failure_datarefs.STATE_WORKING` to every mapped dataref."""
         if not self.capabilities.can_inject_failures:
             raise CapabilityNotSupported(self.name, "can_inject_failures")
-        for dataref_id in self._resolved_failure_dataref_ids(failure):
-            await self._write_by_id(dataref_id, STATE_WORKING)
+
+        async def _do() -> None:
+            for dataref_id in self._resolved_failure_dataref_ids(failure):
+                await self._write_by_id(dataref_id, STATE_WORKING)
+
+        await self._resilient(_do)
 
     async def clear_all_failures(self) -> None:
         """Fire ``fix_all_systems`` and write "working" to every resolved failure dataref.
@@ -1821,9 +1929,13 @@ class XPlaneSimAdapter:
         if not self.capabilities.can_inject_failures:
             raise CapabilityNotSupported(self.name, "can_inject_failures")
         await self._activate("fix_all_systems")
-        for dataref_ids in self._failure_ids.values():
-            for dataref_id in dataref_ids:
-                await self._write_by_id(dataref_id, STATE_WORKING)
+
+        async def _do() -> None:
+            for dataref_ids in self._failure_ids.values():
+                for dataref_id in dataref_ids:
+                    await self._write_by_id(dataref_id, STATE_WORKING)
+
+        await self._resilient(_do)
 
     async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
         """Read every resolved failure dataref; an entry is active iff any of them reads "failed".
@@ -1835,23 +1947,27 @@ class XPlaneSimAdapter:
         """
         if not self.capabilities.can_inject_failures:
             return ()
-        active: list[ActiveFailure] = []
-        for spec in FAILURE_CATALOGUE:
-            engine_indices: tuple[int | None, ...] = (
-                tuple(range(1, 9)) if spec.takes_engine_index else (None,)
-            )
-            for engine_index in engine_indices:
-                dataref_ids = self._failure_ids.get((spec.failure_id, engine_index))
-                if not dataref_ids:
-                    continue
-                values = await asyncio.gather(
-                    *(self._read_by_id(dataref_id) for dataref_id in dataref_ids)
+
+        async def _do() -> tuple[ActiveFailure, ...]:
+            active: list[ActiveFailure] = []
+            for spec in FAILURE_CATALOGUE:
+                engine_indices: tuple[int | None, ...] = (
+                    tuple(range(1, 9)) if spec.takes_engine_index else (None,)
                 )
-                if any(int(value) == STATE_FAILED for value in values):
-                    active.append(
-                        ActiveFailure(failure_id=spec.failure_id, engine_index=engine_index)
+                for engine_index in engine_indices:
+                    dataref_ids = self._failure_ids.get((spec.failure_id, engine_index))
+                    if not dataref_ids:
+                        continue
+                    values = await asyncio.gather(
+                        *(self._read_by_id(dataref_id) for dataref_id in dataref_ids)
                     )
-        return tuple(active)
+                    if any(int(value) == STATE_FAILED for value in values):
+                        active.append(
+                            ActiveFailure(failure_id=spec.failure_id, engine_index=engine_index)
+                        )
+            return tuple(active)
+
+        return await self._resilient(_do)
 
     def _resolved_failure_dataref_ids(self, failure: FailureRef) -> tuple[int, ...]:
         """The dataref ids one :class:`~core.failures.FailureRef` resolves to on this install.
@@ -2991,9 +3107,29 @@ class XPlaneSimAdapter:
         Phase 0 polls over REST. The Web API's WebSocket (``/api/v2``) pushes
         dataref updates and will replace this once the subscription protocol is
         wired up.
+
+        Self-heals across an X-Plane restart: a dataref id it reassigns
+        surfaces as ``httpx.HTTPError``/``XPlaneNotReachable`` on the next
+        read, which triggers :meth:`_reresolve` and a retry instead of
+        propagating — an instructor no longer has to restart this process by
+        hand to recover telemetry after restarting X-Plane mid-session.
+        ``_MAX_RERESOLVE_ATTEMPTS`` consecutive failures still propagate and
+        end the stream, same as before this existed: that is what happens
+        when X-Plane genuinely is not reachable, and :meth:`_reresolve` itself
+        raises immediately in that case rather than retrying blindly.
         """
+        consecutive_failures = 0
         while True:
-            yield await self.get_aircraft_state()
+            try:
+                state = await self.get_aircraft_state()
+            except (httpx.HTTPError, XPlaneNotReachable):
+                consecutive_failures += 1
+                if consecutive_failures > _MAX_RERESOLVE_ATTEMPTS:
+                    raise
+                await self._reresolve()
+                continue
+            consecutive_failures = 0
+            yield state
             await asyncio.sleep(interval_s)
 
     async def stream_traffic(
