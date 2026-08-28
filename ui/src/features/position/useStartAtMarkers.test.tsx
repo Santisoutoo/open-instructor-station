@@ -146,6 +146,49 @@ describe('useStartAtMarkers', () => {
     expect(after).toHaveLength(3);
   });
 
+  it('calls the LATEST onSelectStand after a rerender that changes it without rebuilding markers', () => {
+    // Regression for the stale-closure bug: because the marker-build effect deliberately
+    // does not rebuild on every render (see effect §2's own comment), a marker's click
+    // listener must not keep calling whichever `onSelectStand` closure existed when the
+    // marker was built.
+    const map = new StubMap() as unknown as MapLibreMap;
+    const firstOnSelectStand = vi.fn();
+    const { rerender } = render(<Harness map={map} onSelectStand={firstOnSelectStand} />);
+    const before = StubMarker.created.length;
+
+    const secondOnSelectStand = vi.fn();
+    // An unrelated selection change plus a fresh callback identity — exactly the shape of a
+    // re-render caused by e.g. selecting a different runway elsewhere on the screen — must
+    // not rebuild the marker set.
+    rerender(
+      <Harness map={map} onSelectStand={secondOnSelectStand} selectedRunway="04R" />,
+    );
+    expect(StubMarker.created).toHaveLength(before);
+
+    fireEvent.click(markerLabelled('A1'));
+
+    expect(firstOnSelectStand).not.toHaveBeenCalled();
+    expect(secondOnSelectStand).toHaveBeenCalledWith('A1');
+  });
+
+  it('calls the LATEST onSelectRunway after a rerender that changes it without rebuilding markers', () => {
+    const map = new StubMap() as unknown as MapLibreMap;
+    const firstOnSelectRunway = vi.fn();
+    const { rerender } = render(<Harness map={map} onSelectRunway={firstOnSelectRunway} />);
+    const before = StubMarker.created.length;
+
+    const secondOnSelectRunway = vi.fn();
+    rerender(
+      <Harness map={map} onSelectRunway={secondOnSelectRunway} selectedStand="A1" />,
+    );
+    expect(StubMarker.created).toHaveLength(before);
+
+    fireEvent.click(markerFor('04R'));
+
+    expect(firstOnSelectRunway).not.toHaveBeenCalled();
+    expect(secondOnSelectRunway).toHaveBeenCalledWith('04R');
+  });
+
   it('adds the pavement source and layer once when the map is non-null', () => {
     const map = new StubMap() as unknown as MapLibreMap;
     const addSource = vi.spyOn(map, 'addSource');

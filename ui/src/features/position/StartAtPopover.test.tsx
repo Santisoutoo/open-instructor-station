@@ -2,6 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { ParkingStand } from '../../api/models';
 import { setupStore } from '../../store';
 import { PositionHeaderBar } from './PositionHeaderBar';
 import { initialPositionDesignState } from './positionDesignSlice';
@@ -12,8 +13,21 @@ import { ICAO, positionRoutes } from './testFixtures';
 // regardless of whether the stub's `Map` ever fires `'load'` in this jsdom render.
 vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
 
+// `StartAtMap` is mocked so `StartAtPopover.tsx`'s own `stands` prop can be captured by
+// reference across renders — a full render never reaches `useStartAtMarkers`'s effects
+// anyway (jsdom's maplibre-gl stub never fires `'load'`), so this is strictly additive: no
+// existing assertion in this file depends on the real `StartAtMap`/marker DOM.
+let capturedStands: readonly (readonly ParkingStand[])[] = [];
+vi.mock('./StartAtMap', () => ({
+  StartAtMap: ({ stands }: { readonly stands: readonly ParkingStand[] }) => {
+    capturedStands = [...capturedStands, stands];
+    return null;
+  },
+}));
+
 afterEach(() => {
   vi.unstubAllGlobals();
+  capturedStands = [];
 });
 
 async function renderOpenPopover() {
@@ -94,6 +108,26 @@ describe('StartAtPopover', () => {
 
     expect(store.getState().positionDesign.selectedStand).toBe('A1');
     expect(store.getState().positionDesign.selectedRunway).toBeNull();
+  });
+
+  it('keeps the same stands reference across an unrelated re-render while a filter is active', async () => {
+    // Regression: `shownStands` used to be a bare `.filter()` with no memoisation, so any
+    // re-render — even one caused by selecting a runway, nothing to do with parking — handed
+    // `StartAtMap`/`useStartAtMarkers` a brand-new array reference and made their
+    // `[map, runways, stands]`-keyed effects believe the stands had changed.
+    stubApi(positionRoutes());
+    await renderOpenPopover();
+
+    // Activate the `.filter()` branch — the one that previously allocated fresh each render.
+    await userEvent.click(screen.getByRole('button', { name: 'Tie-downs' }));
+    const afterFilter = capturedStands.at(-1);
+    expect(afterFilter).toBeDefined();
+
+    // An unrelated re-render: selecting a runway from the sidebar dispatches into Redux and
+    // re-renders StartAtPopover, but must not produce a new `stands` reference.
+    await userEvent.click(screen.getByRole('button', { name: '04R·ILS' }));
+
+    expect(capturedStands.at(-1)).toBe(afterFilter);
   });
 
   it('says so, rather than showing an empty box, when the parking cannot be read', async () => {

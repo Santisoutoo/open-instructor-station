@@ -78,6 +78,20 @@ export function useStartAtMarkers(
   // adding it fresh after a map is torn down and rebuilt (e.g. a popover re-open).
   const pavementMap = useRef<MapLibreMap | null>(null);
 
+  // Always-current callback refs, updated after every render (same pattern as
+  // `api/liveSocket.ts`'s `handlersRef`). The marker-build effect below deliberately does
+  // not rebuild on every render (see its own comment), so a DOM marker's click listener must
+  // call through a ref rather than close over `onSelectRunway`/`onSelectStand` directly —
+  // otherwise it keeps calling whichever closure existed the last time markers were built,
+  // which can go stale (e.g. after a selection made elsewhere on the screen) and read a
+  // wrong "already selected" value baked in at build time.
+  const onSelectRunwayRef = useRef(onSelectRunway);
+  const onSelectStandRef = useRef(onSelectStand);
+  useEffect(() => {
+    onSelectRunwayRef.current = onSelectRunway;
+    onSelectStandRef.current = onSelectStand;
+  });
+
   // 1. Pavement layer: the airport's real runway footprint, added once per map instance
   // and refreshed whenever the runway list changes.
   useEffect(() => {
@@ -129,7 +143,7 @@ export function useStartAtMarkers(
       element.classList.toggle(SELECTED_CLASS, selected);
       element.setAttribute('aria-pressed', String(selected));
       element.addEventListener('click', () => {
-        onSelectRunway(runway.ident);
+        onSelectRunwayRef.current(runway.ident);
       });
       const marker = new Marker({ element })
         .setLngLat([runway.threshold.longitude, runway.threshold.latitude])
@@ -144,7 +158,7 @@ export function useStartAtMarkers(
       element.classList.toggle(SELECTED_CLASS, selected);
       element.setAttribute('aria-pressed', String(selected));
       element.addEventListener('click', () => {
-        onSelectStand(stand.name);
+        onSelectStandRef.current(stand.name);
       });
       const marker = new Marker({ element })
         .setLngLat([stand.position.longitude, stand.position.latitude])
@@ -156,11 +170,14 @@ export function useStartAtMarkers(
       clear(runwayMap);
       clear(standMap);
     };
-    // `selectedRunway`/`selectedStand`/`onSelectRunway`/`onSelectStand` are intentionally
-    // excluded: they are read via closure at build time, which is what the comment above the
-    // effect explains — rebuilding on every selection change (or on the callbacks' identity,
-    // which is fresh on nearly every render, see `StartAtPopover.tsx`) would flash/refit the
-    // map on every click, which effect §3 exists specifically to avoid.
+    // `selectedRunway`/`selectedStand` are intentionally excluded: they are read via closure
+    // at build time only to seed the initial pressed state, which is what the comment above
+    // the effect explains — rebuilding on every selection change would flash/refit the map on
+    // every click, which effect §3 exists specifically to avoid. `onSelectRunway`/
+    // `onSelectStand` are not referenced here at all (the click listeners call through
+    // `onSelectRunwayRef`/`onSelectStandRef` instead, updated on every render above), so a
+    // fresh callback identity on every `StartAtPopover` render — which is the normal case,
+    // see its own comment — never goes stale and never triggers a rebuild either.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [map, runways, stands]);
 

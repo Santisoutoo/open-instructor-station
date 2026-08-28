@@ -12,7 +12,7 @@
  * from `aircraft_types`. The five rows are the same five rows; they say what the index says.
  */
 
-import type { RefObject } from 'react';
+import { useMemo, type RefObject } from 'react';
 import { useGetParkingQuery } from '../../api/instructorApi';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { Popover } from './Popover';
@@ -69,11 +69,21 @@ export function StartAtPopover({
     { icao },
     { skip: icao === '' },
   );
-  const allStands = stands ?? [];
-  const shownStands =
-    parkingFilter === 'all'
-      ? allStands
-      : allStands.filter((stand) => stand.kind === parkingFilter);
+  // Memoised too: `stands ?? []` would otherwise allocate a fresh empty array on every
+  // render while the query is still loading, which would itself defeat `shownStands`'
+  // memoisation below (a changing `allStands` dependency).
+  const allStands = useMemo(() => stands ?? [], [stands]);
+  // Memoised so its reference only changes when the filtered content actually changes —
+  // `.filter()` otherwise returns a fresh array every render, and `useStartAtMarkers`'
+  // marker-build and fit-to-content effects key on this value precisely so they do NOT
+  // rebuild/refit on an unrelated re-render (e.g. selecting a runway from the sidebar).
+  const shownStands = useMemo(
+    () =>
+      parkingFilter === 'all'
+        ? allStands
+        : allStands.filter((stand) => stand.kind === parkingFilter),
+    [allStands, parkingFilter],
+  );
 
   function selectRunway(ident: string) {
     dispatch(startRunwaySelected(ident));
