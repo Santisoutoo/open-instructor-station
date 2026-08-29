@@ -2,6 +2,7 @@ import { Suspense, lazy, type ComponentType } from 'react';
 import { ComingSoonPanel } from './components/ComingSoonPanel';
 import { ConnectionBadge } from './components/ConnectionBadge';
 import { ContextDrawer } from './components/ContextDrawer';
+import { GateDelayedPanel } from './components/GateDelayedPanel';
 import { StatusBar } from './components/StatusBar';
 import { TabBar } from './components/TabBar';
 import { ThemeToggle } from './components/ThemeToggle';
@@ -91,7 +92,9 @@ export default function App() {
                 aria-labelledby={fullBleed && active ? undefined : `tab-${tab.id}`}
                 hidden={!active}
               >
-                {Panel === undefined ? (
+                {tab.gated ? (
+                  <GateDelayedPanel label={tab.label} />
+                ) : Panel === undefined ? (
                   <ComingSoonPanel label={tab.label} />
                 ) : (
                   <Suspense fallback={<p className="app__loading">Loading module…</p>}>

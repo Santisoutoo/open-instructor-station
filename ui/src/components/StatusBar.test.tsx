@@ -68,7 +68,7 @@ describe('<StatusBar />', () => {
     expect(screen.getByText('No aircraft data')).toBeInTheDocument();
   });
 
-  it('flags demo data with the amber chip only while the sim link is down', async () => {
+  it('flags demo data with the accent chip only while the sim link is down', async () => {
     await renderStatusBar({ ui: { ...initialUiState, demoFeed: true } });
     expect(screen.getByText('Demo data')).toBeInTheDocument();
   });

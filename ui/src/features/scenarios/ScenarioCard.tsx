@@ -1,7 +1,7 @@
 /**
  * One scenario in the catalogue grid.
  *
- * Two-tap run, no modals: the first tap selects the card (amber border) and reveals the
+ * Two-tap run, no modals: the first tap selects the card (accent border) and reveals the
  * inline Run button — the one solid-accent primary in the view; the second tap starts the
  * run. An unavailable scenario is dimmed and disabled but never hidden, and always says
  * why (design §3.1: the 501 sentence naming every missing capability, surfaced verbatim

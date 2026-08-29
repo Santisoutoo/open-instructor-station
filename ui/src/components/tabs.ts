@@ -23,6 +23,12 @@ export interface TabDefinition {
    * kind of pause an instructor notices mid-session.
    */
   keepMounted?: boolean;
+  /**
+   * Show `GateDelayedPanel` instead of the real panel, even though `load` is defined
+   * and the module works. A deliberate, reversible release gate — not a stand-in for
+   * unbuilt code (that's what an absent `load` is for). Drop the flag to lift the gate.
+   */
+  gated?: boolean;
 }
 
 export const TABS: readonly TabDefinition[] = [
@@ -37,6 +43,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'scenarios',
     label: 'Scenarios',
+    gated: true,
     load: () =>
       import('../features/scenarios/ScenariosPanel').then((m) => ({
         default: m.ScenariosPanel,
@@ -53,6 +60,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'failures',
     label: 'Failures',
+    gated: true,
     load: () =>
       import('../features/failures/FailuresPanel').then((m) => ({
         default: m.FailuresPanel,
@@ -61,6 +69,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'fuel-payload',
     label: 'Fuel & payload',
+    gated: true,
     load: () =>
       import('../features/fuel-payload/FuelPayloadPanel').then((m) => ({
         default: m.FuelPayloadPanel,
@@ -69,6 +78,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'profiles',
     label: 'Profiles',
+    gated: true,
     load: () =>
       import('../features/profiles/ProfilesPanel').then((m) => ({
         default: m.ProfilesPanel,
@@ -78,12 +88,14 @@ export const TABS: readonly TabDefinition[] = [
     id: 'map',
     label: 'Map',
     keepMounted: true,
+    gated: true,
     load: () =>
       import('../features/map/MapPanel').then((m) => ({ default: m.MapPanel })),
   },
   {
     id: 'aircraft',
     label: 'Aircraft',
+    gated: true,
     load: () =>
       import('../features/aircraft/AircraftControlPanel').then((m) => ({
         default: m.AircraftControlPanel,
@@ -92,6 +104,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'landing',
     label: 'Landing analysis',
+    gated: true,
     load: () =>
       import('../features/landing/LandingPanel').then((m) => ({
         default: m.LandingPanel,
@@ -100,6 +113,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'traffic',
     label: 'Traffic',
+    gated: true,
     load: () =>
       import('../features/traffic/TrafficPanel').then((m) => ({
         default: m.TrafficPanel,
@@ -108,6 +122,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'camera',
     label: 'Camera',
+    gated: true,
     load: () =>
       import('../features/camera/CameraPanel').then((m) => ({
         default: m.CameraPanel,
@@ -116,6 +131,7 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'pushback',
     label: 'Pushback',
+    gated: true,
     load: () =>
       import('../features/pushback/PushbackPanel').then((m) => ({
         default: m.PushbackPanel,
