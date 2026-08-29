@@ -271,9 +271,12 @@
 
 .pos-startat {
   left: 12rem;
-  width: 716px;
+  /* Bounded by: an absolute cap, the viewport's own gutter, and this popover's own left
+     offset plus a matching right gutter — whichever is smallest wins, so it never runs off
+     the right edge of a narrow tablet in portrait. */
+  width: min(1040px, calc(100vw - 2rem), calc(100vw - 13rem));
   display: grid;
-  grid-template-columns: 186px auto 200px;
+  grid-template-columns: 186px minmax(420px, 1fr) 220px;
   gap: 1rem;
 }
 
@@ -336,7 +339,7 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 262px;
+  max-height: 420px; /* matches .pos-startat__map's height */
   overflow-y: auto;
 }
 
@@ -364,58 +367,63 @@
   font-size: 0.78rem;
 }
 
-/* ------------------------------------------------------- airport diagram */
+/* ---------------------------------------------------------- Start-at map */
 
-.pos-diagram {
-  position: relative;
-}
-
-.pos-diagram__svg {
-  display: block;
+.pos-startat__map {
+  width: 100%;
+  height: 420px;
+  min-width: 420px;
+  border-radius: 6px;
+  overflow: hidden;
 }
 
 /*
- * One line per physical strip, drawn between the two thresholds navdata publishes. The
- * mockup's terminal blocks and taxiway are gone with the sample data: apt.dat publishes no
- * terminal buildings, and inventing three rectangles would be decoration pretending to be
- * an aerodrome chart.
+ * Real DOM `<button>` markers (runway thresholds and parking stands) drawn on top of the
+ * MapLibre canvas — not a canvas-layer click handler — so every marker keeps a DOM node,
+ * keyboard focus and a 44px hit box (CLAUDE.md's tablet-first rule).
  */
-.pos-diagram__runway-line {
-  stroke: var(--pos-t3);
-  stroke-width: 6;
-  stroke-linecap: round;
-  opacity: 0.55;
-}
-
-.pos-diagram__runway-label {
-  fill: var(--pos-t1);
-  font-size: 9px;
-  font-family: 'Spline Sans Mono', monospace;
-}
-
-.pos-diagram__stand {
-  position: absolute;
-  width: 44px;
-  height: 44px;
-  margin: -22px 0 0 -22px;
+.pos-startat-marker {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0 0.4rem;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: transparent;
-  border: 0;
+  background: var(--pos-panel);
+  border: 1px solid var(--pos-hair);
+  border-radius: 6px;
+  color: var(--pos-t1);
+  font-family: 'Spline Sans Mono', monospace;
+  font-size: 11px;
   cursor: pointer;
 }
 
-.pos-diagram__stand-dot {
+/*
+ * A stand keeps the full 44px hit box, but shows only a small dot — a stand's identity is
+ * already in the sidebar list, so the map marker is a position, not a label.
+ */
+.pos-startat-marker--stand {
+  background: transparent;
+  border: 0;
+}
+
+.pos-startat-marker--stand::before {
+  content: '';
   width: 12px;
   height: 12px;
   border-radius: 2px;
   background: var(--pos-line);
 }
 
-.pos-diagram__stand--selected .pos-diagram__stand-dot {
+.pos-startat-marker--stand.pos-startat-marker--selected::before {
   background: var(--pos-accent);
   box-shadow: 0 0 0 5px color-mix(in oklch, var(--pos-accent) 16%, transparent);
+}
+
+.pos-startat-marker--runway.pos-startat-marker--selected {
+  color: var(--pos-accent);
+  border-color: var(--pos-accent);
+  background: color-mix(in oklch, var(--pos-accent) 14%, transparent);
 }
 
 /* ----------------------------------------------------------- runway strip */

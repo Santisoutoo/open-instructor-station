@@ -16,6 +16,10 @@ import { initialPositionDesignState } from './positionDesignSlice';
 import { callsTo, stubApi, type ApiCall } from './testApi';
 import { ICAO, positionRoutes } from './testFixtures';
 
+// The "picking a stand…" test below opens the Start-at popover, which now transitively
+// imports `maplibre-gl` via `StartAtMap` → `useMapLibre`.
+vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -275,7 +279,7 @@ describe('choosing a start position', () => {
     await screen.findByRole('tab', { name: '04R' });
     expect(store.getState().positionDesign.selectedRunway).toBe('04R');
 
-    await userEvent.click(screen.getByRole('button', { name: /^Start at/ }));
+    await userEvent.click(screen.getByRole('button', { name: /^Start position/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Stand A1' }));
 
     expect(store.getState().positionDesign.selectedStand).toBe('A1');
