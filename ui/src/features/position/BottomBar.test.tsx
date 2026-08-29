@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -75,6 +75,57 @@ describe('the configuration fields', () => {
       expect(screen.getByLabelText('Flaps')).toBeChecked();
     });
     expect(screen.getByLabelText('Flaps %')).toHaveValue(50);
+  });
+
+  it('keeps "Flaps" ticked and the box genuinely clearable while re-entering a value', async () => {
+    // Regression for #164: `Number('')` is 0, not null, so clearing the box to type a
+    // replacement used to read back as "flaps off" and untick + disable the field on the
+    // same keystroke, before the instructor could type anything.
+    //
+    // A first fix (null-guarding the onChange) stopped that, but bound the box straight to
+    // the resolved-fallback value, which snapped a cleared box back to "50" on the very
+    // same render — the instructor could delete only the last digit of "50", never both.
+    // The box must stay genuinely empty while focused so a full replacement can be typed.
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercent = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercent).toHaveValue(50);
+    });
+
+    fireEvent.focus(flapsPercent);
+    fireEvent.change(flapsPercent, { target: { value: '' } });
+
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+    expect(flapsPercent).not.toBeDisabled();
+    expect(flapsPercent).toHaveValue(null);
+
+    fireEvent.change(flapsPercent, { target: { value: '30' } });
+    expect(flapsPercent).toHaveValue(30);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+
+    fireEvent.blur(flapsPercent);
+    expect(flapsPercent).toHaveValue(30);
+  });
+
+  it('reverts the Flaps % box to the resolved default when left empty', async () => {
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercent = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercent).toHaveValue(50);
+    });
+
+    fireEvent.focus(flapsPercent);
+    fireEvent.change(flapsPercent, { target: { value: '' } });
+    expect(flapsPercent).toHaveValue(null);
+
+    fireEvent.blur(flapsPercent);
+
+    expect(flapsPercent).toHaveValue(50);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
   });
 
   it('unticking "Flaps" commands flaps up rather than silently changing nothing', async () => {

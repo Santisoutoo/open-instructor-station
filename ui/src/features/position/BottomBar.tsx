@@ -80,6 +80,17 @@ export function BottomBar() {
   const [applyPlacement, applyState] = useApplyPlacementMutation();
   const [flash, setFlash] = useState<string | null>(null);
 
+  // The Flaps % box's own characters, decoupled from `flapsValue` below while the
+  // instructor is mid-edit. `flapsValue` re-derives to the resolved default the instant
+  // the field is empty (that's what lets the checkbox and preview panel stay correct), so
+  // binding the input to it directly snapped a cleared box straight back to "50" before a
+  // second backspace could land — the instructor could delete only the last digit, never
+  // both. Left alone while focused, this mirrors the resolved default again once the field
+  // blurs empty, or the moment it stops being focused for any other reason.
+  const [flapsFocused, setFlapsFocused] = useState(false);
+  const [flapsText, setFlapsText] = useState('');
+  const [flapsSyncedFrom, setFlapsSyncedFrom] = useState<number | null>(null);
+
   const overrides = setup.overrides;
 
   // The mirror onto the shared slice. `placementStaged` clears the overrides it finds, so
@@ -142,6 +153,16 @@ export function BottomBar() {
     config.flapsPercent ??
     (merged.flaps_ratio == null ? 0 : Math.round(merged.flaps_ratio * 100));
   const flapsOn = flapsValue > 0;
+
+  // Follows the resolved value the same way SliderControl follows its own external
+  // world — adjusted during render, not in an effect, so the sync is visible on the
+  // very render it happens rather than one frame later. Blocked while focused so it
+  // cannot fight a keystroke; `onBlur` below covers the one case this can't (the
+  // instructor leaves the box empty and the resolved value hasn't itself changed).
+  if (!flapsFocused && flapsValue !== flapsSyncedFrom) {
+    setFlapsSyncedFrom(flapsValue);
+    setFlapsText(String(flapsValue));
+  }
 
   const speedReason = unflyableReason({
     altitudeFt: merged.altitude_ft ?? preview?.placement.position.altitude_ft ?? null,
@@ -224,9 +245,24 @@ export function BottomBar() {
             type="number"
             className="pos-field__input pos-mono"
             disabled={!flapsOn}
-            value={flapsValue}
+            value={flapsText}
+            onFocus={() => {
+              setFlapsFocused(true);
+            }}
+            onBlur={() => {
+              setFlapsFocused(false);
+              // The render-time sync above only fires when `flapsValue` itself changes,
+              // which does not catch "left empty, resolved value unchanged" — blurring on
+              // an empty box must still restore it.
+              setFlapsSyncedFrom(flapsValue);
+              setFlapsText(String(flapsValue));
+            }}
             onChange={(event) => {
-              setConfig('flapsPercent', Number(event.target.value));
+              setFlapsText(event.target.value);
+              setConfig(
+                'flapsPercent',
+                event.target.value === '' ? null : Number(event.target.value),
+              );
             }}
           />
         </label>
