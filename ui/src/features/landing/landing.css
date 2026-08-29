@@ -1,6 +1,6 @@
 /*
  * Landing Analysis panel. Custom properties only — both themes are a value swap
- * away (see index.css). Amber budget in this view: the selected landing card and
+ * away (see index.css). Accent budget in this view: the selected landing card and
  * focus rings; the report card speaks through the semantic ok/warn/danger colours,
  * which do not count against the accent budget.
  */
@@ -44,7 +44,7 @@
   outline-offset: 2px;
 }
 
-/* The debriefed landing: amber border — a sanctioned accent use in this view. */
+/* The debriefed landing: accent border — a sanctioned accent use in this view. */
 .landing-picker__card[aria-pressed='true'] {
   border-color: var(--accent);
 }
