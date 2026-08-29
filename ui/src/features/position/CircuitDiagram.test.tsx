@@ -12,16 +12,16 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { CircuitDiagram } from './CircuitDiagram';
-import { place } from './circuit';
-import { CIRCUIT_MARKERS } from './markers';
+import { CX, CY, place } from './circuit';
+import { CIRCUIT_MARKERS, labelPlacement } from './markers';
 import { MARKER_IDS } from './positionDesignSlice';
 
 const COURSE_DEG = 40;
 
-function renderDiagram(onSelectMarker = vi.fn()) {
-  render(
+function renderDiagram(onSelectMarker = vi.fn(), courseDeg = COURSE_DEG) {
+  const result = render(
     <CircuitDiagram
-      courseDeg={COURSE_DEG}
+      courseDeg={courseDeg}
       runwayIdent="04R"
       windDeg={240}
       windKt={12}
@@ -29,7 +29,7 @@ function renderDiagram(onSelectMarker = vi.fn()) {
       onSelectMarker={onSelectMarker}
     />,
   );
-  return onSelectMarker;
+  return { onSelectMarker, container: result.container };
 }
 
 describe('the marker hit targets', () => {
@@ -47,7 +47,7 @@ describe('the marker hit targets', () => {
   });
 
   it('gives every marker a button that reports its own id', async () => {
-    const onSelectMarker = renderDiagram();
+    const { onSelectMarker } = renderDiagram();
 
     await userEvent.click(screen.getByRole('button', { name: 'Downwind left' }));
     expect(onSelectMarker).toHaveBeenCalledWith('downwind-left');
@@ -69,6 +69,54 @@ describe('the marker hit targets', () => {
       const centrelineEnd = place(-8, 0, courseDeg);
       expect(centrelineEnd.y).toBeGreaterThanOrEqual(0);
       expect(centrelineEnd.y).toBeLessThanOrEqual(520);
+    }
+  });
+});
+
+describe('marker labels stay upright', () => {
+  /** Courses that stress the illegible 90°–270° range the rotated `<g>` used to catch them in. */
+  const ROTATED_COURSES = [0, 40, 90, 180, 220, 270, 315];
+
+  it('never rotates a marker label — no <g transform="rotate(...)"> ancestor but the identity one', () => {
+    for (const courseDeg of ROTATED_COURSES) {
+      const { container } = renderDiagram(vi.fn(), courseDeg);
+      for (const text of container.querySelectorAll('text.pos-circuit__marker-label')) {
+        let ancestor: Element | null = text.parentElement;
+        while (ancestor !== null) {
+          const transform = ancestor.getAttribute('transform');
+          if (transform !== null && /rotate\(/.exec(transform) !== null) {
+            expect(transform).toBe(`rotate(0 ${String(CX)} ${String(CY)})`);
+          }
+          ancestor = ancestor.parentElement;
+        }
+      }
+    }
+  });
+
+  it('positions each label at place(u, v, courseDeg) plus its offset, for a non-zero course', () => {
+    const courseDeg = 220;
+    const { container } = renderDiagram(vi.fn(), courseDeg);
+    const texts = container.querySelectorAll('text.pos-circuit__marker-label');
+    expect(texts).toHaveLength(MARKER_IDS.length);
+
+    for (const id of MARKER_IDS) {
+      const marker = CIRCUIT_MARKERS[id];
+      const point = place(marker.u, marker.v, courseDeg);
+      const text = screen.getByText(marker.label, { selector: 'text' });
+      // labelOffset's numeric part is asserted indirectly via x/y below; textAnchor is the
+      // one part of the offset an attribute exposes directly.
+      const anchor = labelPlacement(id, courseDeg);
+      const expectedAnchor =
+        anchor === 'left' ? 'end' : anchor === 'right' ? 'start' : 'middle';
+      expect(text.getAttribute('text-anchor')).toBe(expectedAnchor);
+      expect(Number(text.getAttribute('x'))).not.toBeNaN();
+      expect(Number(text.getAttribute('y'))).not.toBeNaN();
+      // The label sits within a small, fixed offset of its rotated screen point — never at
+      // the unrotated (course=0) point, which is what the bug drew.
+      const dx = Number(text.getAttribute('x')) - point.x;
+      const dy = Number(text.getAttribute('y')) - point.y;
+      expect(Math.abs(dx)).toBeLessThanOrEqual(12.001);
+      expect(Math.abs(dy)).toBeLessThanOrEqual(18.001);
     }
   });
 });
