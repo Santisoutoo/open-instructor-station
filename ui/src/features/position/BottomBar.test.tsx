@@ -164,6 +164,27 @@ describe('the configuration fields', () => {
     expect(screen.getByLabelText('Gear down')).toBeChecked();
   });
 
+  it('lets the instructor clear "Override altitude (ft)" instead of snapping back to 0', async () => {
+    // Regression for #165: the field is a plain `number` in Redux (no "leave it alone"
+    // meaning to fall back on like IAS/Pitch), so the box used to re-render `0` on the
+    // same keystroke that was meant to clear it.
+    stubApi(positionRoutes());
+    const store = renderBar();
+
+    await userEvent.click(await screen.findByLabelText('Override altitude'));
+    const field = screen.getByLabelText('Override altitude (ft)');
+    expect(field).toHaveValue(0);
+
+    await userEvent.clear(field);
+    expect(field).toHaveValue(null);
+
+    await userEvent.type(field, '4500');
+    expect(field).toHaveValue(4500);
+    await waitFor(() => {
+      expect(store.getState().positionDesign.config.altitudeOverrideFt).toBe(4500);
+    });
+  });
+
   it('disables Course and ILS frequency on a runway that publishes no ILS', async () => {
     stubApi(positionRoutes());
     renderBar({ positionDesign: designState({ selectedRunway: '22L' }) });
