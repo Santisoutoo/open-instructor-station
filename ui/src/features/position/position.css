@@ -862,13 +862,72 @@
 .pos-rail {
   flex: none;
   width: 480px;
-  overflow-y: auto;
-  padding: 1rem;
+  min-height: 0;
+  padding: 8px 0;
   background: var(--pos-rail);
   border-left: 1px solid var(--pos-hair);
   display: flex;
   flex-direction: column;
+  position: relative;
+}
+
+.pos-rail__scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0.5rem 1rem;
+  display: flex;
+  flex-direction: column;
   gap: 1rem;
+}
+
+/* Ticket-stub perforation: a row of tangent half-circle bites, cut into the card's top and
+   bottom padding band. Scoped to .pos-rail — see design doc §7.7 for why this is not a shared
+   utility class yet.
+   `7.5px, transparent 8.5px` is not an arbitrary feather: 7.5 + 8.5 = 16 = D (the tile size), so
+   adjacent dots' soft edges meet exactly at their shared tangent point — change either number
+   and a seam or a double-covered gap appears at every tile boundary.
+   The punch colour is `--pos-bg` (always darker than `--pos-rail` in both themes — the
+   elevation convention this whole design system already uses, so it reads as a hole rather than
+   an embossed highlight), with a `@supports`-gated override for browsers that support CSS
+   relative colour syntax: `--pos-bg` alone is only ΔL≈0.015 (OKLCH lightness) from `--pos-rail`
+   in the *light* theme — correct direction, too little magnitude — and no other existing token
+   is reliably darker than `--pos-rail` in *both* themes (dividers/lines are conventionally
+   lighter than their panel in dark mode, the opposite of what a recessed hole needs). Computing
+   the punch colour relative to `--pos-rail` itself guarantees the right direction and a real
+   margin in either theme, without hand-picking a token. */
+.pos-rail::before,
+.pos-rail::after {
+  content: '';
+  position: absolute;
+  left: -1px; /* compensates the 1px border-left so the strip spans exactly 480px, see below */
+  right: 0;
+  height: 8px;
+  background-image: radial-gradient(circle at 8px 0, var(--pos-bg) 7.5px, transparent 8.5px);
+  background-size: 16px 16px;
+  background-repeat: repeat-x;
+  pointer-events: none;
+  z-index: 1;
+}
+
+@supports (color: oklch(from red l c h)) {
+  .pos-rail::before,
+  .pos-rail::after {
+    background-image: radial-gradient(
+      circle at 8px 0,
+      oklch(from var(--pos-rail) calc(l - 0.1) c h) 7.5px,
+      transparent 8.5px
+    );
+  }
+}
+
+.pos-rail::before {
+  top: 0;
+}
+
+.pos-rail::after {
+  bottom: 0;
+  transform: scaleY(-1);
 }
 
 .pos-rail__head {
