@@ -32,6 +32,7 @@
 
 import type { GeoPosition, PlacementRequest, ProcedureKind } from '../../api/models';
 import type { FinalPlacementName } from './finals';
+import { isDownwindMarker } from './markers';
 import type { DesignTabId, MarkerId } from './positionDesignSlice';
 
 /** The circuit geometry a marker asks the server for. */
@@ -74,6 +75,12 @@ export interface PlacementInputs {
   readonly activeTab: DesignTabId;
   readonly marker: MarkerId;
   readonly finalPlacement: FinalPlacementName;
+  /**
+   * The instructor's edit to the selected marker's own NM distance — abeam offset for a
+   * downwind marker, leg distance for base/vectors — or `null` for `CIRCUIT_PLACEMENTS`'
+   * own default. Ignored for `takeoff` and the two finals, which are not editable this way.
+   */
+  readonly markerDistanceOverrideNm: number | null;
   readonly procedure: {
     readonly kind: ProcedureKind;
     readonly ident: string;
@@ -185,12 +192,20 @@ function runwayRequest(inputs: PlacementInputs): PlacementRequest | null {
     };
   }
   const circuit = CIRCUIT_PLACEMENTS[inputs.marker];
+  const override = inputs.markerDistanceOverrideNm;
+  // Downwind's editable number is the abeam offset (`pattern_width_nm`); base/vectors'
+  // is the leg distance (`leg_distance_nm`) — `pattern_width_nm` stays the fixed circuit
+  // width for those two. See the module docstring's marker table.
+  const patternWidthNm =
+    isDownwindMarker(inputs.marker) && override !== null ? override : circuit.patternWidthNm;
+  const legDistanceNm =
+    !isDownwindMarker(inputs.marker) && override !== null ? override : circuit.legDistanceNm;
   return {
     type: 'runway',
     airport_icao: inputs.icao,
     runway_ident: runwayIdent,
     placement: circuit.placement,
-    pattern_width_nm: circuit.patternWidthNm,
-    ...(circuit.legDistanceNm === null ? {} : { leg_distance_nm: circuit.legDistanceNm }),
+    pattern_width_nm: patternWidthNm,
+    ...(legDistanceNm === null ? {} : { leg_distance_nm: legDistanceNm }),
   };
 }

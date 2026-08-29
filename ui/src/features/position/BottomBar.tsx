@@ -22,7 +22,7 @@
  * 10 NM final, which is the failure CLAUDE.md's placement-speed note exists to prevent.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useApplyPlacementMutation,
   useGetCapabilitiesQuery,
@@ -37,11 +37,13 @@ import {
   configChanged,
   sendToggled,
   situationReset,
+  switchesModalToggled,
   type AircraftConfigState,
 } from './positionDesignSlice';
 import { placementStaged, setupOverridden, staleCleared } from './positionSlice';
 import { overridesOrNull } from './setup';
 import { unflyableReason } from './speed';
+import { SwitchesModal } from './SwitchesModal';
 import {
   useGroundElevationFt,
   useIls,
@@ -66,6 +68,9 @@ export function BottomBar() {
   const dispatch = useAppDispatch();
   const config = useAppSelector((state) => state.positionDesign.config);
   const send = useAppSelector((state) => state.positionDesign.send);
+  const switchesModalOpen = useAppSelector(
+    (state) => state.positionDesign.switchesModalOpen,
+  );
   const runway = useSelectedRunway();
   // Tri-state on purpose: `null` while the lookup is in flight. Collapsing it to a boolean
   // is what made the bar tell an instructor an ILS runway had none for a frame.
@@ -79,6 +84,7 @@ export function BottomBar() {
 
   const [applyPlacement, applyState] = useApplyPlacementMutation();
   const [flash, setFlash] = useState<string | null>(null);
+  const switchesTriggerRef = useRef<HTMLButtonElement>(null);
 
   const overrides = setup.overrides;
 
@@ -141,7 +147,12 @@ export function BottomBar() {
   const flapsValue =
     config.flapsPercent ??
     (merged.flaps_ratio == null ? 0 : Math.round(merged.flaps_ratio * 100));
-  const flapsOn = flapsValue > 0;
+  // Derived independently from `flapsValue`: while the % box is mid-edit (cleared to retype
+  // a value, `flapsPercent === null`), `flapsValue` falls back to the merged setup and can
+  // read 0 just as easily as a real edit can — collapsing the checkbox onto that reading is
+  // what force-unticked and disabled the box out from under an instructor still typing.
+  const flapsOnDerived = merged.flaps_ratio != null && merged.flaps_ratio > 0;
+  const flapsOn = config.flapsOn ?? flapsOnDerived;
 
   const speedReason = unflyableReason({
     altitudeFt: merged.altitude_ft ?? preview?.placement.position.altitude_ft ?? null,
@@ -205,6 +216,7 @@ export function BottomBar() {
             onChange={(event) => {
               // Unticking is a real instruction — flaps up — since the server merges and
               // cannot unset. Ticking with nothing resolved has to name a setting.
+              setConfig('flapsOn', event.target.checked);
               setConfig(
                 'flapsPercent',
                 event.target.checked
@@ -226,7 +238,10 @@ export function BottomBar() {
             disabled={!flapsOn}
             value={flapsValue}
             onChange={(event) => {
-              setConfig('flapsPercent', Number(event.target.value));
+              setConfig(
+                'flapsPercent',
+                event.target.value === '' ? null : Number(event.target.value),
+              );
             }}
           />
         </label>
@@ -248,9 +263,12 @@ export function BottomBar() {
             type="number"
             className="pos-field__input pos-mono"
             disabled={!config.altitudeOverride}
-            value={config.altitudeOverrideFt}
+            value={config.altitudeOverrideFt ?? ''}
             onChange={(event) => {
-              setConfig('altitudeOverrideFt', Number(event.target.value));
+              setConfig(
+                'altitudeOverrideFt',
+                event.target.value === '' ? null : Number(event.target.value),
+              );
             }}
           />
         </label>
@@ -292,6 +310,20 @@ export function BottomBar() {
           ILS frequency
           {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
         </label>
+        <button
+          ref={switchesTriggerRef}
+          type="button"
+          className="pos-checkbox pos-bottombar__switches"
+          aria-haspopup="dialog"
+          aria-expanded={switchesModalOpen}
+          aria-controls="pos-switches-modal"
+          onClick={() => {
+            dispatch(switchesModalToggled());
+          }}
+        >
+          Airplane switches
+        </button>
+        <SwitchesModal triggerRef={switchesTriggerRef} />
       </fieldset>
 
       <div className="pos-bottombar__spacer" />

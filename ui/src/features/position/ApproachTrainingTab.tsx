@@ -25,7 +25,9 @@ import {
 } from './markers';
 import {
   finalPlacementSelected,
+  markerDistanceChanged,
   markerSelected,
+  type EditableDistanceMarkerId,
   type MarkerId,
 } from './positionDesignSlice';
 import { useSelectedRunway, useStagedPlacement, useWeather } from './usePositionData';
@@ -35,6 +37,7 @@ export function ApproachTrainingTab() {
   const dispatch = useAppDispatch();
   const selectedMarker = useAppSelector((state) => state.positionDesign.selectedMarker);
   const finalPlacement = useAppSelector((state) => state.positionDesign.finalPlacement);
+  const markerDistances = useAppSelector((state) => state.positionDesign.markerDistances);
 
   const runway = useSelectedRunway();
   const { wind } = useWeather();
@@ -101,10 +104,34 @@ export function ApproachTrainingTab() {
           </div>
         )}
 
-        <FactRow
-          label={isDownwindMarker(selectedMarker) ? 'Abeam offset' : 'Distance'}
-          value={formatDistanceNm(markerDistanceNm(selectedMarker, finalPlacement))}
-        />
+        {isFinalMarker(selectedMarker) || selectedMarker === 'takeoff' ? (
+          <FactRow
+            label={isDownwindMarker(selectedMarker) ? 'Abeam offset' : 'Distance'}
+            value={formatDistanceNm(
+              markerDistanceNm(selectedMarker, finalPlacement, markerDistances),
+            )}
+          />
+        ) : (
+          <label className="pos-field">
+            <span className="pos-field__label">
+              {isDownwindMarker(selectedMarker) ? 'Abeam offset (NM)' : 'Distance (NM)'}
+            </span>
+            <input
+              type="number"
+              min="0.1"
+              className="pos-field__input pos-mono"
+              value={markerDistanceNm(selectedMarker, finalPlacement, markerDistances)}
+              onChange={(event) => {
+                dispatch(
+                  markerDistanceChanged({
+                    id: selectedMarker as EditableDistanceMarkerId,
+                    value: event.target.value === '' ? null : Number(event.target.value),
+                  }),
+                );
+              }}
+            />
+          </label>
+        )}
         <FactRow
           label="Altitude"
           value={

@@ -120,3 +120,12 @@ describe('marker labels stay upright', () => {
     }
   });
 });
+
+describe('the Take off marker', () => {
+  it('sits at the runway pavement bar’s far end, not the near end', () => {
+    // circuit.ts pins it there: `RUNWAY_FAR_U` is the "cabecera" the approach dashes and
+    // corridor arrive at, not `RUNWAY_NEAR_U`.
+    expect(CIRCUIT_MARKERS.takeoff.u).not.toBe(0);
+    expect(CIRCUIT_MARKERS.takeoff.v).toBe(0);
+  });
+});

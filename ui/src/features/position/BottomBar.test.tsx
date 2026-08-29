@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -90,6 +90,50 @@ describe('the configuration fields', () => {
     await waitFor(() => {
       expect(store.getState().position.setupOverrides.flaps_ratio).toBe(0);
     });
+  });
+
+  it('lets Flaps % be cleared and retyped without unticking or disabling the field', async () => {
+    // The old bug: `Number('') === 0`, which made `flapsOn` false and disabled the box on
+    // the very next render — an instructor could not clear the field to type a new number.
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercentInput = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercentInput).toHaveValue(50);
+    });
+
+    fireEvent.change(flapsPercentInput, { target: { value: '' } });
+
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+    expect(flapsPercentInput).not.toBeDisabled();
+    expect(flapsPercentInput).not.toHaveValue(0);
+
+    fireEvent.change(flapsPercentInput, { target: { value: '35' } });
+    expect(flapsPercentInput).toHaveValue(35);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+    expect(flapsPercentInput).not.toBeDisabled();
+  });
+
+  it('lets Override altitude (ft) be cleared to a blank box and retyped', async () => {
+    // The old bug: clearing the box parsed to `Number('') === 0` and stuck at 0 rather than
+    // letting the instructor type a new figure.
+    stubApi(positionRoutes());
+    renderBar();
+
+    await userEvent.click(await screen.findByLabelText('Override altitude'));
+    const altitudeInput = screen.getByLabelText('Override altitude (ft)');
+    expect(altitudeInput).not.toBeDisabled();
+
+    fireEvent.change(altitudeInput, { target: { value: '5500' } });
+    expect(altitudeInput).toHaveValue(5500);
+
+    fireEvent.change(altitudeInput, { target: { value: '' } });
+    expect(altitudeInput).toHaveValue(null);
+    expect(altitudeInput).not.toBeDisabled();
+
+    fireEvent.change(altitudeInput, { target: { value: '6000' } });
+    expect(altitudeInput).toHaveValue(6000);
   });
 
   it('says nothing about an ILS while the lookup is still in flight', () => {
@@ -258,6 +302,44 @@ describe('Set position', () => {
         config: { ...initialPositionDesignState.config, iasKt: 90 },
       }),
     });
+
+    const button = await screen.findByRole('button', { name: /Set position/ });
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+    await userEvent.click(button);
+
+    await waitFor(() => {
+      expect(callsTo(calls, 'position/apply')).toHaveLength(1);
+    });
+    expect(callsTo(calls, 'position/apply')[0]?.body).toEqual({
+      placement: {
+        type: 'runway',
+        airport_icao: ICAO,
+        runway_ident: '22L',
+        placement: 'final_3nm',
+      },
+      setup: { ias_kt: 90 },
+    });
+  });
+
+  it('opens and dismisses the "Airplane switches" placeholder without touching the apply body', async () => {
+    // The placeholder is a scaffolded entry point only — no `AircraftSetup` wiring at all.
+    // Opening and closing it must leave the request identical to the unmodified baseline.
+    const { calls } = stubApi(positionRoutes());
+    renderBar({
+      positionDesign: designState({
+        selectedRunway: '22L',
+        config: { ...initialPositionDesignState.config, iasKt: 90 },
+      }),
+    });
+
+    const trigger = await screen.findByRole('button', { name: 'Airplane switches' });
+    await userEvent.click(trigger);
+    expect(await screen.findByText('Aircraft layout — coming soon.')).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByText('Aircraft layout — coming soon.')).not.toBeInTheDocument();
 
     const button = await screen.findByRole('button', { name: /Set position/ });
     await waitFor(() => {

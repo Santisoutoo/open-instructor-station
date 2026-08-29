@@ -31,7 +31,7 @@ import { useAppSelector } from '../../store';
 import { useGetWeatherStateQuery } from '../weather/weatherApi';
 import { AIRWORK_LEVEL_FEET } from './airwork';
 import { buildPlacementRequest, type PlacementInputs } from './placementRequest';
-import type { ProcedureFamily } from './positionDesignSlice';
+import type { EditableDistanceMarkerId, ProcedureFamily } from './positionDesignSlice';
 import { instructorSetup, mergedSetup, type InstructorSetup } from './setup';
 import { windComponents } from './wind';
 
@@ -268,11 +268,14 @@ function usePlacementRequest(): PlacementRequest | null {
     activeTab,
     selectedMarker,
     finalPlacement,
+    markerDistances,
     procedure,
     procedureFamily,
     airworkLevel,
     custom,
   } = design;
+  const markerDistanceOverrideNm =
+    markerDistances[selectedMarker as EditableDistanceMarkerId] ?? null;
 
   return useMemo(
     () =>
@@ -283,6 +286,7 @@ function usePlacementRequest(): PlacementRequest | null {
         activeTab,
         marker: selectedMarker,
         finalPlacement,
+        markerDistanceOverrideNm,
         procedure:
           procedure === null
             ? null
@@ -317,6 +321,7 @@ function usePlacementRequest(): PlacementRequest | null {
       activeTab,
       selectedMarker,
       finalPlacement,
+      markerDistanceOverrideNm,
       procedure,
       procedureFamily,
       airworkLevel,

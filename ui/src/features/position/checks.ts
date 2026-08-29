@@ -16,7 +16,7 @@
 import { formatAltitudeFt, formatDistanceNm, formatSpeedKt } from './format';
 import type { FinalPlacementName } from './finals';
 import { markerDistanceNm } from './markers';
-import type { DesignTabId, MarkerId } from './positionDesignSlice';
+import type { DesignTabId, EditableDistanceMarkerId, MarkerId } from './positionDesignSlice';
 import { isAirborne, sustainableIasKt } from './speed';
 
 export type CheckDot = 'caution' | 'info' | 'accent';
@@ -52,6 +52,8 @@ export interface CheckInputs {
   readonly activeTab: DesignTabId;
   readonly marker: MarkerId;
   readonly finalPlacement: FinalPlacementName;
+  /** The instructor's edits to the circuit markers' distances — `markerDistanceNm`'s overrides. */
+  readonly markerDistances: Partial<Record<EditableDistanceMarkerId, number>>;
   /** The gear as it will actually be applied — the merged setup, not the checkbox. */
   readonly gearDown: boolean | null;
   /** The speed as it will actually be applied. */
@@ -61,7 +63,8 @@ export interface CheckInputs {
   /** Field elevation under the placement, feet MSL, when an airport is loaded. */
   readonly groundElevationFt: number | null;
   readonly altitudeOverride: boolean;
-  readonly altitudeOverrideFt: number;
+  /** `null` = ticked but not yet typed — the "5. Altitude override active" rule stays quiet. */
+  readonly altitudeOverrideFt: number | null;
 }
 
 /** The ordered rule list. Every rule is conditional; an empty list means nothing to say. */
@@ -94,7 +97,7 @@ export function checks(inputs: CheckInputs): readonly Check[] {
   ) {
     result.push({
       dot: 'caution',
-      text: `Gear up ${formatDistanceNm(markerDistanceNm(inputs.marker, inputs.finalPlacement))} from the threshold`,
+      text: `Gear up ${formatDistanceNm(markerDistanceNm(inputs.marker, inputs.finalPlacement, inputs.markerDistances))} from the threshold`,
       note: 'Tick "Gear down" to spawn configured for landing',
     });
   }
@@ -132,7 +135,10 @@ export function checks(inputs: CheckInputs): readonly Check[] {
     result.push({
       dot: 'caution',
       text: 'Altitude override active',
-      note: `Replaces the altitude the placement resolved, with ${formatAltitudeFt(inputs.altitudeOverrideFt)}`,
+      note:
+        inputs.altitudeOverrideFt === null
+          ? 'Replaces the altitude the placement resolved — no value typed yet'
+          : `Replaces the altitude the placement resolved, with ${formatAltitudeFt(inputs.altitudeOverrideFt)}`,
     });
   }
 

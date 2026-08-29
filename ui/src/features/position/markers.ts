@@ -13,9 +13,9 @@
  * number on screen that the aircraft never gets.
  */
 
-import { place } from './circuit';
+import { place, RUNWAY_FAR_U } from './circuit';
 import { FINAL_DISTANCE_NM, type FinalPlacementName } from './finals';
-import type { MarkerId } from './positionDesignSlice';
+import type { EditableDistanceMarkerId, MarkerId } from './positionDesignSlice';
 
 export interface CircuitMarker {
   readonly id: MarkerId;
@@ -34,7 +34,10 @@ export interface CircuitMarker {
 
 /** `Record<MarkerId, …>` — every id in the closed set is covered, checked at compile time. */
 export const CIRCUIT_MARKERS: Record<MarkerId, CircuitMarker> = {
-  takeoff: { id: 'takeoff', label: 'Take off', u: 0, v: 0, distNm: 0 },
+  // Co-located with the runway pavement bar's far end (`RUNWAY_FAR_U` in `circuit.ts`) — the
+  // "cabecera" the approach dashes and corridor arrive at, not the near tip. The drawn
+  // `threshold` circle stays at u=0, the schematic's reference for every other distance.
+  takeoff: { id: 'takeoff', label: 'Take off', u: RUNWAY_FAR_U, v: 0, distNm: 0 },
   'downwind-left': {
     id: 'downwind-left',
     label: 'Downwind left',
@@ -82,9 +85,20 @@ export function isDownwindMarker(id: MarkerId): boolean {
  *
  * The two final markers answer with the tab's selected final rather than with the dot they
  * draw: the diagram keeps its two illustrative dots, the selector is what places.
+ *
+ * `overrides` is the instructor's edits to the six circuit markers (`markerDistances` in
+ * `positionDesignSlice.ts`) — absent, `CIRCUIT_MARKERS[id].distNm` stands. The two finals
+ * never read it: their distance is the selector, not an editable circuit dimension.
  */
-export function markerDistanceNm(id: MarkerId, final: FinalPlacementName): number {
-  return isFinalMarker(id) ? FINAL_DISTANCE_NM[final] : (CIRCUIT_MARKERS[id].distNm ?? 0);
+export function markerDistanceNm(
+  id: MarkerId,
+  final: FinalPlacementName,
+  overrides: Partial<Record<EditableDistanceMarkerId, number>> = {},
+): number {
+  if (isFinalMarker(id)) {
+    return FINAL_DISTANCE_NM[final];
+  }
+  return overrides[id as EditableDistanceMarkerId] ?? CIRCUIT_MARKERS[id].distNm ?? 0;
 }
 
 /** The label shown for the selected marker: the finals name their selected distance. */

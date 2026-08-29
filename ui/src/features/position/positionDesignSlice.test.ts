@@ -6,6 +6,7 @@ import reducer, {
   designTabSelected,
   finalPlacementSelected,
   initialPositionDesignState,
+  markerDistanceChanged,
   markerSelected,
   procedureFamilySelected,
   procedureLegSelected,
@@ -15,6 +16,7 @@ import reducer, {
   startAtToggled,
   startRunwaySelected,
   startStandSelected,
+  switchesModalToggled,
 } from './positionDesignSlice';
 
 describe('startRunwaySelected / startStandSelected', () => {
@@ -74,7 +76,7 @@ describe('coordinateHandoffReceived', () => {
   });
 });
 
-describe('screenMenuToggled / startAtToggled', () => {
+describe('screenMenuToggled / startAtToggled / switchesModalToggled', () => {
   it('opening one popover closes the other', () => {
     const menuOpen = reducer(undefined, screenMenuToggled());
     expect(menuOpen.screenMenuOpen).toBe(true);
@@ -82,6 +84,35 @@ describe('screenMenuToggled / startAtToggled', () => {
     const startAtOpen = reducer(menuOpen, startAtToggled());
     expect(startAtOpen.startAtOpen).toBe(true);
     expect(startAtOpen.screenMenuOpen).toBe(false);
+  });
+
+  it('the switches placeholder closes, and is closed by, the header popovers', () => {
+    const switchesOpen = reducer(undefined, switchesModalToggled());
+    expect(switchesOpen.switchesModalOpen).toBe(true);
+
+    const menuOpen = reducer(switchesOpen, screenMenuToggled());
+    expect(menuOpen.screenMenuOpen).toBe(true);
+    expect(menuOpen.switchesModalOpen).toBe(false);
+
+    const switchesAgain = reducer(menuOpen, switchesModalToggled());
+    expect(switchesAgain.switchesModalOpen).toBe(true);
+    expect(switchesAgain.screenMenuOpen).toBe(false);
+  });
+});
+
+describe('markerDistanceChanged', () => {
+  it('sets and clears an instructor’s edit to a circuit marker’s distance', () => {
+    const edited = reducer(
+      undefined,
+      markerDistanceChanged({ id: 'base-left', value: 9 }),
+    );
+    expect(edited.markerDistances).toEqual({ 'base-left': 9 });
+
+    const cleared = reducer(
+      edited,
+      markerDistanceChanged({ id: 'base-left', value: null }),
+    );
+    expect(cleared.markerDistances).toEqual({});
   });
 });
 
@@ -95,12 +126,14 @@ describe('airportLoaded', () => {
     state = reducer(state, startRunwaySelected('04R'));
     state = reducer(state, procedureSelected({ ident: 'BADO8A', transition: null }));
     state = reducer(state, configChanged({ field: 'iasKt', value: 90 }));
+    state = reducer(state, markerDistanceChanged({ id: 'base-left', value: 9 }));
 
     const moved = reducer(state, airportLoaded('LEMD'));
     expect(moved.selectedRunway).toBeNull();
     expect(moved.selectedStand).toBeNull();
     expect(moved.procedure).toBeNull();
     expect(moved.config.iasKt).toBeNull();
+    expect(moved.markerDistances).toEqual({});
   });
 
   it('re-loading the same ICAO is a no-op, so a selection survives it', () => {

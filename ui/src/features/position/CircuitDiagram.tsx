@@ -23,7 +23,15 @@
  * scale for free.
  */
 
-import { CX, CY, centrelineTicks, place, windArrowRotation } from './circuit';
+import {
+  CX,
+  CY,
+  RUNWAY_FAR_U,
+  RUNWAY_NEAR_U,
+  centrelineTicks,
+  place,
+  windArrowRotation,
+} from './circuit';
 import { CIRCUIT_MARKERS, labelPlacement } from './markers';
 import { MARKER_IDS, type MarkerId } from './positionDesignSlice';
 
@@ -76,8 +84,8 @@ export function CircuitDiagram({
   readonly onSelectMarker: (id: MarkerId) => void;
 }) {
   const ticks = centrelineTicks(TICK_FROM_NM, TICK_TO_NM, 2);
-  const runwayNear = place(0.3, 0, 0);
-  const runwayFar = place(-1.8, 0, 0);
+  const runwayNear = place(RUNWAY_NEAR_U, 0, 0);
+  const runwayFar = place(RUNWAY_FAR_U, 0, 0);
   const threshold = place(0, 0, 0);
   const centrelineFar = place(TICK_FROM_NM, 0, 0);
   const centrelineNear = place(TICK_TO_NM, 0, 0);

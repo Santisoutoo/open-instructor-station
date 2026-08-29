@@ -186,6 +186,14 @@ comes second.
   This is the **first component that runs inside the simulator**, and it stays optional:
   **everything else must still work with the bridge absent**.
 - **Pushback Manager** and **Camera Manager** — small, command-shaped, independent.
+- **Position screen fixes (out-of-band, Position Manager/Phase 1 scope)** — logged here per
+  explicit instruction, since Phase 3 is the active phase when these landed: the Approach
+  training tab's circuit diagram drew marker labels rotated with the runway course (illegible
+  past ~90°/270°), the "Take off" marker sat at the wrong end of the runway pavement bar, the
+  downwind/base/vectors circuit distances were compile-time constants with no instructor
+  control, and the Flaps %/Override altitude number fields could not be cleared to retype a
+  value. An "Airplane switches" entry point was added to "Sent with the position" as a
+  placeholder only — the interactive cockpit-layout design is a separate, later phase.
 
 ### Exit criteria
 
@@ -204,6 +212,12 @@ comes second.
    `bridge/PI_OISBridge.py` plugin installed. `tests/sim/test_live_traffic.py` is written and
    has never been executed; `can_spawn_traffic` is resolved per-connection from the bridge
    probe and has never been observed `True` against a real simulator.
+5. ✅ The Approach training tab's circuit diagram labels stay upright at every runway course,
+   the "Take off" marker draws at the runway threshold, downwind/base/vectors circuit
+   distances are instructor-editable NM values, and every numeric field in the bottom bar
+   (Flaps %, Override altitude ft) can be cleared and retyped without losing focus or
+   force-resetting a checkbox — `CircuitDiagram.test.tsx`, `markers.test.ts`,
+   `placementRequest.test.ts`, `BottomBar.test.tsx`.
 
 **The capability flags, stated honestly.** `can_pushback` and `can_control_camera` are `True` on
 the X-Plane adapter as of `feature/xplane-pushback-camera` — as **claims that the code is right,

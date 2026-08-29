@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { place } from './circuit';
+import { place, RUNWAY_FAR_U } from './circuit';
 import {
   CIRCUIT_MARKERS,
   isFinalMarker,
@@ -49,6 +49,13 @@ describe('markerDistanceNm / markerLabel', () => {
 
   it('puts the threshold at zero', () => {
     expect(markerDistanceNm('takeoff', 'final_3nm')).toBe(0);
+  });
+});
+
+describe('the Take off marker', () => {
+  it('pins to the runway pavement bar’s far end, the "cabecera" the approach draws into', () => {
+    expect(CIRCUIT_MARKERS.takeoff.u).toBe(RUNWAY_FAR_U);
+    expect(CIRCUIT_MARKERS.takeoff.v).toBe(0);
   });
 });
 

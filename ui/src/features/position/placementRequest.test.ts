@@ -18,6 +18,7 @@ function inputs(overrides: Partial<PlacementInputs> = {}): PlacementInputs {
     activeTab: 'approach',
     marker: 'final-3nm',
     finalPlacement: 'final_3nm',
+    markerDistanceOverrideNm: null,
     procedure: null,
     airwork: {
       position: { latitude: 43.6584, longitude: 7.2159, altitude_ft: 10000 },
@@ -77,6 +78,20 @@ describe('the Approach tab markers', () => {
     });
   });
 
+  it('lets an instructor override downwind’s abeam offset — pattern_width_nm, not leg', () => {
+    expect(
+      buildPlacementRequest(
+        inputs({ marker: 'downwind-left', markerDistanceOverrideNm: 7 }),
+      ),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'left_downwind',
+      pattern_width_nm: 7,
+    });
+  });
+
   it('places base 4 NM out on a 6 NM leg', () => {
     expect(buildPlacementRequest(inputs({ marker: 'base-left' }))).toEqual({
       type: 'runway',
@@ -90,6 +105,19 @@ describe('the Approach tab markers', () => {
       placement: 'right_base',
       pattern_width_nm: 4,
       leg_distance_nm: 6,
+    });
+  });
+
+  it('lets an instructor override base’s leg distance — leg_distance_nm, not width', () => {
+    expect(
+      buildPlacementRequest(inputs({ marker: 'base-left', markerDistanceOverrideNm: 9 })),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'left_base',
+      pattern_width_nm: 4,
+      leg_distance_nm: 9,
     });
   });
 
@@ -108,6 +136,39 @@ describe('the Approach tab markers', () => {
       placement: 'right_base',
       pattern_width_nm: 2,
       leg_distance_nm: 6,
+    });
+  });
+
+  it('lets an instructor override vectors’ leg distance too', () => {
+    expect(
+      buildPlacementRequest(inputs({ marker: 'vectors-left', markerDistanceOverrideNm: 8 })),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'left_base',
+      pattern_width_nm: 2,
+      leg_distance_nm: 8,
+    });
+  });
+
+  it('ignores a distance override on the takeoff and final markers', () => {
+    expect(
+      buildPlacementRequest(inputs({ marker: 'takeoff', markerDistanceOverrideNm: 5 })),
+    ).toEqual({
+      type: 'runway_threshold',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+    });
+    expect(
+      buildPlacementRequest(
+        inputs({ marker: 'final-3nm', markerDistanceOverrideNm: 5, finalPlacement: 'final_10nm' }),
+      ),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'final_10nm',
     });
   });
 
