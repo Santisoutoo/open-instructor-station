@@ -80,6 +80,20 @@ export function BottomBar() {
   const [applyPlacement, applyState] = useApplyPlacementMutation();
   const [flash, setFlash] = useState<string | null>(null);
 
+  // "Override altitude (ft)" is a plain `number` in Redux, unlike IAS/Pitch's `number |
+  // null` — there is no "leave it alone" meaning to fall back on, since the override is
+  // already gated by the `altitudeOverride` switch. A local draft lets the box go empty
+  // mid-edit without a phantom 0 ever landing in Redux (and bouncing straight back).
+  // Resynced during render — not in an effect — the same way `SliderControl` follows a
+  // value that moved out from under it.
+  const [altitudeDraft, setAltitudeDraft] = useState<string | null>(null);
+  const [altitudeSyncedFrom, setAltitudeSyncedFrom] = useState(config.altitudeOverrideFt);
+  if (config.altitudeOverrideFt !== altitudeSyncedFrom) {
+    setAltitudeSyncedFrom(config.altitudeOverrideFt);
+    setAltitudeDraft(null);
+  }
+  const altitudeOverrideFtShown = altitudeDraft ?? String(config.altitudeOverrideFt);
+
   const overrides = setup.overrides;
 
   // The mirror onto the shared slice. `placementStaged` clears the overrides it finds, so
@@ -248,9 +262,13 @@ export function BottomBar() {
             type="number"
             className="pos-field__input pos-mono"
             disabled={!config.altitudeOverride}
-            value={config.altitudeOverrideFt}
+            value={altitudeOverrideFtShown}
             onChange={(event) => {
-              setConfig('altitudeOverrideFt', Number(event.target.value));
+              const raw = event.target.value;
+              setAltitudeDraft(raw);
+              if (raw !== '' && Number.isFinite(Number(raw))) {
+                setConfig('altitudeOverrideFt', Number(raw));
+              }
             }}
           />
         </label>
