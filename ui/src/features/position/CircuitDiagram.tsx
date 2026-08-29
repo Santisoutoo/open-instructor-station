@@ -139,28 +139,45 @@ export function CircuitDiagram({
             const marker = CIRCUIT_MARKERS[id];
             const p = place(marker.u, marker.v, 0);
             const selected = id === selectedMarker;
+            return (
+              <circle
+                key={id}
+                cx={p.x}
+                cy={p.y}
+                r={selected ? 7 : 5}
+                aria-hidden="true"
+                className={
+                  selected
+                    ? 'pos-circuit__marker-dot pos-circuit__marker-dot--selected'
+                    : 'pos-circuit__marker-dot'
+                }
+              />
+            );
+          })}
+        </g>
+
+        {/*
+         * The labels are deliberately **not** inside the rotated `<g>` above: an SVG `<text>`
+         * glyph rotates 1:1 with its ancestor's `transform`, so a label drawn there would
+         * read upside down for any runway course past ~90°/270°. `place(u, v, courseDeg)`
+         * already bakes the rotation into the *position* — the same trick the marker
+         * `<button>`s below use — so the glyphs themselves stay upright.
+         */}
+        <g aria-hidden="true">
+          {MARKER_IDS.map((id) => {
+            const marker = CIRCUIT_MARKERS[id];
+            const p = place(marker.u, marker.v, courseDeg);
             const offset = labelOffset(labelPlacement(id, courseDeg));
             return (
-              <g key={id} aria-hidden="true">
-                <circle
-                  cx={p.x}
-                  cy={p.y}
-                  r={selected ? 7 : 5}
-                  className={
-                    selected
-                      ? 'pos-circuit__marker-dot pos-circuit__marker-dot--selected'
-                      : 'pos-circuit__marker-dot'
-                  }
-                />
-                <text
-                  x={p.x + offset.dx}
-                  y={p.y + offset.dy}
-                  textAnchor={offset.textAnchor}
-                  className="pos-circuit__marker-label"
-                >
-                  {marker.label}
-                </text>
-              </g>
+              <text
+                key={id}
+                x={p.x + offset.dx}
+                y={p.y + offset.dy}
+                textAnchor={offset.textAnchor}
+                className="pos-circuit__marker-label"
+              >
+                {marker.label}
+              </text>
             );
           })}
         </g>
