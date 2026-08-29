@@ -60,87 +60,89 @@ export function ApplyRail() {
 
   return (
     <aside className="pos-rail" aria-label="Will be applied">
-      <div className="pos-rail__head">
-        <h2 className="pos-rail__title">Will be applied</h2>
-        {isFetching && <span className="pos-tag">resolving…</span>}
-      </div>
+      <div className="pos-rail__scroll">
+        <div className="pos-rail__head">
+          <h2 className="pos-rail__title">Will be applied</h2>
+          {isFetching && <span className="pos-tag">resolving…</span>}
+        </div>
 
-      {isError && (
-        <p className="pos-rail__error">
-          {errorMessage(error, 'This placement could not be worked out.')}
-        </p>
-      )}
+        {isError && (
+          <p className="pos-rail__error">
+            {errorMessage(error, 'This placement could not be worked out.')}
+          </p>
+        )}
 
-      <ul className="pos-rail__rows">
-        {rows.map((row) => (
-          <li key={row.label} className="pos-rail__row">
-            <span className="pos-rail__row-label">{row.label}</span>
-            <span
-              className={
-                row.colour === 'caution'
-                  ? 'pos-mono pos-rail__row-value pos-rail__row-value--caution'
-                  : row.colour === 'dim'
-                    ? 'pos-mono pos-rail__row-value pos-rail__row-value--dim'
-                    : 'pos-mono pos-rail__row-value'
-              }
-            >
-              {row.value}
-            </span>
-            <span
-              className={
-                row.colour === 'caution'
-                  ? 'pos-rail__row-tag pos-rail__row-tag--caution'
-                  : 'pos-rail__row-tag'
-              }
-            >
-              {row.tag}
-            </span>
-          </li>
-        ))}
-      </ul>
-
-      {preview !== undefined && preview.notes.length > 0 && (
-        <ul className="pos-rail__notes" aria-label="Where these numbers came from">
-          {preview.notes.map((note) => (
-            <li key={note} className="pos-rail__note">
-              {note}
+        <ul className="pos-rail__rows">
+          {rows.map((row) => (
+            <li key={row.label} className="pos-rail__row">
+              <span className="pos-rail__row-label">{row.label}</span>
+              <span
+                className={
+                  row.colour === 'caution'
+                    ? 'pos-mono pos-rail__row-value pos-rail__row-value--caution'
+                    : row.colour === 'dim'
+                      ? 'pos-mono pos-rail__row-value pos-rail__row-value--dim'
+                      : 'pos-mono pos-rail__row-value'
+                }
+              >
+                {row.value}
+              </span>
+              <span
+                className={
+                  row.colour === 'caution'
+                    ? 'pos-rail__row-tag pos-rail__row-tag--caution'
+                    : 'pos-rail__row-tag'
+                }
+              >
+                {row.tag}
+              </span>
             </li>
           ))}
         </ul>
-      )}
 
-      <div className="pos-rail__checks">
-        <h3 className="pos-rail__checks-title">Checks</h3>
-        {checkList.length === 0 ? (
-          <p className="pos-rail__check-note">Nothing to flag on this placement.</p>
-        ) : (
-          <ul className="pos-rail__checks-list">
-            {checkList.map((check, index) => (
-              <li key={`${check.text}-${String(index)}`} className="pos-rail__check">
-                <span className={`pos-dot pos-dot--${check.dot}`} aria-hidden="true" />
-                <div className="pos-rail__check-body">
-                  <p className="pos-rail__check-text">{check.text}</p>
-                  <p className="pos-rail__check-note">{check.note}</p>
-                </div>
+        {preview !== undefined && preview.notes.length > 0 && (
+          <ul className="pos-rail__notes" aria-label="Where these numbers came from">
+            {preview.notes.map((note) => (
+              <li key={note} className="pos-rail__note">
+                {note}
               </li>
             ))}
           </ul>
         )}
-      </div>
 
-      <div className="pos-rail__footer">
-        {weather === undefined ? (
-          <p className="pos-rail__metar pos-mono">no commanded weather</p>
-        ) : (
-          <p className="pos-mono pos-rail__metar">
-            {icao === '' ? '' : `${icao} `}
-            {formatMetar(weather)}
+        <div className="pos-rail__checks">
+          <h3 className="pos-rail__checks-title">Checks</h3>
+          {checkList.length === 0 ? (
+            <p className="pos-rail__check-note">Nothing to flag on this placement.</p>
+          ) : (
+            <ul className="pos-rail__checks-list">
+              {checkList.map((check, index) => (
+                <li key={`${check.text}-${String(index)}`} className="pos-rail__check">
+                  <span className={`pos-dot pos-dot--${check.dot}`} aria-hidden="true" />
+                  <div className="pos-rail__check-body">
+                    <p className="pos-rail__check-text">{check.text}</p>
+                    <p className="pos-rail__check-note">{check.note}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="pos-rail__footer">
+          {weather === undefined ? (
+            <p className="pos-rail__metar pos-mono">no commanded weather</p>
+          ) : (
+            <p className="pos-mono pos-rail__metar">
+              {icao === '' ? '' : `${icao} `}
+              {formatMetar(weather)}
+            </p>
+          )}
+          <p className="pos-rail__footer-note">
+            Navdata {provider}
+            {airac === null ? '' : ` · ${airac}`} · commanded weather, not an observation
           </p>
-        )}
-        <p className="pos-rail__footer-note">
-          Navdata {provider}
-          {airac === null ? '' : ` · ${airac}`} · commanded weather, not an observation
-        </p>
+        </div>
       </div>
     </aside>
   );
