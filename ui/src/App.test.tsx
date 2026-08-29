@@ -1,7 +1,9 @@
 /**
- * The shell's full-bleed behaviour when the Position screen is active: no header/tabbar,
- * no status bar — but the map's `keepMounted` panel must survive the round trip, hidden
- * rather than unmounted, exactly as it does outside full-bleed mode.
+ * The shell's full-bleed behaviour when the Position screen is active: the shell's own
+ * header/tabbar and status bar are hidden, but the Position screen embeds its own copy of
+ * the same module tab bar in its 64px header — and the map's `keepMounted` panel must
+ * survive the round trip, hidden rather than unmounted, exactly as it does outside
+ * full-bleed mode.
  */
 
 import { render, screen, waitFor } from '@testing-library/react';
@@ -14,18 +16,28 @@ import { tabSelected } from './store/uiSlice';
 vi.mock('maplibre-gl', () => import('./test/maplibreStub'));
 
 describe('App — full-bleed Position screen', () => {
-  it('hides the module tab bar and the status bar while Position is active', () => {
+  it('embeds the module tab bar and hides the shell header/status bar while Position is active', async () => {
     const store = setupStore();
-    render(
+    const { container } = render(
       <Provider store={store}>
         <App />
       </Provider>,
     );
 
+    // The Position screen's own embedded TabBar is a lazy chunk, so this has to be
+    // awaited — a synchronous query would pass before the chunk even resolves, whether
+    // or not the embedding actually worked.
     expect(
-      screen.queryByRole('tablist', { name: 'Instructor station modules' }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+      await screen.findByRole('tablist', { name: 'Instructor station modules' }),
+    ).toBeInTheDocument();
+
+    // The shell's own header (its ConnectionBadge is also `role="status"`, so once the
+    // Position screen's embedded header has mounted a blanket `queryByRole('status')`
+    // would match *its* connection indicator instead) and the bottom status bar footer
+    // are gone in full-bleed mode — check their containers directly rather than an ARIA
+    // role that Position's own header now legitimately shares.
+    expect(container.querySelector('.app__header')).toBeNull();
+    expect(container.querySelector('.statusbar')).toBeNull();
   });
 
   it('keeps the map tabpanel mounted (hidden) after visiting it and returning to Position', async () => {

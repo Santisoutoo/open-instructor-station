@@ -20,9 +20,9 @@
  * "a placement now commands its own speed" note exists to prevent, only from the other
  * direction.
  *
- * Popover open/close state (`screenMenuOpen`, `startAtOpen`, `procedureMenuOpen`,
- * `airportMenuOpen`) is kept here rather than in component `useState`: several of them
- * close each other when one opens, which is easiest to guarantee from one reducer.
+ * Popover open/close state (`startAtOpen`, `procedureMenuOpen`, `airportMenuOpen`) is kept
+ * here rather than in component `useState`: several of them close each other when one
+ * opens, which is easiest to guarantee from one reducer.
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
@@ -141,7 +141,6 @@ export interface PositionDesignState {
   icaoInput: string;
   /** What "Load" last committed. Empty before the first load. */
   loadedIcao: string;
-  screenMenuOpen: boolean;
   startAtOpen: boolean;
   airportMenuOpen: boolean;
   parkingFilter: ParkingFilter;
@@ -181,7 +180,6 @@ const initialConfig: AircraftConfigState = {
 export const initialPositionDesignState: PositionDesignState = {
   icaoInput: '',
   loadedIcao: '',
-  screenMenuOpen: false,
   startAtOpen: false,
   airportMenuOpen: false,
   parkingFilter: 'all',
@@ -232,23 +230,14 @@ const positionDesignSlice = createSlice({
     },
     airportMenuOpened(state) {
       state.airportMenuOpen = true;
-      state.screenMenuOpen = false;
       state.startAtOpen = false;
     },
     airportMenuClosed(state) {
       state.airportMenuOpen = false;
     },
-    screenMenuToggled(state) {
-      state.screenMenuOpen = !state.screenMenuOpen;
-      if (state.screenMenuOpen) {
-        state.startAtOpen = false;
-        state.airportMenuOpen = false;
-      }
-    },
     startAtToggled(state) {
       state.startAtOpen = !state.startAtOpen;
       if (state.startAtOpen) {
-        state.screenMenuOpen = false;
         state.airportMenuOpen = false;
       }
     },
@@ -376,7 +365,6 @@ export const {
   airportLoaded,
   airportMenuOpened,
   airportMenuClosed,
-  screenMenuToggled,
   startAtToggled,
   parkingFilterSelected,
   startRunwaySelected,

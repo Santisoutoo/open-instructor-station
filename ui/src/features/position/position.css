@@ -26,6 +26,11 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* `.pos` is a CSS Grid item of `.app__tabpanel`; grid items default to `min-width: auto`,
+     which resolves to their content's min-content size. Without this, the `.pos-header`
+     tablist below has no width to shrink against and blows the whole screen out past the
+     viewport instead of scrolling. */
+  min-width: 0;
   background: var(--pos-bg);
   color: var(--pos-t1);
   font-family: 'Schibsted Grotesk', 'Segoe UI', system-ui, sans-serif;
@@ -133,17 +138,51 @@
   background: var(--pos-panel);
   border-bottom: 1px solid var(--pos-hair);
   position: relative;
+  min-width: 0;
 }
 
-.pos-header__menu-trigger {
-  min-height: 44px;
-  padding: 0 0.75rem;
-  background: transparent;
-  border: 1px solid var(--pos-line);
-  border-radius: 8px;
+.pos-header .tabbar {
+  /* No grow (`.pos-header__spacer` owns pushing the right-hand controls to the edge) but
+     shrinks from its natural content width when the row is squeezed, scrolling its own
+     overflow rather than the row itself. `min-width: 0` overrides the flex-item default of
+     `auto` (= content size) — without it the tablist pushed the header past the viewport
+     instead of yielding to `overflow-x: auto`; with a `0%` basis instead of `auto` it shrank
+     in lockstep with the (already-empty) spacer and nearly disappeared. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  /* The shared `.tabbar` rule sets `scrollbar-width: none` — no native scrollbar, and no other
+     affordance — so a squeezed strip reads as "broken, text got cut off" rather than
+     "scrollable, more tabs to the right". An edge-fade `mask-image` was tried here first, but a
+     fade has no notion of scroll position: it fades whichever tab sits at each end regardless of
+     whether that direction is actually scrollable, which washed out the active first tab's label
+     and accent underline even with nothing to its left. A visible scrollbar has no such failure
+     mode — it's just always honest — so restore it here only (the rest of the app's header
+     usually has enough room that it doesn't matter there). */
+  scrollbar-width: thin;
+}
+
+.pos-header .tabbar__tab {
+  color: var(--pos-t2);
+}
+
+.pos-header .tabbar__tab:hover {
   color: var(--pos-t1);
-  font-weight: 600;
-  cursor: pointer;
+}
+
+.pos-header .tabbar__tab[aria-selected='true'] {
+  color: var(--pos-t1);
+  border-bottom-color: var(--pos-accent);
+}
+
+.pos-header .tabbar__tab:focus-visible {
+  outline-color: var(--pos-focus);
+}
+
+.pos-header__airport,
+.pos-header__startat-trigger,
+.pos-header__connection {
+  flex: none;
 }
 
 .pos-header__airport {
@@ -166,8 +205,11 @@
 }
 
 .pos-header__airport-name {
+  overflow: hidden;
+  max-width: 20ch;
   color: var(--pos-t2);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .pos-header__load {
@@ -239,34 +281,6 @@
   border-radius: 10px;
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
   padding: 0.75rem;
-}
-
-.pos-screenmenu {
-  left: 1rem;
-  width: 220px;
-}
-
-.pos-screenmenu__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.pos-screenmenu__item {
-  min-height: 44px;
-  padding: 0 0.6rem;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--pos-t1);
-  text-align: left;
-  cursor: pointer;
-}
-
-.pos-screenmenu__item:hover {
-  background: var(--pos-hover);
 }
 
 .pos-startat {
@@ -1164,8 +1178,8 @@
 
 /*
  * The navdata gate's card, and the "nothing loaded yet" prompt. Both replace the screen
- * body while the header stays put — this screen is full-bleed, so its screen menu is the
- * only way off it and must never be gated away.
+ * body while the header stays put — this screen is full-bleed, so its embedded module tab
+ * bar is the only way off it and must never be gated away.
  */
 .pos-navdata {
   margin: 2rem auto;

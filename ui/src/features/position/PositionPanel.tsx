@@ -7,8 +7,8 @@
  * offering an airport search over an index that does not exist, so while it is missing or
  * building the screen says so and offers to build it — the same contract the panel had
  * before the redesign, reinstated here rather than reinvented. The header stays visible
- * through the gate on purpose: this screen is full-bleed, so its screen menu is the only way
- * off it.
+ * through the gate on purpose: this screen is full-bleed, so its embedded module tab bar is
+ * the only way off it.
  *
  * **An airport is not the only way in.** The Map's "Send to Position tab" hands over a bare
  * coordinate (`docs/designs/instructor-map.md` D5), which is a whole placement on its own and
