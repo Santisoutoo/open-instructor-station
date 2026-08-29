@@ -1,6 +1,6 @@
 /*
  * Pushback panel. Custom properties only — both themes are a value swap away
- * (see index.css). Amber budget in this view: the one solid-amber slot goes to
+ * (see index.css). Accent budget in this view: the one solid-accent slot goes to
  * Execute pushback; everything else stays neutral.
  */
 
@@ -219,11 +219,11 @@
   color: inherit;
 }
 
-/* The panel's one solid-amber action. */
+/* The panel's one solid-accent action. */
 .pushback-actions__execute {
   background: var(--accent);
   border: 1px solid var(--accent);
-  color: var(--bg, #1a1712);
+  color: var(--bg, #080d11);
   font-weight: 600;
 }
 

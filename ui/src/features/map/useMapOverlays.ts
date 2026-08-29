@@ -48,10 +48,10 @@ const LAYER_BINDINGS: ReadonlyArray<[MapLayerKey, readonly string[]]> = [
 ];
 
 /**
- * Canvas colours are literals — WebGL cannot read CSS custom properties. Amber is the
+ * Canvas colours are literals — WebGL cannot read CSS custom properties. This is the
  * app accent and marks the two active-intent drawings (measure, staged point).
  */
-const AMBER = '#e8a33d';
+const ACCENT = '#5bbe62';
 
 const EMPTY: FeatureCollection = { type: 'FeatureCollection', features: [] };
 
@@ -204,7 +204,7 @@ export function useMapOverlays(map: MapLibreMap | null): void {
       paint: {
         'circle-radius': 4,
         'circle-color': '#3f7cb8',
-        'circle-stroke-color': '#16140f',
+        'circle-stroke-color': '#080d11',
         'circle-stroke-width': 1,
       },
     });
@@ -245,14 +245,14 @@ export function useMapOverlays(map: MapLibreMap | null): void {
       id: 'measure-line',
       type: 'line',
       source: 'measure-line',
-      paint: { 'line-color': AMBER, 'line-width': 2, 'line-dasharray': [2, 2] },
+      paint: { 'line-color': ACCENT, 'line-width': 2, 'line-dasharray': [2, 2] },
     });
     map.addSource('measure-points', { type: 'geojson', data: EMPTY });
     map.addLayer({
       id: 'measure-points',
       type: 'circle',
       source: 'measure-points',
-      paint: { 'circle-radius': 4, 'circle-color': AMBER },
+      paint: { 'circle-radius': 4, 'circle-color': ACCENT },
     });
     map.addSource('staged', { type: 'geojson', data: EMPTY });
     map.addLayer({
@@ -261,7 +261,7 @@ export function useMapOverlays(map: MapLibreMap | null): void {
       source: 'staged',
       paint: {
         'circle-radius': 6,
-        'circle-color': AMBER,
+        'circle-color': ACCENT,
         'circle-stroke-color': '#ffffff',
         'circle-stroke-width': 2,
       },
