@@ -1,0 +1,24 @@
+name: "Wind shear on final"
+description: >
+  Stabilised approach to runway 36 at ZZZZ, 5 NM out, disrupted by a strong
+  low-level wind shear between 1,000 ft and 2,000 ft MSL — a light headwind
+  giving way abruptly to a strong, gusty, near-reciprocal wind.
+tags: [weather, wind-shear, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: final_5nm
+
+weather:
+  setup:
+    wind_layers:
+      - altitude_ft: 1000.0
+        direction_deg: 360.0
+        speed_kt: 8.0
+      - altitude_ft: 2000.0
+        direction_deg: 210.0
+        speed_kt: 45.0
+        gust_increase_kt: 15.0
+        turbulence_ratio: 0.6

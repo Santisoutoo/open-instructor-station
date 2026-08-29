@@ -1,0 +1,16 @@
+name: "Low visibility approach — CAT III"
+description: >
+  Approach to runway 36 at ZZZZ, on short final, in CAT III minima: overcast
+  stratus at the CAT III decision height, 125 m visibility and a calm wind —
+  radiation fog does not survive a breeze.
+tags: [weather, low-visibility, cat-iii, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: short_final
+
+weather:
+  preset: cat_iii
+  airport_icao: ZZZZ

@@ -10,17 +10,27 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 __all__ = [
+    "MAX_FUEL_TANKS",
+    "MAX_PAYLOAD_STATIONS",
     "AircraftSetup",
     "AircraftState",
     "AirframeInfo",
+    "AirframeMassLimits",
+    "CgEnvelope",
+    "CgEnvelopePoint",
     "GeoPosition",
     "Ils",
     "LightsSetup",
+    "Loadout",
+    "LoadoutState",
+    "PayloadStation",
     "Runway",
     "RunwaySurface",
+    "StationKind",
+    "TankFuel",
 ]
 
 
@@ -50,6 +60,141 @@ class AircraftState(BaseModel):
     on_ground: bool = Field(default=False, description="True when any gear touches the ground.")
 
 
+MAX_FUEL_TANKS = 8
+MAX_PAYLOAD_STATIONS = 12
+
+
+class TankFuel(BaseModel):
+    """Fuel in one tank."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tank_index: int = Field(
+        ge=0,
+        lt=MAX_FUEL_TANKS,
+        description="0-based tank index, in the order get_loadout() reports — adapter-defined.",
+    )
+    fuel_kg: float = Field(ge=0.0, description="Fuel mass in this tank, kilograms.")
+
+
+StationKind = Literal["crew", "passenger", "cargo", "other"]
+
+
+class PayloadStation(BaseModel):
+    """Mass at one payload station.
+
+    The simulator itself does not distinguish what a station is FOR — X-Plane's
+    ``m_stations`` array and MSFS's payload stations are both bare masses at
+    bare positions. ``kind`` is an instructor-facing label, assigned here or by
+    a future per-aircraft mapping table, never invented from the mass alone.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    station_index: int = Field(ge=0, lt=MAX_PAYLOAD_STATIONS, description="0-based, adapter order.")
+    kind: StationKind = Field(default="other", description="Instructor-facing classification.")
+    label: str = Field(default="", description='Display label, e.g. "Pilot". Blank when unknown.')
+    weight_kg: float = Field(ge=0.0, description="Mass placed at this station, kilograms.")
+
+
+class Loadout(BaseModel):
+    """Fuel and payload — the sparse write model nested on :class:`AircraftSetup`.
+
+    ``None`` means "leave that aspect untouched"; a provided list REPLACES the
+    whole set of tanks/stations, ``[]`` empties every one — the Weather
+    Manager's wind/cloud-layer semantics (``docs/designs/weather-manager.md``
+    D3), for the identical reason: there is no defensible per-index merge.
+    """
+
+    tanks: list[TankFuel] | None = None
+    stations: list[PayloadStation] | None = None
+
+
+class LoadoutState(BaseModel):
+    """Fully populated fuel and payload, as reported by ``get_loadout()``.
+
+    Every known tank/station is present — mirrors :class:`AircraftState`'s
+    "always complete" convention rather than :class:`AircraftSetup`'s "None
+    means untouched" one (the same ``WeatherState``/``WeatherSetup`` split).
+    """
+
+    tanks: list[TankFuel] = Field(description="Every known tank, in adapter order. [] if none.")
+    stations: list[PayloadStation] = Field(
+        description="Every known station, in adapter order. [] if none."
+    )
+
+
+class CgEnvelopePoint(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    weight_kg: float = Field(ge=0.0)
+    fwd_limit_in: float = Field(description="Forward CG limit at this weight, inches aft of datum.")
+    aft_limit_in: float = Field(description="Aft CG limit at this weight. >= fwd_limit_in.")
+
+    @model_validator(mode="after")
+    def _aft_not_forward_of_fwd(self) -> CgEnvelopePoint:
+        if self.aft_limit_in < self.fwd_limit_in:
+            raise ValueError(
+                f"aft_limit_in ({self.aft_limit_in}) must be >= fwd_limit_in ({self.fwd_limit_in})."
+            )
+        return self
+
+
+class CgEnvelope(BaseModel):
+    """A weight-vs-CG-limit polygon, linearly interpolated between points."""
+
+    model_config = ConfigDict(frozen=True)
+
+    points: tuple[CgEnvelopePoint, ...] = Field(
+        min_length=2,
+        description="Ascending by weight_kg. Outside the range is a validation failure — no "
+        "straight-line extrapolation past a published envelope.",
+    )
+
+    @model_validator(mode="after")
+    def _points_ascend_by_weight(self) -> CgEnvelope:
+        weights = [point.weight_kg for point in self.points]
+        if weights != sorted(weights):
+            raise ValueError("cg_envelope.points must be sorted ascending by weight_kg.")
+        return self
+
+
+class AirframeMassLimits(BaseModel):
+    """Static mass-and-balance facts about the loaded airframe.
+
+    All-or-nothing: an adapter that cannot supply the complete set reports
+    ``None`` on :attr:`AirframeInfo.mass_limits` rather than a half-populated
+    model.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    empty_weight_kg: float = Field(gt=0.0)
+    empty_cg_arm_in: float
+    max_takeoff_weight_kg: float = Field(gt=0.0)
+    max_zero_fuel_weight_kg: float | None = Field(default=None, gt=0.0)
+    max_fuel_kg: float = Field(gt=0.0)
+    fuel_tank_capacities_kg: tuple[float, ...] = Field(min_length=1)
+    fuel_tank_arms_in: tuple[float, ...] = Field(
+        min_length=1, description="Same order/length as capacities."
+    )
+    payload_station_capacities_kg: tuple[float, ...] = Field(min_length=1)
+    payload_station_arms_in: tuple[float, ...] = Field(min_length=1)
+    cg_envelope: CgEnvelope
+
+    @model_validator(mode="after")
+    def _capacities_and_arms_match(self) -> AirframeMassLimits:
+        if len(self.fuel_tank_capacities_kg) != len(self.fuel_tank_arms_in):
+            raise ValueError(
+                "fuel_tank_capacities_kg and fuel_tank_arms_in must be the same length."
+            )
+        if len(self.payload_station_capacities_kg) != len(self.payload_station_arms_in):
+            raise ValueError(
+                "payload_station_capacities_kg and payload_station_arms_in must be the same length."
+            )
+        return self
+
+
 class AirframeInfo(BaseModel):
     """What is known about the loaded airframe. Every field degrades to ``None``.
 
@@ -72,6 +217,11 @@ class AirframeInfo(BaseModel):
         default=None,
         gt=0.0,
         description="Stall speed in the landing configuration, knots indicated.",
+    )
+    mass_limits: AirframeMassLimits | None = Field(
+        default=None,
+        description="None when neither the simulator nor the core/ fallback table knows this "
+        "airframe's mass-and-balance facts — 'unknown' is an honest answer, never invented data.",
     )
 
 
@@ -122,6 +272,11 @@ class AircraftSetup(BaseModel):
         default=None, ge=0.0, description="Total aircraft mass in kilograms."
     )
     fuel_kg: float | None = Field(default=None, ge=0.0, description="Total fuel in kilograms.")
+    loadout: Loadout | None = Field(
+        default=None,
+        description="Per-tank fuel and per-station payload. Requires can_set_fuel_payload, "
+        "the same flag as gross_weight_kg/fuel_kg. When both are set, loadout is authoritative.",
+    )
 
     # --- Configuration ----------------------------------------------------
     flaps_ratio: float | None = Field(

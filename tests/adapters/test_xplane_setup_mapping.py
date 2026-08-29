@@ -72,8 +72,11 @@ class _RecordingAdapter:
 
 def test_the_new_datarefs_are_real_paths() -> None:
     assert DATAREFS["throttle_ratio"] == "sim/cockpit2/engine/actuators/throttle_ratio_all"
+    # acf_* (airframe) and weather/region/* (weather-manager.md §7, OPTIONAL for the
+    # reasons documented next to that dict: repositioning must not start refusing to
+    # connect() over an unrelated, still-disabled feature's datarefs).
     for path in OPTIONAL_DATAREFS.values():
-        assert path.startswith("sim/aircraft/")
+        assert path.startswith("sim/aircraft/") or path.startswith("sim/weather/region/")
 
 
 def test_optional_datarefs_are_not_required() -> None:

@@ -23,6 +23,7 @@ the **resolved** speed rather than against a substring that reads the same at
 from __future__ import annotations
 
 import asyncio
+import math
 from collections.abc import Iterator
 from typing import Any
 
@@ -35,9 +36,10 @@ from core.geodesy import (
     APPROACH_CATEGORY_CIRCLING_IAS_KT,
     APPROACH_CATEGORY_VAT_KT,
     DEFAULT_GLIDESLOPE_DEG,
+    FEET_PER_MINUTE_PER_KNOT,
     glideslope_altitude_ft,
 )
-from core.models import AircraftSetup, GeoPosition, Ils, LightsSetup, Runway
+from core.models import AircraftSetup, AirframeInfo, GeoPosition, Ils, LightsSetup, Runway
 from core.navdata.in_memory import InMemoryNavdataProvider
 from core.navdata.models import (
     Airport,
@@ -183,6 +185,211 @@ class TestNotes:
         assert "137 kt, exactly as requested." in notes
         # The instructor named the number, so it must not be attributed to a chart.
         assert "category default" not in notes
+
+
+class TestTheCategoryComesFromTheLoadedAirframe:
+    """Issue #82: an unstated category is derived before it is guessed.
+
+    The pre-#82 defect, measured on the Phase 1 live validation: a C172 —
+    category A, V_AT around 62 kt — placed on a 10 NM final at 120 kt, because
+    an unstated category was assumed to be B. Since PR #87 the adapter reports
+    the loaded airframe's stall speed, the lifespan caches it at connect, and
+    ``request_category`` runs the published arithmetic — Vso → 1.3·Vso → band —
+    before falling back to the guess. The chain has to be visible in the notes,
+    because a derived category and a guessed one must never read the same.
+    """
+
+    @pytest.fixture
+    def c172_client(self, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+        """A client whose adapter reports a C172 (Vso 48 kt).
+
+        Resets the adapter cache on the way **out** as well as in: the airframe
+        cache is refilled at every lifespan startup from whatever adapter is
+        cached, so a C172 fake left behind would quietly hand its category-A
+        speeds to every later test built on the default adapter.
+        """
+        provider = build_provider()
+        monkeypatch.setattr(server.deps, "_build_navdata", lambda _settings: provider)
+        monkeypatch.setattr(
+            server.deps,
+            "_build_adapter",
+            lambda _settings: FakeSimAdapter(
+                airframe=AirframeInfo(icao_type="C172", vso_kias=48.0)
+            ),
+        )
+        reset_adapter()
+        reset_navdata()
+        yield TestClient(create_app())
+        reset_adapter()
+        reset_navdata()
+
+    def test_a_final_flies_the_derived_category_speed(self, c172_client: TestClient) -> None:
+        """90 kt — the top of band A — not the B default's 120."""
+        body = preview(c172_client, FINAL_10NM)
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["A"]
+        notes = " ".join(body["notes"])
+        assert "Category A — derived from the loaded airframe (Vso 48 kt, V_AT 62 kt)." in notes
+
+    def test_a_circuit_flies_the_derived_category_circling_speed(
+        self, c172_client: TestClient
+    ) -> None:
+        body = preview(c172_client, {**FINAL_10NM, "placement": "left_downwind"})
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_CIRCLING_IAS_KT["A"]
+        assert "derived from the loaded airframe" in " ".join(body["notes"])
+
+    def test_an_explicit_category_still_wins(self, c172_client: TestClient) -> None:
+        """The instructor's word is final, and the derivation never ran."""
+        body = preview(c172_client, {**FINAL_10NM, "category": "C"})
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["C"]
+        assert "derived from the loaded airframe" not in " ".join(body["notes"])
+
+    def test_an_explicit_speed_silences_the_derivation(self, c172_client: TestClient) -> None:
+        """The category never touched the outcome, so the notes must not imply it did."""
+        body = preview(c172_client, {**FINAL_10NM, "ias_kt": 65.0})
+        assert body["placement"]["ias_kt"] == 65.0
+        assert "derived from the loaded airframe" not in " ".join(body["notes"])
+
+    def test_an_unknown_airframe_keeps_the_disclosed_default(self, client: TestClient) -> None:
+        """The default fake reports the all-``None`` airframe: today's category B
+        default, with today's honest note, and no airframe credited."""
+        body = preview(client, FINAL_10NM)
+        assert body["placement"]["ias_kt"] == APPROACH_CATEGORY_VAT_KT["B"]
+        notes = " ".join(body["notes"])
+        assert "category default" in notes
+        assert "derived from the loaded airframe" not in notes
+
+
+class TestTheProfileConfigurationIsStagedAndDisclosed:
+    """``to_setup()`` emits the full pre-teleport configuration (#8), and the
+    preview both carries it in ``setup`` — where the staging bar's edits merge
+    over it — and discloses it in the notes, verbatim, because the numbers
+    are airframe-generic hand-off constants and the instructor is the one who
+    knows the airframe."""
+
+    def test_a_final_arrives_configured(self, client: TestClient) -> None:
+        setup = preview(client, FINAL_10NM)["setup"]
+        assert setup["gear_down"] is True
+        assert setup["flaps_ratio"] == 0.5
+        assert setup["throttle_ratio"] == 0.30
+        assert setup["elevator_trim_ratio"] == 0.10
+        assert setup["roll_deg"] == 0.0
+        assert setup["lights"]["landing"] is True
+
+    def test_a_final_descends_at_the_glidepath_rate(self, client: TestClient) -> None:
+        """120 kt on the 3° path: 120 · 101.2686 · tan 3° = 637 fpm down."""
+        setup = preview(client, FINAL_10NM)["setup"]
+        expected = -120.0 * FEET_PER_MINUTE_PER_KNOT * math.tan(math.radians(3.0))
+        assert setup["vertical_speed_fpm"] == pytest.approx(expected)
+
+    def test_a_runway_final_is_tuned_to_the_published_ils(self, client: TestClient) -> None:
+        """Runway 36 publishes 110.30 with a 002° magnetic front course, and the
+        radios arrive with the geometry — NAV1 the frequency, the OBS the
+        MAGNETIC course, because an OBS is magnetic on the aeroplane."""
+        setup = preview(client, FINAL_10NM)["setup"]
+        assert setup["nav1_freq_khz"] == 110300
+        assert setup["obs1_deg"] == 2.0
+
+    def test_the_notes_disclose_the_configuration(self, client: TestClient) -> None:
+        notes = " ".join(preview(client, FINAL_10NM)["notes"])
+        assert "Configured for a final: gear down, flaps 50%, throttle 30%, trim +0.10" in notes
+        assert "descending 637 fpm on the 3.0° slope" in notes
+
+    def test_the_notes_disclose_the_ils(self, client: TestClient) -> None:
+        notes = " ".join(preview(client, FINAL_10NM)["notes"])
+        assert "NAV1 110.30 / OBS 2° — the published ILS for 36." in notes
+
+    def test_a_runway_without_an_ils_stages_no_radios(self, client: TestClient) -> None:
+        body = preview(client, {**FINAL_10NM, "runway_ident": "18"})
+        assert body["setup"]["nav1_freq_khz"] is None
+        assert body["setup"]["obs1_deg"] is None
+        assert "NAV1" not in " ".join(body["notes"])
+
+    def test_a_base_leg_is_configured_per_leg(self, client: TestClient) -> None:
+        body = preview(client, {**FINAL_10NM, "placement": "left_base"})
+        assert body["setup"]["gear_down"] is True
+        assert body["setup"]["flaps_ratio"] == 0.25
+        notes = " ".join(body["notes"])
+        assert "Configured for the base leg: gear down, flaps 25%, throttle 50%." in notes
+
+    def test_a_crosswind_leg_is_still_clean(self, client: TestClient) -> None:
+        body = preview(client, {**FINAL_10NM, "placement": "left_crosswind"})
+        assert body["setup"]["gear_down"] is False
+        assert body["setup"]["flaps_ratio"] == 0.0
+
+    def test_a_stand_is_configured_for_the_ground(self, client: TestClient) -> None:
+        body = preview(client, {"type": "parking", "airport_icao": "ZZZZ", "stand_name": "R32"})
+        setup = body["setup"]
+        assert setup["gear_down"] is True
+        assert setup["throttle_ratio"] == 0.0
+        # Roll and vertical speed belong to the terrain, not the placement.
+        assert setup["vertical_speed_fpm"] is None
+        assert setup["roll_deg"] is None
+        notes = " ".join(body["notes"])
+        assert "Configured for the ground: gear down, flaps up, throttle idle." in notes
+
+    def test_a_runway_threshold_places_the_aircraft_at_the_exact_threshold_at_0_kt(
+        self, client: TestClient
+    ) -> None:
+        """The new seventh placement arm (scenario-generator.md D5), added so a
+        takeoff-roll scenario can express a position no other arm could: on the
+        centreline, at the threshold, facing the runway heading, stationary."""
+        body = preview(
+            client, {"type": "runway_threshold", "airport_icao": "ZZZZ", "runway_ident": "36"}
+        )
+        placement = body["placement"]
+        assert placement["position"]["latitude"] == pytest.approx(RUNWAY_36.threshold.latitude)
+        assert placement["position"]["longitude"] == pytest.approx(RUNWAY_36.threshold.longitude)
+        assert placement["heading_deg"] == pytest.approx(RUNWAY_36.true_bearing_deg)
+        assert placement["ias_kt"] == 0.0
+        notes = " ".join(body["notes"])
+        assert "threshold" in notes
+        assert "0 kt" in notes
+
+    def test_a_runway_threshold_faces_the_opposite_direction_on_the_opposite_end(
+        self, client: TestClient
+    ) -> None:
+        """The reciprocal runway resolves to the reciprocal threshold and heading --
+        the exact off-by-one this arm's wiring could get wrong silently (see PR #107
+        review)."""
+        body = preview(
+            client, {"type": "runway_threshold", "airport_icao": "ZZZZ", "runway_ident": "18"}
+        )
+        placement = body["placement"]
+        assert placement["position"]["latitude"] == pytest.approx(RUNWAY_18.threshold.latitude)
+        assert placement["position"]["longitude"] == pytest.approx(RUNWAY_18.threshold.longitude)
+        assert placement["heading_deg"] == pytest.approx(RUNWAY_18.true_bearing_deg)
+        # Different threshold, different heading: proves the two ends are not aliases.
+        assert placement["position"]["latitude"] != pytest.approx(RUNWAY_36.threshold.latitude)
+        assert placement["heading_deg"] != pytest.approx(RUNWAY_36.true_bearing_deg)
+
+    def test_a_hold_is_clean_and_level(self, client: TestClient) -> None:
+        body = preview(client, {"type": "hold", "fix_ident": "GOXOL"})
+        setup = body["setup"]
+        assert setup["gear_down"] is False
+        assert setup["flaps_ratio"] == 0.0
+        assert setup["throttle_ratio"] == 0.60
+        assert setup["vertical_speed_fpm"] == 0.0
+        notes = " ".join(body["notes"])
+        assert "Configured for level flight: gear up, flaps up, throttle 60%." in notes
+
+
+class TestTheInstructorOverridesTheProfile:
+    """The sparse edits merge OVER the profile's output — profile first, the
+    request second — so the instructor's word is final on any field, and the
+    rest of the configuration survives around the edit."""
+
+    def test_an_edited_field_wins_over_the_profile(self, client: TestClient) -> None:
+        """Full flap on a final, against the profile's 0.5."""
+        with client:
+            response = client.post(
+                "/api/position/apply",
+                json={"placement": FINAL_10NM, "setup": {"flaps_ratio": 1.0}},
+            )
+        assert response.status_code == 200, response.text
+        applied = response.json()["applied"]
+        assert applied["flaps_ratio"] == 1.0
+        assert applied["gear_down"] is True
+        assert applied["throttle_ratio"] == 0.30
 
 
 #: Every placement type that is airborne by construction, each asking for 0 kt.
@@ -417,15 +624,19 @@ class TestHoldPlacement:
         assert response.status_code == 404
 
 
+#: What the recording fixture hands a test: the client, the call order, the
+#: speeds and the vertical speeds ``set_position`` was told.
+RecordingClient = tuple[TestClient, list[str], list[float | None], list[float | None]]
+
+
 class TestApplyOrdersTheWrites:
     """The setup goes in before the teleport, always."""
 
     @pytest.fixture
-    def recording_client(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> tuple[TestClient, list[str], list[float | None]]:
+    def recording_client(self, monkeypatch: pytest.MonkeyPatch) -> RecordingClient:
         calls: list[str] = []
         speeds: list[float | None] = []
+        verticals: list[float | None] = []
 
         class RecordingAdapter(FakeSimAdapter):
             async def apply_setup(self, setup: AircraftSetup) -> None:
@@ -442,6 +653,7 @@ class TestApplyOrdersTheWrites:
             ) -> None:
                 calls.append("set_position")
                 speeds.append(ias_kt)
+                verticals.append(vertical_speed_fpm)
                 await super().set_position(
                     position,
                     heading_deg,
@@ -454,19 +666,17 @@ class TestApplyOrdersTheWrites:
         monkeypatch.setattr(server.deps, "_build_adapter", lambda _settings: RecordingAdapter())
         reset_adapter()
         reset_navdata()
-        return TestClient(create_app()), calls, speeds
+        return TestClient(create_app()), calls, speeds, verticals
 
-    def test_setup_is_written_before_the_teleport(
-        self, recording_client: tuple[TestClient, list[str], list[float | None]]
-    ) -> None:
-        client, calls, _speeds = recording_client
+    def test_setup_is_written_before_the_teleport(self, recording_client: RecordingClient) -> None:
+        client, calls, _speeds, _verticals = recording_client
         with client:
             response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
         assert response.status_code == 200, response.text
         assert calls == ["apply_setup", "set_position"]
 
     def test_the_teleport_is_told_the_speed_as_well(
-        self, recording_client: tuple[TestClient, list[str], list[float | None]]
+        self, recording_client: RecordingClient
     ) -> None:
         """Writing the speed once, into the setup, is not enough.
 
@@ -476,16 +686,35 @@ class TestApplyOrdersTheWrites:
         measured at LEMD (issue #39). The route must hand the speed to the teleport
         too, and only the call itself shows whether it did.
         """
-        client, _calls, speeds = recording_client
+        client, _calls, speeds, _verticals = recording_client
         with client:
             response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
         assert response.status_code == 200, response.text
         assert speeds == [APPROACH_CATEGORY_VAT_KT["B"]]
 
-    def test_the_aircraft_ends_up_where_the_placement_said(
-        self, recording_client: tuple[TestClient, list[str], list[float | None]]
+    def test_the_teleport_is_told_the_descent_as_well(
+        self, recording_client: RecordingClient
     ) -> None:
-        client, _calls, _speeds = recording_client
+        """Issue #39's lesson, repeated on the vertical axis (#8, #81).
+
+        The teleport writes the whole velocity vector, so a descent rate left
+        only in the setup arrives level — the adapter used to zero ``local_vy``
+        outright. The route must re-deliver it beside the speed, and only the
+        call itself shows whether it did.
+        """
+        client, _calls, _speeds, verticals = recording_client
+        with client:
+            response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
+        assert response.status_code == 200, response.text
+        expected = (
+            -APPROACH_CATEGORY_VAT_KT["B"] * FEET_PER_MINUTE_PER_KNOT * math.tan(math.radians(3.0))
+        )
+        assert verticals == [pytest.approx(expected)]
+
+    def test_the_aircraft_ends_up_where_the_placement_said(
+        self, recording_client: RecordingClient
+    ) -> None:
+        client, _calls, _speeds, _verticals = recording_client
         with client:
             response = client.post("/api/position/apply", json={"placement": FINAL_10NM})
         body = response.json()

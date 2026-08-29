@@ -790,6 +790,19 @@ def test_a_leg_heading_keeps_the_inbound_course_over_a_long_previous_leg() -> No
     assert placement.heading_deg > 90.0
 
 
+def test_every_navdata_placement_is_airborne() -> None:
+    """Holds, hold entries and procedure legs are flown by construction, so
+    their profile is ``"airborne"``: gear up, clean, level, cruise power. None
+    of them is a final — a final knows its glideslope and its ILS, and nothing
+    here does (#8)."""
+    assert hold_placement(NORTH_HOLD, magnetic_variation_deg=NO_VARIATION).profile == "airborne"
+    assert (
+        hold_entry_placement(NORTH_HOLD, 90.0, magnetic_variation_deg=NO_VARIATION).profile
+        == "airborne"
+    )
+    assert procedure_leg_placement(FAF_LEG).profile == "airborne"
+
+
 def test_a_leg_label_names_the_fix_and_its_role() -> None:
     assert procedure_leg_placement(FAF_LEG).label == "over ELVAR (FAF)"
     assert procedure_leg_placement(IAF_LEG).label == "over GOXOL (IAF)"

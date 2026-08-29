@@ -1,0 +1,26 @@
+name: "Rejected takeoff"
+description: >
+  Takeoff roll on runway 36 at ZZZZ. Engine 1 fails well before V1 (80 kt),
+  at a speed that unambiguously calls for an abort rather than a continue —
+  the same shape as "Engine failure after V1", distinguished only by the
+  trigger threshold.
+tags: [failure, takeoff, engine, rejected-takeoff]
+
+position:
+  type: runway_threshold
+  airport_icao: ZZZZ
+  runway_ident: "36"
+
+aircraft_state:
+  flaps_ratio: 0.2
+
+weather:
+  preset: cavok
+
+failures:
+  armed:
+    - failure_id: engine.failure
+      engine_index: 1
+      trigger:
+        type: speed_above
+        ias_kt: 80.0

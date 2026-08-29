@@ -131,6 +131,7 @@ describe('the control catalogue', () => {
     // One assertion per control, because a copy-pasted writer pointing at the
     // neighbouring field is exactly the mistake this table invites.
     expect(setupFor('trim', 0.4)).toEqual({ elevator_trim_ratio: 0.4 });
+    expect(setupFor('throttle', 0.75)).toEqual({ throttle_ratio: 0.75 });
     expect(setupFor('autopilot_master', true)).toEqual({ autopilot_master: true });
     expect(setupFor('flight_director', true)).toEqual({ flight_director: true });
     expect(setupFor('autopilot_nav', false)).toEqual({ autopilot_nav: false });

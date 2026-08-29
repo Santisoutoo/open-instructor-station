@@ -37,6 +37,12 @@ export const instructorApi = createApi({
     'AircraftControls',
     'NavdataStatus',
     'Airport',
+    'FuelPayload',
+    'Profiles',
+    // Owned by `features/camera/cameraApi.ts`, declared here because RTK Query
+    // resolves tag types at `createApi` time — `injectEndpoints` cannot add one.
+    'CameraPositions',
+    'Traffic',
   ],
   endpoints: (builder) => ({
     getHealth: builder.query<HealthResponse, void>({

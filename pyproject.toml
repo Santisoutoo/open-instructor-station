@@ -16,6 +16,9 @@ dependencies = [
     "websockets>=13.0",
     "geographiclib>=2.0",
     "pyyaml>=6.0",
+    # Required by FastAPI's `UploadFile`/`File(...)` — the Training Profiles
+    # import endpoint is the first multipart upload in this codebase.
+    "python-multipart>=0.0.12",
 ]
 
 [project.optional-dependencies]
@@ -60,8 +63,13 @@ instructor-station = "server.__main__:main"
 [tool.setuptools]
 packages = [
     "core",
+    "core.camera",
     "core.navdata",
     "core.navdata.xplane_native",
+    "core.weather",
+    "core.fuel_payload",
+    "core.scenarios",
+    "core.profiles",
     "adapters",
     "adapters.fake",
     "adapters.xplane",
@@ -80,6 +88,11 @@ exclude = ["ui", ".venv", "build", "dist"]
 select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PTH"]
 ignore = ["ANN401"]
 
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI's own idiom for a required multipart upload is `File(...)` as the
+# parameter default; B008 exists to catch mutable-default bugs, not this.
+extend-immutable-calls = ["fastapi.File"]
+
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN"]
 "spikes/**" = ["ANN", "T201"]
@@ -95,6 +108,13 @@ exclude = ["ui/", "build/", "dist/"]
 
 [[tool.mypy.overrides]]
 module = ["geographiclib.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# `xp` is XPPython3's in-sim API module: it only exists inside the interpreter
+# X-Plane embeds, never in this project's environment. Only the throwaway
+# bridge spike plugin (spikes/PI_OISBridgeSpike.py) imports it.
+module = ["xp"]
 ignore_missing_imports = true
 
 # ---------------------------------------------------------------------------

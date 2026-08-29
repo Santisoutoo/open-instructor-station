@@ -113,6 +113,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/geodesy/measure": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Measure
+         * @description The exact WGS84 distance and initial true bearing from point 1 to point 2.
+         */
+        get: operations["measure_api_geodesy_measure_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/navdata/status": {
         parameters: {
             query?: never;
@@ -371,7 +391,17 @@ export interface paths {
         };
         /**
          * Get Fixes
-         * @description Fixes by identifier — a list, because fix idents are not globally unique.
+         * @description Fixes by identifier, or every fix near a point.
+         *
+         *     **Two query forms, one path**, because they answer the same question from
+         *     the two directions an instructor asks it: "where is GOXOL?" and "what fixes
+         *     are around here?". Exactly one of ``ident`` and ``lat``/``lon`` must be
+         *     given — sending both would leave the server to invent a precedence, and
+         *     sending neither would ask for every fix on Earth.
+         *
+         *     A list either way: fix identifiers are **not** globally unique, so the
+         *     single-ident form returns every match sorted by ident then region, and the
+         *     caller disambiguates with ``region`` or ``terminal_airport``.
          */
         get: operations["get_fixes_api_navdata_fixes_get"];
         put?: never;
@@ -448,10 +478,829 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/weather": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weather
+         * @description The commanded weather, read from the adapter.
+         */
+        get: operations["get_weather_api_weather_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/weather/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Weather Manifest
+         * @description Supported-or-not with a reason, plus the seven presets and their requirements.
+         */
+        get: operations["get_weather_manifest_api_weather_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/weather/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Weather
+         * @description Resolve a weather request without moving anything. Writes nothing, reads no adapter.
+         */
+        post: operations["preview_weather_api_weather_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/weather/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Weather
+         * @description Resolve, write, read back. See the module docstring for why apply re-resolves.
+         */
+        post: operations["apply_weather_api_weather_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Capability + reason, resolved mass limits and their provenance, the preset catalogue.
+         *
+         *     ``def``, not ``async def``: everything here is a capability-flag check and
+         *     a cached ``AirframeInfo`` read, never simulator I/O.
+         */
+        get: operations["get_manifest_api_fuel_payload_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Fuel Payload
+         * @description The current loadout plus its computed mass-and-balance.
+         */
+        get: operations["get_fuel_payload_api_fuel_payload_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Fuel Payload
+         * @description Resolve ``request`` into the exact loadout and mass-and-balance ``apply`` would produce.
+         *
+         *     Writes nothing: ``get_loadout()`` is read but ``apply_setup`` is never
+         *     called.
+         */
+        post: operations["preview_fuel_payload_api_fuel_payload_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/fuel-payload/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Fuel Payload
+         * @description Re-resolve, refuse if out of envelope and not overridden, write, read back.
+         *
+         *     Idempotent: the body states an absolute target loadout, never a delta —
+         *     replaying it writes the same numbers again.
+         */
+        post: operations["apply_fuel_payload_api_fuel_payload_apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/catalogue": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalogue
+         * @description The whole catalogue, merged with the adapter's support manifest.
+         *
+         *     Capability-free (§2.1): it answers "what could I do here?" even when the
+         *     answer is "nothing, and here is why" for every entry.
+         */
+        get: operations["get_catalogue_api_failures_catalogue_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Active failures (the simulator's truth, D10) plus armed ones (the scheduler).
+         */
+        get: operations["get_status_api_failures_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/inject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Inject Failure
+         * @description Fail one system now. Injecting an already-failed system is a no-op.
+         */
+        post: operations["inject_failure_api_failures_inject_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/arm": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Arm Failure Route */
+        post: operations["arm_failure_route_api_failures_arm_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/armed/{armed_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Disarm Failure
+         * @description Disarm one armed failure before it fires. 404 when it may have already fired.
+         */
+        delete: operations["disarm_failure_api_failures_armed__armed_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear Failure
+         * @description Repair one active failure. Clearing something that is not failed is a no-op.
+         */
+        post: operations["clear_failure_api_failures_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/failures/clear-all": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear All Failures
+         * @description Repair every active failure and disarm every armed one (D12) — the one-tap reset.
+         */
+        post: operations["clear_all_failures_api_failures_clear_all_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pushback/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Pushback Manifest
+         * @description Capability + reason, and the exact slider bounds.
+         *
+         *     ``def``, not ``async def``: a capability-flag read and two module
+         *     constants, never simulator I/O. The bounds are echoed so the panel's
+         *     sliders never hold a second, drifting copy of
+         *     :class:`~core.pushback.PushbackRequest`'s field constraints.
+         */
+        get: operations["get_pushback_manifest_api_pushback_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pushback/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Pushback
+         * @description Where the aircraft would end up, and the path it would take. Writes nothing.
+         *
+         *     ``async def`` and not capability-gated (D6): the one adapter call is
+         *     ``get_aircraft_state()``, which carries no capability on the protocol.
+         *     Unlike the Weather and Position previews this one *must* read the
+         *     simulator — a pushback is a relative manoeuvre, and without knowing where
+         *     the aircraft is and which way it points there is no geometry to preview.
+         */
+        post: operations["preview_pushback_api_pushback_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/pushback/execute": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Execute Pushback
+         * @description Push the aircraft back, then read the result back.
+         *
+         *     **Not idempotent, on purpose.** ``request`` states a manoeuvre relative to
+         *     wherever the aircraft is now, not an absolute target, so replaying it
+         *     pushes back a second time — the throttle-nudge shape, unlike every
+         *     ``apply`` in this codebase. That is the manager's contract, pinned by the
+         *     contract suite's ``test_pushback_is_idempotent_in_direction_only``.
+         *
+         *     ``target`` is computed here from the state read a moment before the write;
+         *     the adapter re-resolves from its own fresh read (D7). Both call the same
+         *     pure function, so the two can differ only if the aircraft moved in
+         *     between — untrue of a parked aircraft on a ramp. ``state`` is the
+         *     read-back afterwards, which is the honest verdict on what happened.
+         */
+        post: operations["execute_pushback_api_pushback_execute_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Scenarios
+         * @description Every shipped scenario, with ``available``/``reason`` against the active adapter.
+         */
+        get: operations["get_scenarios_api_scenarios_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Current Run
+         * @description The current or most recently finished run's status. ``null`` if nothing has run.
+         */
+        get: operations["get_current_run_api_scenarios_run_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/{scenario_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Scenario
+         * @description One scenario's full document plus its availability.
+         */
+        get: operations["get_scenario_api_scenarios__scenario_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/scenarios/{scenario_id}/run": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run Scenario
+         * @description Pre-flight check, then start the background run (§3.2).
+         *
+         *     The adapter is never called when the pre-flight check fails: that is the
+         *     whole mechanism behind "never attempted halfway through".
+         */
+        post: operations["run_scenario_api_scenarios__scenario_id__run_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Profiles
+         * @description Every saved profile, summarised, newest ``updated_at`` first.
+         */
+        get: operations["list_profiles_api_profiles_get"];
+        put?: never;
+        /**
+         * Create Profile
+         * @description Save a new profile. The server assigns ``profile_id`` and timestamps.
+         */
+        post: operations["create_profile_api_profiles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Profile
+         * @description One profile, in full.
+         */
+        get: operations["get_profile_api_profiles__profile_id__get"];
+        /**
+         * Replace Profile
+         * @description Replace name/description/author/scenario of an existing profile. Never creates (D13).
+         */
+        put: operations["replace_profile_api_profiles__profile_id__put"];
+        post?: never;
+        /**
+         * Delete Profile
+         * @description Remove a profile. 404 with 'may already be deleted' when it is already gone.
+         */
+        delete: operations["delete_profile_api_profiles__profile_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Profile Route
+         * @description Run the embedded scenario, each component attempted independently (D8).
+         *
+         *     Almost always 200 — only an unknown ``profile_id`` is a 404. Partial
+         *     application is reported in the body, never as a 4xx/5xx.
+         */
+        post: operations["apply_profile_route_api_profiles__profile_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Profile
+         * @description Upload a ``.json`` file exported from this or another instance.
+         *
+         *     Always assigns a fresh ``profile_id`` (D7): any embedded id or timestamps
+         *     in the upload are ignored. 422 on malformed or non-validating content, no
+         *     partial import.
+         */
+        post: operations["import_profile_api_profiles_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/profiles/{profile_id}/export": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Profile
+         * @description Download the profile as a ``.json`` file (``Content-Disposition: attachment``).
+         */
+        get: operations["export_profile_api_profiles__profile_id__export_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Per-view support plus ``custom_positions_supported``, resolved against the adapter.
+         *
+         *     Capability-free (§2.1, the ``get_failure_support`` posture): it answers
+         *     "what could I do here?" even when the answer is "nothing, and here is why"
+         *     for every entry.
+         */
+        get: operations["get_manifest_api_camera_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/view": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Set View
+         * @description Switch to a named view now. Idempotent — asking for the current view is a no-op.
+         */
+        post: operations["set_view_api_camera_view_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/positions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Positions
+         * @description Every saved position, in creation order. Local storage — never a simulator read.
+         */
+        get: operations["list_positions_api_camera_positions_get"];
+        put?: never;
+        /**
+         * Save Position
+         * @description Read the camera's current free pose and save it under a name.
+         *
+         *     409 when there is no such pose (D9) — the instructor is in a named view,
+         *     or the adapter cannot read one. That is a state the panel can fix by
+         *     switching to the drone camera, which is why it is not the 501 an
+         *     unsupported *capability* gets.
+         */
+        post: operations["save_position_api_camera_positions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/positions/{position_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Apply Position
+         * @description Recall a saved position, resolved fresh against live aircraft state (D4).
+         *
+         *     The stored offset is aircraft-relative, so what the instructor gets back is
+         *     the same *framing* rather than the same patch of sky — the adapter resolves
+         *     it against wherever the aircraft is at write time.
+         */
+        post: operations["apply_position_api_camera_positions__position_id__apply_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/camera/positions/{position_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Position
+         * @description Remove a saved position. Never capability-gated — this is local storage.
+         *
+         *     404 with "may already be deleted" when it is already gone, the profile
+         *     store's own wording for the same race.
+         */
+        delete: operations["delete_position_api_camera_positions__position_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Status
+         * @description Every live contact. Capability-free: no traffic support reads as no traffic.
+         */
+        get: operations["get_status_api_traffic_status_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/spawn": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Spawn Traffic
+         * @description Resolve a spawn request into tracks and spawn each. Not idempotent — twice is two.
+         *
+         *     A multi-track ``approach_sequence`` is spawned sequentially, one awaited
+         *     ``spawn_traffic`` per track. A failure partway through leaves the
+         *     already-spawned entities spawned — no partial-failure rollback (§6.3), the
+         *     same posture the scenario engine takes for its own multi-step run; ``/clear``
+         *     is the one-tap way back.
+         */
+        post: operations["spawn_traffic_api_traffic_spawn_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/{traffic_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Despawn Traffic
+         * @description Despawn one entity. Idempotent: an unknown or already-gone id is a no-op, 200 either way.
+         *
+         *     A client racing a ``despawn_after_s`` auto-clear must never see an error for
+         *     something it did nothing wrong to ask for (§2).
+         */
+        delete: operations["despawn_traffic_api_traffic__traffic_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/traffic/clear": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Clear All Traffic
+         * @description Despawn every entity the adapter is tracking. Idempotent — the one-tap reset.
+         */
+        post: operations["clear_all_traffic_api_traffic_clear_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * ActiveFailure
+         * @description One failure the simulator reports as failed right now.
+         */
+        ActiveFailure: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+        };
         /**
          * AircraftControlManifest
          * @description The full control catalogue, resolved against the active adapter.
@@ -483,7 +1332,7 @@ export interface components {
              * @description Panel control identifier.
              * @enum {string}
              */
-            control: "flaps" | "speedbrake" | "gear" | "autobrake" | "trim" | "lights" | "altitude" | "speed" | "vertical_speed" | "heading" | "autopilot_master" | "autopilot_nav" | "autopilot_app" | "autopilot_hdg" | "flight_director" | "target_altitude" | "target_speed" | "target_heading" | "target_vertical_speed";
+            control: "flaps" | "speedbrake" | "gear" | "autobrake" | "trim" | "throttle" | "lights" | "altitude" | "speed" | "vertical_speed" | "heading" | "autopilot_master" | "autopilot_nav" | "autopilot_app" | "autopilot_hdg" | "flight_director" | "target_altitude" | "target_speed" | "target_heading" | "target_vertical_speed";
             /**
              * Setup Field
              * @description The AircraftSetup field this control writes.
@@ -564,6 +1413,8 @@ export interface components {
              * @description Total fuel in kilograms.
              */
             fuel_kg?: number | null;
+            /** @description Per-tank fuel and per-station payload. Requires can_set_fuel_payload, the same flag as gross_weight_kg/fuel_kg. When both are set, loadout is authoritative. */
+            loadout?: components["schemas"]["Loadout"] | null;
             /**
              * Flaps Ratio
              * @description 0 = up, 1 = fully deployed.
@@ -734,6 +1585,38 @@ export interface components {
             on_ground: boolean;
         };
         /**
+         * AirframeMassLimits
+         * @description Static mass-and-balance facts about the loaded airframe.
+         *
+         *     All-or-nothing: an adapter that cannot supply the complete set reports
+         *     ``None`` on :attr:`AirframeInfo.mass_limits` rather than a half-populated
+         *     model.
+         */
+        AirframeMassLimits: {
+            /** Empty Weight Kg */
+            empty_weight_kg: number;
+            /** Empty Cg Arm In */
+            empty_cg_arm_in: number;
+            /** Max Takeoff Weight Kg */
+            max_takeoff_weight_kg: number;
+            /** Max Zero Fuel Weight Kg */
+            max_zero_fuel_weight_kg?: number | null;
+            /** Max Fuel Kg */
+            max_fuel_kg: number;
+            /** Fuel Tank Capacities Kg */
+            fuel_tank_capacities_kg: number[];
+            /**
+             * Fuel Tank Arms In
+             * @description Same order/length as capacities.
+             */
+            fuel_tank_arms_in: number[];
+            /** Payload Station Capacities Kg */
+            payload_station_capacities_kg: number[];
+            /** Payload Station Arms In */
+            payload_station_arms_in: number[];
+            cg_envelope: components["schemas"]["CgEnvelope"];
+        };
+        /**
          * Airport
          * @description One airport, as published by ``apt.dat``.
          */
@@ -826,6 +1709,38 @@ export interface components {
             has_procedures: boolean;
         };
         /**
+         * AltitudeAboveTrigger
+         * @description Fires when ``altitude_ft >= threshold``. Inclusive, MSL.
+         */
+        AltitudeAboveTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "altitude_above";
+            /**
+             * Altitude Ft
+             * @description Feet MSL, inclusive.
+             */
+            altitude_ft: number;
+        };
+        /**
+         * AltitudeBelowTrigger
+         * @description Fires when ``altitude_ft <= threshold``. Inclusive, MSL.
+         */
+        AltitudeBelowTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "altitude_below";
+            /**
+             * Altitude Ft
+             * @description Feet MSL, inclusive.
+             */
+            altitude_ft: number;
+        };
+        /**
          * AltitudeConstraint
          * @description An altitude restriction, straight off the leg record.
          *
@@ -878,9 +1793,197 @@ export interface components {
          */
         ApplyPlacementRequest: {
             /** Placement */
-            placement: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            placement: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             /** @description The instructor's edits. Merged OVER the preview's setup rather than replacing it, so a client that omits a field cannot silently drop the geometry-derived altitude. */
             setup?: components["schemas"]["AircraftSetup"] | null;
+        };
+        /**
+         * ApproachSequenceSpawnRequest
+         * @description n aircraft on the same final, at named distances — reuses core.geodesy verbatim (D11).
+         */
+        ApproachSequenceSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "approach_sequence";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+            /** Distances Nm */
+            distances_nm: number[];
+            /** Ias Kt */
+            ias_kt?: number | null;
+            /**
+             * Category
+             * @default B
+             * @enum {string}
+             */
+            category: "A" | "B" | "C" | "D" | "E";
+            /**
+             * Kind
+             * @default aircraft
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign Prefix
+             * @default SEQ
+             */
+            callsign_prefix: string;
+        };
+        /**
+         * ArmFailureRequest
+         * @description ``POST /api/failures/arm``.
+         */
+        ArmFailureRequest: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+            /** Trigger */
+            trigger: components["schemas"]["AltitudeAboveTrigger"] | components["schemas"]["AltitudeBelowTrigger"] | components["schemas"]["SpeedAboveTrigger"] | components["schemas"]["SpeedBelowTrigger"] | components["schemas"]["DelayTrigger"];
+        };
+        /**
+         * ArmedFailure
+         * @description One armed failure, as listed and as returned by ``/arm``.
+         *
+         *     Built by :class:`~core.failure_scheduler.FailureScheduler`, never by a
+         *     request body — the server assigns ``armed_id`` and ``armed_at``.
+         */
+        ArmedFailure: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+            /**
+             * Armed Id
+             * @description Server-assigned opaque id (uuid4 hex).
+             */
+            armed_id: string;
+            /** Trigger */
+            trigger: components["schemas"]["AltitudeAboveTrigger"] | components["schemas"]["AltitudeBelowTrigger"] | components["schemas"]["SpeedAboveTrigger"] | components["schemas"]["SpeedBelowTrigger"] | components["schemas"]["DelayTrigger"];
+            /**
+             * Armed At
+             * Format: date-time
+             * @description UTC wall clock, for the panel's countdown display.
+             */
+            armed_at: string;
+            /**
+             * Last Error
+             * @description Set when the trigger fired but injection failed; retried every frame.
+             */
+            last_error?: string | null;
+        };
+        /** Body_import_profile_api_profiles_import_post */
+        Body_import_profile_api_profiles_import_post: {
+            /** File */
+            file: string;
+        };
+        /**
+         * CameraCommandResult
+         * @description What ``/view`` and ``/positions/{id}/apply`` answer — an echo, not a
+         *     read-back (D6: there is nothing honest to read back into).
+         */
+        CameraCommandResult: {
+            /** View Id */
+            view_id?: ("cockpit" | "chase" | "tower" | "wing" | "drone") | null;
+            offset?: components["schemas"]["CameraOffset"] | null;
+        };
+        /**
+         * CameraManifest
+         * @description ``GET /api/camera/manifest`` — the whole per-view picture the panel gates on.
+         */
+        CameraManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Caveat */
+            caveat: string | null;
+            /** Views */
+            views: components["schemas"]["CameraViewSupport"][];
+            /** Custom Positions Supported */
+            custom_positions_supported: boolean;
+            /** Custom Positions Reason */
+            custom_positions_reason: string | null;
+        };
+        /**
+         * CameraOffset
+         * @description A free/drone camera pose, expressed relative to the aircraft's own
+         *     reference point and CURRENT heading (D4) — never a world-frame
+         *     coordinate. Recalling a saved offset resolves it fresh every time
+         *     (``core.camera.geometry``, a later track).
+         */
+        CameraOffset: {
+            /**
+             * Forward M
+             * @description Metres forward of the aircraft's reference point, along its current heading. Negative is aft.
+             */
+            forward_m: number;
+            /**
+             * Right M
+             * @description Metres to the right of the reference point, perpendicular to the aircraft's current heading. Negative is left.
+             */
+            right_m: number;
+            /**
+             * Up M
+             * @description Metres above the reference point.
+             */
+            up_m: number;
+            /**
+             * Look Offset Deg
+             * @description Camera yaw relative to the aircraft's CURRENT heading (D5). 0 = looking the same way the aircraft points; +90 = looking to the right of the nose.
+             */
+            look_offset_deg: number;
+            /**
+             * Pitch Deg
+             * @description Camera pitch, WORLD frame (D5), positive looking up toward the sky — independent of the aircraft's own pitch attitude.
+             */
+            pitch_deg: number;
+            /**
+             * Zoom Ratio
+             * @description Field-of-view zoom multiplier; 1.0 is the adapter's default FOV.
+             * @default 1
+             */
+            zoom_ratio: number;
+        };
+        /**
+         * CameraViewRequest
+         * @description ``POST /api/camera/view``.
+         */
+        CameraViewRequest: {
+            /**
+             * View Id
+             * @enum {string}
+             */
+            view_id: "cockpit" | "chase" | "tower" | "wing" | "drone";
+        };
+        /**
+         * CameraViewSupport
+         * @description One catalogue entry resolved against one adapter.
+         */
+        CameraViewSupport: {
+            /**
+             * View Id
+             * @enum {string}
+             */
+            view_id: "cockpit" | "chase" | "tower" | "wing" | "drone";
+            /** Supported */
+            supported: boolean;
+            /** Reason */
+            reason?: string | null;
         };
         /**
          * Capabilities
@@ -891,7 +1994,10 @@ export interface components {
          *     dataclass so that it is served verbatim by ``GET /api/capabilities`` and
          *     lands in the OpenAPI schema the UI client is generated from.
          *
-         *     Immutable — an adapter's capabilities never change at runtime.
+         *     Immutable — an adapter's capabilities are fixed for the lifetime of a
+         *     connection, resolved once at ``connect()`` and never mutated afterwards
+         *     (ai-traffic.md D3/D4: a connect-time probe may decide a flag, but nothing
+         *     moves it mid-session).
          */
         Capabilities: {
             /**
@@ -941,6 +2047,75 @@ export interface components {
             can_pushback: boolean;
         };
         /**
+         * CgEnvelope
+         * @description A weight-vs-CG-limit polygon, linearly interpolated between points.
+         */
+        CgEnvelope: {
+            /**
+             * Points
+             * @description Ascending by weight_kg. Outside the range is a validation failure — no straight-line extrapolation past a published envelope.
+             */
+            points: components["schemas"]["CgEnvelopePoint"][];
+        };
+        /** CgEnvelopePoint */
+        CgEnvelopePoint: {
+            /** Weight Kg */
+            weight_kg: number;
+            /**
+             * Fwd Limit In
+             * @description Forward CG limit at this weight, inches aft of datum.
+             */
+            fwd_limit_in: number;
+            /**
+             * Aft Limit In
+             * @description Aft CG limit at this weight. >= fwd_limit_in.
+             */
+            aft_limit_in: number;
+        };
+        /**
+         * ClearFailureRequest
+         * @description ``POST /api/failures/clear`` — nothing beyond the ref.
+         */
+        ClearFailureRequest: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+        };
+        /**
+         * CloudLayer
+         * @description One cloud stratum. Base below tops, both MSL.
+         */
+        CloudLayer: {
+            /**
+             * Base Ft
+             * @description Cloud base, feet MSL.
+             */
+            base_ft: number;
+            /**
+             * Tops Ft
+             * @description Cloud tops, feet MSL. Must exceed base_ft.
+             */
+            tops_ft: number;
+            /**
+             * Coverage Ratio
+             * @description Sky cover 0-1. Octas are display: FEW~=0.2, SCT~=0.44, BKN~=0.75, OVC=1.0.
+             */
+            coverage_ratio: number;
+            /**
+             * Cloud Type
+             * @default cumulus
+             * @enum {string}
+             */
+            cloud_type: "cirrus" | "stratus" | "cumulus" | "cumulonimbus";
+        };
+        /**
          * CoordinatePlacementRequest
          * @description An arbitrary latitude/longitude/altitude.
          */
@@ -955,6 +2130,111 @@ export interface components {
             heading_deg?: number | null;
             /** Ias Kt */
             ias_kt?: number | null;
+        };
+        /**
+         * CustomTrackSpawnRequest
+         * @description The escape hatch: a hand-built TrafficTrack, e.g. authored from map clicks.
+         */
+        CustomTrackSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "custom";
+            track: components["schemas"]["TrafficTrack"];
+        };
+        /**
+         * DelayTrigger
+         * @description Fires ``delay_s`` seconds of wall-clock time after arming.
+         *
+         *     Wall clock, not sim time: the station cannot see sim time, and saying so
+         *     beats pretending.
+         */
+        DelayTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "delay";
+            /**
+             * Delay S
+             * @description Seconds after arming.
+             */
+            delay_s: number;
+        };
+        /**
+         * FailureCatalogueEntry
+         * @description One catalogue entry, resolved against the active adapter's support manifest.
+         */
+        FailureCatalogueEntry: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /** Label */
+            label: string;
+            /**
+             * Category
+             * @enum {string}
+             */
+            category: "engine" | "fuel" | "electrical" | "hydraulics" | "instruments" | "avionics" | "flight_controls" | "gear" | "airframe";
+            /** Takes Engine Index */
+            takes_engine_index: boolean;
+            /** Description */
+            description: string;
+            /** Supported */
+            supported: boolean;
+            /** Best Effort */
+            best_effort: boolean;
+            /** Reason */
+            reason: string | null;
+        };
+        /**
+         * FailureCatalogueResponse
+         * @description The full catalogue, in display order, merged with the adapter's support manifest.
+         */
+        FailureCatalogueResponse: {
+            /** Adapter */
+            adapter: string;
+            /** Caveat */
+            caveat: string | null;
+            /** Failures */
+            failures: components["schemas"]["FailureCatalogueEntry"][];
+        };
+        /**
+         * FailureRef
+         * @description A failure instance: the id plus its engine index when the entry takes one.
+         *
+         *     The validator is the reason this model lives in ``core/``: the Scenario
+         *     Generator gets identical validation parsing YAML, with no HTTP anywhere.
+         */
+        FailureRef: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+        };
+        /**
+         * FailuresStatus
+         * @description ``GET /api/failures/status`` — the whole picture the panel polls.
+         *
+         *     ``active`` is read back from the simulator itself, never from a server-side
+         *     ledger (D10): a teleport's ``fix_all_systems`` repairs everything behind
+         *     any ledger's back. ``armed`` comes from the scheduler, which is the only
+         *     honest home for arming state (D5).
+         */
+        FailuresStatus: {
+            /** Active */
+            active: components["schemas"]["ActiveFailure"][];
+            /** Armed */
+            armed: components["schemas"]["ArmedFailure"][];
         };
         /**
          * Fix
@@ -1010,6 +2290,118 @@ export interface components {
              * @description The CIFP file's airport, used to scope terminal fixes.
              */
             airport_icao?: string | null;
+        };
+        /**
+         * FuelPayloadApplyResult
+         * @description What actually happened. ``state`` is the read-back — the honest verdict.
+         */
+        FuelPayloadApplyResult: {
+            applied: components["schemas"]["LoadoutState"];
+            state: components["schemas"]["FuelPayloadState"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * FuelPayloadManifest
+         * @description ``GET /manifest`` — this manager's ``GET /api/aircraft/controls``.
+         *
+         *     Answers without touching the simulator or the navdata index: capability
+         *     flags are static and ``AirframeInfo`` is the cache
+         *     ``server.deps.load_airframe_info`` already populates at connect. Always
+         *     200, always fast.
+         */
+        FuelPayloadManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Supported */
+            supported: boolean;
+            /** Reason */
+            reason: string | null;
+            /** Icao Type */
+            icao_type: string | null;
+            /**
+             * Limits Source
+             * @enum {string}
+             */
+            limits_source: "adapter" | "table" | "unknown";
+            /**
+             * Limits Note
+             * @description The table entry's disclaimer, when limits_source == 'table'.
+             */
+            limits_note?: string | null;
+            /** @description The resolved mass/CG facts themselves -- empty weight, MTOW, tank/station capacities and arms, the CG envelope polygon -- so the panel can render MTOW and the envelope without a second round trip. None iff limits_source == 'unknown'. */
+            limits?: components["schemas"]["AirframeMassLimits"] | null;
+            /** Tank Count */
+            tank_count: number;
+            /** Station Count */
+            station_count: number;
+            /** Presets */
+            presets: components["schemas"]["FuelPayloadPresetInfo"][];
+        };
+        /**
+         * FuelPayloadPresetInfo
+         * @description One catalogue entry, as the manifest lists it.
+         */
+        FuelPayloadPresetInfo: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "ferry" | "training" | "full" | "empty";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+        };
+        /**
+         * FuelPayloadPreview
+         * @description What ``apply`` would produce. Writes nothing.
+         */
+        FuelPayloadPreview: {
+            request: components["schemas"]["FuelPayloadRequest"];
+            /** @description Fully resolved — exactly what apply would write. */
+            loadout: components["schemas"]["LoadoutState"];
+            mass_and_balance: components["schemas"]["MassAndBalanceResult"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * FuelPayloadRequest
+         * @description One fuel/payload instruction: a preset, a manual loadout, or both.
+         *
+         *     Lives in ``core/`` (D12), not the router — the Scenario Generator's YAML
+         *     fuel/payload block validates against this exact model, same as
+         *     ``core.weather.models.WeatherRequest`` and ``core.failures.ArmFailureRequest``.
+         *
+         *     ``loadout`` is an overlay: when both ``preset`` and ``loadout`` are given,
+         *     the preset resolves first and ``loadout`` is applied on top, list by list
+         *     (``core.models.Loadout``'s own "None untouched / list replaces the whole
+         *     set" semantics — D10).
+         */
+        FuelPayloadRequest: {
+            /** Preset */
+            preset?: ("ferry" | "training" | "full" | "empty") | null;
+            loadout?: components["schemas"]["Loadout"] | null;
+            /**
+             * Override Envelope
+             * @description Ignored by preview; enforced by apply (D8). An explicit, named opt-in past a verifiably out-of-envelope loadout, never the default.
+             * @default false
+             */
+            override_envelope: boolean;
+        };
+        /**
+         * FuelPayloadState
+         * @description The current loadout plus its computed mass-and-balance.
+         */
+        FuelPayloadState: {
+            loadout: components["schemas"]["LoadoutState"];
+            mass_and_balance: components["schemas"]["MassAndBalanceResult"];
         };
         /**
          * GeoPosition
@@ -1238,6 +2630,22 @@ export interface components {
             detail?: string | null;
         };
         /**
+         * InjectFailureRequest
+         * @description ``POST /api/failures/inject`` — nothing beyond the ref.
+         */
+        InjectFailureRequest: {
+            /**
+             * Failure Id
+             * @enum {string}
+             */
+            failure_id: "engine.failure" | "engine.fire" | "engine.partial_power" | "fuel.leak" | "electrical.system" | "electrical.generator" | "hydraulics.system" | "instruments.pitot" | "instruments.static" | "instruments.vacuum" | "instruments.airspeed" | "instruments.attitude" | "instruments.altimeter" | "instruments.directional_gyro" | "instruments.turn_coordinator" | "instruments.vsi" | "avionics.com1" | "avionics.com2" | "avionics.nav1" | "avionics.nav2" | "avionics.gps" | "avionics.transponder" | "flight_controls.flaps" | "flight_controls.spoilers" | "gear.stuck" | "gear.brakes" | "airframe.pressurisation" | "airframe.smoke" | "airframe.bird_strike" | "airframe.lightning_strike";
+            /**
+             * Engine Index
+             * @description 1-based. Required iff the entry is indexed.
+             */
+            engine_index?: number | null;
+        };
+        /**
          * LightsSetup
          * @description Exterior light switches. ``None`` means "leave this switch untouched".
          */
@@ -1252,6 +2660,95 @@ export interface components {
             beacon?: boolean | null;
             /** Strobe */
             strobe?: boolean | null;
+        };
+        /**
+         * Loadout
+         * @description Fuel and payload — the sparse write model nested on :class:`AircraftSetup`.
+         *
+         *     ``None`` means "leave that aspect untouched"; a provided list REPLACES the
+         *     whole set of tanks/stations, ``[]`` empties every one — the Weather
+         *     Manager's wind/cloud-layer semantics (``docs/designs/weather-manager.md``
+         *     D3), for the identical reason: there is no defensible per-index merge.
+         */
+        Loadout: {
+            /** Tanks */
+            tanks?: components["schemas"]["TankFuel"][] | null;
+            /** Stations */
+            stations?: components["schemas"]["PayloadStation"][] | null;
+        };
+        /**
+         * LoadoutState
+         * @description Fully populated fuel and payload, as reported by ``get_loadout()``.
+         *
+         *     Every known tank/station is present — mirrors :class:`AircraftState`'s
+         *     "always complete" convention rather than :class:`AircraftSetup`'s "None
+         *     means untouched" one (the same ``WeatherState``/``WeatherSetup`` split).
+         */
+        LoadoutState: {
+            /**
+             * Tanks
+             * @description Every known tank, in adapter order. [] if none.
+             */
+            tanks: components["schemas"]["TankFuel"][];
+            /**
+             * Stations
+             * @description Every known station, in adapter order. [] if none.
+             */
+            stations: components["schemas"]["PayloadStation"][];
+        };
+        /**
+         * MassAndBalanceResult
+         * @description The computed mass-and-balance verdict for one loadout.
+         *
+         *     ``limits_source`` and ``within_envelope`` are how D7 is expressed:
+         *     ``within_envelope`` is ``None`` (never ``False``) exactly when
+         *     ``limits_source == "unknown"`` — "unverifiable" is disclosed, never
+         *     invented as either a pass or a fail.
+         */
+        MassAndBalanceResult: {
+            /** Gross Weight Kg */
+            gross_weight_kg: number;
+            /** Fuel Kg */
+            fuel_kg: number;
+            /** Payload Kg */
+            payload_kg: number;
+            /**
+             * Cg Arm In
+             * @description None when limits are unknown.
+             */
+            cg_arm_in?: number | null;
+            /**
+             * Limits Source
+             * @enum {string}
+             */
+            limits_source: "adapter" | "table" | "unknown";
+            /**
+             * Within Envelope
+             * @description None only when limits_source == 'unknown'.
+             */
+            within_envelope?: boolean | null;
+            /**
+             * Violations
+             * @description Human sentences. Empty unless within_envelope is False.
+             * @default []
+             */
+            violations: string[];
+        };
+        /**
+         * MeasureResult
+         * @description The exact geodesic answer between two points, WGS84.
+         */
+        MeasureResult: {
+            /**
+             * Distance Nm
+             * @description Geodesic distance, nautical miles.
+             */
+            distance_nm: number;
+            /**
+             * Initial Bearing True Deg
+             * @description Initial true bearing from point 1 to point 2, degrees.
+             */
+            initial_bearing_true_deg: number;
         };
         /**
          * Navaid
@@ -1428,16 +2925,51 @@ export interface components {
             airline_codes: string[];
         };
         /**
+         * PayloadStation
+         * @description Mass at one payload station.
+         *
+         *     The simulator itself does not distinguish what a station is FOR — X-Plane's
+         *     ``m_stations`` array and MSFS's payload stations are both bare masses at
+         *     bare positions. ``kind`` is an instructor-facing label, assigned here or by
+         *     a future per-aircraft mapping table, never invented from the mass alone.
+         */
+        PayloadStation: {
+            /**
+             * Station Index
+             * @description 0-based, adapter order.
+             */
+            station_index: number;
+            /**
+             * Kind
+             * @description Instructor-facing classification.
+             * @default other
+             * @enum {string}
+             */
+            kind: "crew" | "passenger" | "cargo" | "other";
+            /**
+             * Label
+             * @description Display label, e.g. "Pilot". Blank when unknown.
+             * @default
+             */
+            label: string;
+            /**
+             * Weight Kg
+             * @description Mass placed at this station, kilograms.
+             */
+            weight_kg: number;
+        };
+        /**
          * Placement
          * @description A resolved placement: where to put the aircraft, facing where, doing what speed.
          *
          *     Everything an instructor station needs to reposition, and nothing about how
          *     the repositioning happens — writing it is the adapter's job.
          *
-         *     ``ias_kt`` has **no default on purpose**. It is the one field of this model
-         *     that cannot be inferred from geometry, and leaving it out is precisely the
-         *     defect that put an aircraft on a perfect 10 NM final at 0 kt, so a new
-         *     placement type cannot be written without answering the question.
+         *     ``ias_kt`` and ``profile`` have **no default on purpose**. They are the two
+         *     fields of this model that cannot be inferred from geometry, and leaving the
+         *     speed out is precisely the defect that put an aircraft on a perfect 10 NM
+         *     final at 0 kt — so a new placement type cannot be written without answering
+         *     both questions: how fast, and what kind of flying this is.
          */
         Placement: {
             /** @description Target position; its altitude_ft is the target altitude, feet MSL. */
@@ -1457,6 +2989,24 @@ export interface components {
              * @description Human-readable description, e.g. "LEMD 32L 10 NM final".
              */
             label: string;
+            /**
+             * Profile
+             * @description What kind of flying this placement is; decides the configuration to_setup() emits. Required, no default — the same philosophy as ias_kt: a new placement type cannot be written without answering the question.
+             * @enum {string}
+             */
+            profile: "final" | "circuit" | "airborne" | "ground";
+            /** @description The ILS an approach placement is flown to, when the runway publishes one. to_setup() tunes NAV1 and the OBS from it, so no caller can place an aircraft on an approach while forgetting the radios. Finals only. */
+            ils?: components["schemas"]["Ils"] | null;
+            /**
+             * Glideslope Deg
+             * @description Glidepath angle in degrees; the descent rate follows from it. Finals only.
+             */
+            glideslope_deg?: number | null;
+            /**
+             * Pattern Leg
+             * @description Which leg of the circuit; gear and flaps differ per leg. Circuit only.
+             */
+            pattern_leg?: ("downwind" | "base" | "crosswind" | "upwind") | null;
         };
         /**
          * PlacementPreview
@@ -1464,7 +3014,7 @@ export interface components {
          */
         PlacementPreview: {
             /** Request */
-            request: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+            request: components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             placement: components["schemas"]["Placement"];
             /** @description The state to apply before the teleport. */
             setup: components["schemas"]["AircraftSetup"];
@@ -1715,6 +3265,183 @@ export interface components {
             /** Positionable Leg Count */
             positionable_leg_count: number;
         };
+        /** ProfileApplyResult */
+        ProfileApplyResult: {
+            /** Profile Id */
+            profile_id: string;
+            position: components["schemas"]["ProfilePositionOutcome"];
+            weather: components["schemas"]["ProfileWeatherOutcome"];
+            /** Failures */
+            failures: components["schemas"]["ProfileFailureOutcome"][];
+            /** Degraded */
+            degraded: boolean;
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /** ProfileFailureOutcome */
+        ProfileFailureOutcome: {
+            ref: components["schemas"]["FailureRef"];
+            /** Applied */
+            applied: boolean;
+            /**
+             * Armed
+             * @default false
+             */
+            armed: boolean;
+            /** Armed Id */
+            armed_id?: string | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ProfilePositionOutcome
+         * @description The position + aircraft-state step's outcome.
+         *
+         *     **Deviation from the original design draft, and a consequence of
+         *     embedding ``ScenarioDocument`` (see the design's as-built addendum):**
+         *     ``attempted`` did not exist in the design's own sketch of this model,
+         *     because its ``ProfileScenario.placement`` was a required field — always
+         *     present. ``ScenarioDocument.position`` is optional (a profile may carry
+         *     only weather, or only failures), so this mirrors
+         *     :class:`ProfileWeatherOutcome`'s own ``attempted`` flag rather than
+         *     assuming position is always attempted.
+         */
+        ProfilePositionOutcome: {
+            /** Attempted */
+            attempted: boolean;
+            /** Applied */
+            applied: boolean;
+            result?: components["schemas"]["PlacementResult"] | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ProfileSummary
+         * @description One row of ``GET /api/profiles``. Cheap: no navdata lookup, no adapter read.
+         */
+        ProfileSummary: {
+            /** Profile Id */
+            profile_id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Author */
+            author: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+            /**
+             * Airport Icao
+             * @description Best-effort teaser straight off the embedded scenario's placement, when it has one and that placement names an airport. None for a coordinate placement, a profile with no position block, or a hold with no airport stated — and never a navdata lookup.
+             */
+            airport_icao?: string | null;
+        };
+        /** ProfileWeatherOutcome */
+        ProfileWeatherOutcome: {
+            /** Attempted */
+            attempted: boolean;
+            /** Applied */
+            applied: boolean;
+            result?: components["schemas"]["WeatherApplyResult"] | null;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * PushbackManifest
+         * @description Capability + reason, and the exact slider bounds, for ``GET /api/pushback/manifest``.
+         */
+        PushbackManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Supported */
+            supported: boolean;
+            /** Reason */
+            reason: string | null;
+            /**
+             * Max Distance M
+             * @default 200
+             */
+            max_distance_m: number;
+            /**
+             * Max Angle Deg
+             * @default 180
+             */
+            max_angle_deg: number;
+        };
+        /**
+         * PushbackPreview
+         * @description What ``POST /api/pushback/preview`` answers: the geometry, writing nothing.
+         */
+        PushbackPreview: {
+            request: components["schemas"]["PushbackRequest"];
+            current_position: components["schemas"]["GeoPosition"];
+            /** Current Heading Deg */
+            current_heading_deg: number;
+            target: components["schemas"]["PushbackTarget"];
+        };
+        /**
+         * PushbackRequest
+         * @description One pushback instruction.
+         *
+         *     ``direction`` describes where the NOSE ends up (D5): ``"right"`` rotates
+         *     the final heading clockwise from the current one, ``"left"``
+         *     counter-clockwise. ``angle_deg`` is the TOTAL heading change over the
+         *     manoeuvre, not a rate — 0 for ``"straight"``, required (> 0) otherwise,
+         *     because an angle of 0 on ``"left"``/``"right"`` would be indistinguishable
+         *     from ``"straight"``.
+         */
+        PushbackRequest: {
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "straight" | "left" | "right";
+            /**
+             * Distance M
+             * @description Arc length (or straight length) the aircraft's reference point travels, metres.
+             */
+            distance_m: number;
+            /**
+             * Angle Deg
+             * @description Total heading change through the manoeuvre, degrees. Must be 0 for 'straight', and > 0 for 'left'/'right'.
+             * @default 0
+             */
+            angle_deg: number;
+        };
+        /**
+         * PushbackResult
+         * @description What ``POST /api/pushback/execute`` answers after the write.
+         */
+        PushbackResult: {
+            request: components["schemas"]["PushbackRequest"];
+            target: components["schemas"]["PushbackTarget"];
+            state: components["schemas"]["AircraftState"];
+        };
+        /**
+         * PushbackTarget
+         * @description The resolved outcome of one :class:`PushbackRequest`, from a given starting state.
+         */
+        PushbackTarget: {
+            position: components["schemas"]["GeoPosition"];
+            /** Heading Deg */
+            heading_deg: number;
+            /**
+             * Path Preview
+             * @description PUSHBACK_PATH_PREVIEW_POINTS + 1 points along the manoeuvre, current position first and target last, for drawing the path. Collinear (2 distinct endpoints suffice) when direction is 'straight'.
+             */
+            path_preview: components["schemas"]["GeoPosition"][];
+        };
         /**
          * Runway
          * @description A single runway end, as read from the user's own navdata.
@@ -1808,6 +3535,52 @@ export interface components {
             ils?: components["schemas"]["Ils"] | null;
         };
         /**
+         * RunwayIncursionSpawnRequest
+         * @description A vehicle or aircraft crossing the runway, timed to the user's own closing speed.
+         */
+        RunwayIncursionSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "runway_incursion";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+            /**
+             * Cross At Along Track Nm
+             * @description Distance beyond the threshold, along the landing direction, where the crossing happens. 0.0 = at the threshold itself.
+             * @default 0
+             */
+            cross_at_along_track_nm: number;
+            /**
+             * Lead Time Before User Arrival S
+             * @description How many seconds BEFORE the user would reach the crossing point the vehicle starts crossing it. Negative = the vehicle is still crossing slightly AFTER the user's projected arrival — the worse-case incursion.
+             * @default 8
+             */
+            lead_time_before_user_arrival_s: number;
+            /**
+             * From Side
+             * @default left
+             * @enum {string}
+             */
+            from_side: "left" | "right";
+            /** Vehicle Speed Kt */
+            vehicle_speed_kt?: number | null;
+            /**
+             * Kind
+             * @default ground_vehicle
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign
+             * @default GND01
+             */
+            callsign: string;
+        };
+        /**
          * RunwayPlacementRequest
          * @description A final or a circuit leg, relative to one runway end.
          *
@@ -1841,6 +3614,202 @@ export interface components {
             category?: ("A" | "B" | "C" | "D" | "E") | null;
         };
         /**
+         * RunwayThresholdPlacementRequest
+         * @description On the runway centreline at the threshold, facing the runway heading,
+         *     at 0 kt — lined up for a takeoff brief. Distinct from RunwayPlacementRequest,
+         *     which is exclusively airborne final/pattern geometry; this is the one ground
+         *     position anchored to a runway rather than to a parking stand. Resolves
+         *     through core.geodesy.coordinate_placement(runway.threshold,
+         *     runway.true_bearing_deg, ias_kt=GROUND_IAS_KT) — the construction
+         *     GROUND_IAS_KT's own docstring already names ("a runway threshold for a
+         *     takeoff brief") but never wired to a request.
+         */
+        RunwayThresholdPlacementRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "runway_threshold";
+            /** Airport Icao */
+            airport_icao: string;
+            /** Runway Ident */
+            runway_ident: string;
+        };
+        /**
+         * SaveCameraPositionRequest
+         * @description ``POST /api/camera/positions``.
+         */
+        SaveCameraPositionRequest: {
+            /** Name */
+            name: string;
+        };
+        /**
+         * SavedCameraPosition
+         * @description One saved custom camera position.
+         *
+         *     Built by the adapter's in-memory store or ``core.camera.store``, never by
+         *     a request body — the id and creation timestamp are assigned, not
+         *     supplied.
+         */
+        SavedCameraPosition: {
+            /**
+             * Position Id
+             * @description Server-assigned opaque id (uuid4 hex).
+             */
+            position_id: string;
+            /** Name */
+            name: string;
+            offset: components["schemas"]["CameraOffset"];
+            /**
+             * Created At
+             * Format: date-time
+             * @description UTC.
+             */
+            created_at: string;
+        };
+        /**
+         * ScenarioDetail
+         * @description One scenario's full document plus its availability, for a preview view.
+         */
+        ScenarioDetail: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Tags */
+            tags: string[];
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+            document: components["schemas"]["ScenarioDocument"];
+        };
+        /**
+         * ScenarioDocument
+         * @description The validated shape of one scenario YAML file. core/-only: no HTTP, no
+         *     dataref, no adapter import, no SimAdapter instance held anywhere near it.
+         */
+        ScenarioDocument: {
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /**
+             * Tags
+             * @default []
+             */
+            tags: string[];
+            /** Position */
+            position?: (components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"]) | null;
+            aircraft_state?: components["schemas"]["AircraftSetup"] | null;
+            weather?: components["schemas"]["WeatherRequest"] | null;
+            failures?: components["schemas"]["ScenarioFailuresBlock"] | null;
+            traffic?: components["schemas"]["ScenarioTrafficBlock"] | null;
+        };
+        /**
+         * ScenarioFailuresBlock
+         * @description Reuses core.failures' own request models verbatim — no re-derivation.
+         */
+        ScenarioFailuresBlock: {
+            /**
+             * Immediate
+             * @default []
+             */
+            immediate: components["schemas"]["InjectFailureRequest"][];
+            /**
+             * Armed
+             * @default []
+             */
+            armed: components["schemas"]["ArmFailureRequest"][];
+        };
+        /**
+         * ScenarioManifest
+         * @description Every shipped scenario, whether it can run on the active adapter, and why not.
+         */
+        ScenarioManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Scenarios */
+            scenarios: components["schemas"]["ScenarioSummary"][];
+            /**
+             * Load Errors
+             * @default []
+             */
+            load_errors: string[];
+        };
+        /**
+         * ScenarioRunStatus
+         * @description The whole run's progress — what ``GET /api/scenarios/run`` polls.
+         */
+        ScenarioRunStatus: {
+            /** Scenario Id */
+            scenario_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "running" | "completed" | "failed";
+            /** Steps */
+            steps: components["schemas"]["ScenarioStepStatus"][];
+            /**
+             * Started At
+             * Format: date-time
+             */
+            started_at: string;
+            /** Finished At */
+            finished_at?: string | null;
+        };
+        /**
+         * ScenarioStepStatus
+         * @description One declared step's progress. Only the blocks a scenario declares appear.
+         */
+        ScenarioStepStatus: {
+            /**
+             * Name
+             * @enum {string}
+             */
+            name: "weather" | "aircraft_state" | "position" | "failures" | "traffic";
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "done" | "failed";
+            /** Detail */
+            detail?: string | null;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * ScenarioSummary
+         * @description One manifest row.
+         */
+        ScenarioSummary: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description: string;
+            /** Tags */
+            tags: string[];
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason?: string | null;
+        };
+        /**
+         * ScenarioTrafficBlock
+         * @description Declares that this scenario needs traffic. No spawn geometry here — that
+         *     is manager 13's model (Phase 3); this lets a scenario state the need today
+         *     and be greyed out honestly until the capability exists anywhere.
+         */
+        ScenarioTrafficBlock: {
+            /** Description */
+            description: string;
+        };
+        /**
          * SchematicPoint
          * @description One point of the preview diagram, already projected for the UI to draw.
          *
@@ -1868,6 +3837,41 @@ export interface components {
              * @enum {string}
              */
             role: "threshold" | "runway_end" | "placement" | "glidepath" | "leg" | "fix";
+        };
+        /**
+         * SpeedAboveTrigger
+         * @description Fires when ``ias_kt >= threshold``. Inclusive.
+         *
+         *     This is the V1-cut trigger: armed on the ground before the roll, it fires
+         *     as the aircraft accelerates through V1.
+         */
+        SpeedAboveTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "speed_above";
+            /**
+             * Ias Kt
+             * @description Knots indicated, inclusive.
+             */
+            ias_kt: number;
+        };
+        /**
+         * SpeedBelowTrigger
+         * @description Fires when ``ias_kt <= threshold``. Inclusive.
+         */
+        SpeedBelowTrigger: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "speed_below";
+            /**
+             * Ias Kt
+             * @description Knots indicated, inclusive.
+             */
+            ias_kt: number;
         };
         /**
          * SpeedConstraint
@@ -1898,6 +3902,302 @@ export interface components {
              *     shows this string and never formats a constraint itself.
              */
             readonly display: string;
+        };
+        /**
+         * TankFuel
+         * @description Fuel in one tank.
+         */
+        TankFuel: {
+            /**
+             * Tank Index
+             * @description 0-based tank index, in the order get_loadout() reports — adapter-defined.
+             */
+            tank_index: number;
+            /**
+             * Fuel Kg
+             * @description Fuel mass in this tank, kilograms.
+             */
+            fuel_kg: number;
+        };
+        /**
+         * TaxiTrafficSpawnRequest
+         * @description A traffic entity ground-taxiing an explicit route (D12, §10.5).
+         */
+        TaxiTrafficSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "taxi_traffic";
+            /** Route */
+            route: components["schemas"]["GeoPosition"][];
+            /** Speed Kt */
+            speed_kt?: number | null;
+            /**
+             * Kind
+             * @default aircraft
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign
+             * @default TAXI01
+             */
+            callsign: string;
+        };
+        /**
+         * TcasConflictSpawnRequest
+         * @description Converge an intruder on the user aircraft's own projected track.
+         */
+        TcasConflictSpawnRequest: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "tcas_conflict";
+            /**
+             * Severity
+             * @default head_on_ra
+             * @enum {string}
+             */
+            severity: "head_on_ra" | "crossing_ra" | "ta_only";
+            /**
+             * Relative Bearing Deg
+             * @description Intruder's track relative to the user's own, at spawn: 180=head-on, 90/270=crossing, 0=same-direction closure from ahead or overtaking from behind.
+             * @default 180
+             */
+            relative_bearing_deg: number;
+            /**
+             * Miss Side
+             * @default left
+             * @enum {string}
+             */
+            miss_side: "left" | "right";
+            /**
+             * Vertical Offset
+             * @default above
+             * @enum {string}
+             */
+            vertical_offset: "above" | "below";
+            /** Closure Ias Kt */
+            closure_ias_kt?: number | null;
+            /**
+             * Kind
+             * @default aircraft
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Callsign
+             * @default TFC01
+             */
+            callsign: string;
+        };
+        /**
+         * TrafficContact
+         * @description One live traffic entity, as reported by the adapter. Always-complete, like
+         *     AircraftState — a read, never a sparse write.
+         */
+        TrafficContact: {
+            /**
+             * Traffic Id
+             * @description Adapter-assigned uuid4 hex (D5). Stable for the entity's lifetime.
+             */
+            traffic_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Scenario Shape
+             * @enum {string}
+             */
+            scenario_shape: "tcas_conflict" | "runway_incursion" | "approach_sequence" | "taxi_traffic" | "custom";
+            /** Callsign */
+            callsign: string;
+            /** Label */
+            label: string;
+            /** Latitude */
+            latitude: number;
+            /** Longitude */
+            longitude: number;
+            /** Altitude Ft */
+            altitude_ft: number;
+            /** Heading Deg */
+            heading_deg: number;
+            /** Ground Speed Kt */
+            ground_speed_kt: number;
+            /** Vertical Speed Fpm */
+            vertical_speed_fpm: number;
+            /**
+             * On Ground
+             * @default false
+             */
+            on_ground: boolean;
+        };
+        /**
+         * TrafficSpawnResult
+         * @description ``POST /api/traffic/spawn`` — one contact per track the request resolved into.
+         */
+        TrafficSpawnResult: {
+            /**
+             * Contacts
+             * @description One per track spawned; more than one only for approach_sequence.
+             */
+            contacts: components["schemas"]["TrafficContact"][];
+        };
+        /**
+         * TrafficStatus
+         * @description ``GET /api/traffic/status`` — every live contact the adapter reports.
+         */
+        TrafficStatus: {
+            /**
+             * Adapter
+             * @description Name of the active adapter.
+             */
+            adapter: string;
+            /**
+             * Contacts
+             * @description Every live traffic entity.
+             */
+            contacts: components["schemas"]["TrafficContact"][];
+            /**
+             * Max Contacts
+             * @description Adapter-advertised capacity (D6), None when unknown/unbounded.
+             */
+            max_contacts?: number | null;
+        };
+        /**
+         * TrafficTrack
+         * @description A complete, timed path for one traffic entity — what SimAdapter.spawn_traffic takes.
+         *
+         *     Every field here is something the bridge can act on with no further
+         *     decision-making: "spawn at waypoints[0], move through the rest on schedule,
+         *     despawn after despawn_after_s" is the whole vocabulary (bridge/README.md's
+         *     "it spawns, it moves, it despawns. It does not make decisions.").
+         */
+        TrafficTrack: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "aircraft" | "ground_vehicle" | "bird";
+            /**
+             * Scenario Shape
+             * @default custom
+             * @enum {string}
+             */
+            scenario_shape: "tcas_conflict" | "runway_incursion" | "approach_sequence" | "taxi_traffic" | "custom";
+            /**
+             * Callsign
+             * @description e.g. "TFC01", "GND03".
+             */
+            callsign: string;
+            /**
+             * Label
+             * @description Human-readable description, e.g. "TCAS conflict, head-on".
+             */
+            label: string;
+            /** Waypoints */
+            waypoints: components["schemas"]["TrafficWaypoint"][];
+            /**
+             * Despawn After S
+             * @description Seconds after the LAST waypoint's t_offset_s before automatic despawn. None: the entity holds at the last waypoint until explicitly despawned.
+             */
+            despawn_after_s?: number | null;
+        };
+        /**
+         * TrafficWaypoint
+         * @description One timed point on a traffic entity's path.
+         */
+        TrafficWaypoint: {
+            /** @description Target position; altitude_ft is feet MSL. */
+            position: components["schemas"]["GeoPosition"];
+            /**
+             * Speed Kt
+             * @description Ground speed in knots for the leg starting here. Indicated airspeed for kind='aircraft' entities flying, a plain ground speed for 'ground_vehicle'/'bird' — there is no indicated-airspeed reading for a truck.
+             */
+            speed_kt: number;
+            /**
+             * Heading Deg
+             * @description True heading to face AT this waypoint. None: the consumer derives it from the bearing to the next waypoint (or holds the previous leg's heading on the final waypoint) — the same fallback order core.geodesy.waypoint_placement uses for a bare fix.
+             */
+            heading_deg?: number | null;
+            /**
+             * T Offset S
+             * @description Seconds after spawn this point is reached.
+             */
+            t_offset_s: number;
+            /**
+             * On Ground
+             * @description True for a taxiing or stationary point.
+             * @default false
+             */
+            on_ground: boolean;
+        };
+        /**
+         * TrainingProfile
+         * @description A saved scenario with a name and metadata (feature spec §14, verbatim).
+         *
+         *     ``extra="ignore"`` deliberately (D9): this document is written and read
+         *     only by this application, across versions that may add fields over time.
+         */
+        TrainingProfile: {
+            /**
+             * Format Version
+             * @description Storage schema tag.
+             * @default 1
+             */
+            format_version: number;
+            /**
+             * Profile Id
+             * @description Server-assigned uuid4 hex. Also the filename stem (<id>.json).
+             */
+            profile_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Author */
+            author?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             * @description UTC, set once at creation.
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             * @description UTC, set on every save/replace/import.
+             */
+            updated_at: string;
+            scenario: components["schemas"]["ScenarioDocument"];
+        };
+        /**
+         * TrainingProfileCreate
+         * @description ``POST /api/profiles`` and ``PUT /api/profiles/{id}`` body.
+         *
+         *     Everything the instructor supplies; the server fills ``profile_id``,
+         *     ``created_at``, ``updated_at``. ``extra="forbid"``: a hand-edited body
+         *     that misspells a field should fail loudly, the same typo-catching
+         *     convention ``weather-manager.md``/``failures-manager.md`` established.
+         */
+        TrainingProfileCreate: {
+            /** Name */
+            name: string;
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /** Author */
+            author?: string | null;
+            scenario: components["schemas"]["ScenarioDocument"];
         };
         /** ValidationError */
         ValidationError: {
@@ -1974,6 +4274,208 @@ export interface components {
             ias_kt?: number | null;
             /** Category */
             category?: ("A" | "B" | "C" | "D" | "E") | null;
+        };
+        /**
+         * WeatherApplyResult
+         * @description What actually happened.
+         */
+        WeatherApplyResult: {
+            /** @description Exactly the setup that was written. */
+            applied: components["schemas"]["WeatherSetup"];
+            /** @description The read-back — the honest verdict. */
+            state: components["schemas"]["WeatherState"];
+            /**
+             * Notes
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * WeatherManifest
+         * @description Supported-or-not with a reason, plus the preset catalogue.
+         *
+         *     This manager's ``GET /api/aircraft/controls``: the single place the panel
+         *     learns what it may offer. Always 200 — capability flags are static and the
+         *     preset catalogue is ``core/`` data, so nothing here touches navdata or the
+         *     simulator.
+         */
+        WeatherManifest: {
+            /** Adapter */
+            adapter: string;
+            /** Supported */
+            supported: boolean;
+            /**
+             * Reason
+             * @description Why unsupported. None when supported.
+             */
+            reason?: string | null;
+            /** Presets */
+            presets: components["schemas"]["WeatherPresetInfo"][];
+        };
+        /**
+         * WeatherPresetInfo
+         * @description One catalogue entry, as the manifest publishes it.
+         */
+        WeatherPresetInfo: {
+            /**
+             * Id
+             * @enum {string}
+             */
+            id: "cavok" | "cat_i" | "cat_ii" | "cat_iii" | "storm" | "crosswind" | "mountain_wave";
+            /** Label */
+            label: string;
+            /** Description */
+            description: string;
+            /** Requires Runway */
+            requires_runway: boolean;
+            /** Requires Airport */
+            requires_airport: boolean;
+        };
+        /**
+         * WeatherPreview
+         * @description What ``apply`` *would* write. Computed without touching the simulator.
+         */
+        WeatherPreview: {
+            request: components["schemas"]["WeatherRequest"];
+            /** @description Resolved and merged: exactly what apply would write. */
+            setup: components["schemas"]["WeatherSetup"];
+            /**
+             * Notes
+             * @description Provenance sentences — where each resolved number came from, and which override displaced a preset value. Rendered verbatim by the UI, never re-derived.
+             * @default []
+             */
+            notes: string[];
+        };
+        /**
+         * WeatherRequest
+         * @description One weather instruction: a preset, an explicit setup, or a preset with overrides.
+         *
+         *     Lives in ``core/`` (D6) so the Scenario Generator's YAML weather block
+         *     validates against this exact model with no import from ``server/``.
+         */
+        WeatherRequest: {
+            /** Preset */
+            preset?: ("cavok" | "cat_i" | "cat_ii" | "cat_iii" | "storm" | "crosswind" | "mountain_wave") | null;
+            /** Airport Icao */
+            airport_icao?: string | null;
+            /** Runway Ident */
+            runway_ident?: string | null;
+            /** @description The whole instruction when no preset is given, or the overlay over it. */
+            setup?: components["schemas"]["WeatherSetup"] | null;
+        };
+        /**
+         * WeatherSetup
+         * @description The sparse write model. ``None`` means "leave that aspect untouched".
+         *
+         *     Layer-list semantics (D3): ``None`` = untouched; a list REPLACES the whole
+         *     set of layers; ``[]`` commands calm winds / clear skies. There is no
+         *     per-layer merge. Unlike :class:`WeatherState`, a ``dewpoint_c`` above a
+         *     stated ``temperature_c`` is refused rather than clamped — this is an
+         *     instruction, and a self-contradictory one is a data-entry error.
+         */
+        WeatherSetup: {
+            /** Wind Layers */
+            wind_layers?: components["schemas"]["WindLayer"][] | null;
+            /** Cloud Layers */
+            cloud_layers?: components["schemas"]["CloudLayer"][] | null;
+            /** Visibility M */
+            visibility_m?: number | null;
+            /** Qnh Hpa */
+            qnh_hpa?: number | null;
+            /** Temperature C */
+            temperature_c?: number | null;
+            /** Dewpoint C */
+            dewpoint_c?: number | null;
+            /** Precipitation Ratio */
+            precipitation_ratio?: number | null;
+            /** Runway Contamination */
+            runway_contamination?: ("dry" | "wet" | "puddles" | "snow" | "ice") | null;
+        };
+        /**
+         * WeatherState
+         * @description The commanded weather, fully populated — what ``get_weather()`` returns.
+         *
+         *     Mirrors ``AircraftState``'s "always complete" convention rather than
+         *     ``WeatherSetup``'s "None means untouched" one (weather-manager.md D4).
+         *     ``dewpoint_c`` is clamped to ``temperature_c`` on construction rather than
+         *     refused: a read describes what the simulator reports, and a state must
+         *     always be representable (weather-manager.md §3.2).
+         */
+        WeatherState: {
+            /**
+             * Wind Layers
+             * @description Ascending by altitude. May be empty (calm).
+             */
+            wind_layers: components["schemas"]["WindLayer"][];
+            /**
+             * Cloud Layers
+             * @description Ascending by base. May be empty (clear).
+             */
+            cloud_layers: components["schemas"]["CloudLayer"][];
+            /**
+             * Visibility M
+             * @description Surface visibility in METRES (CAT minima are metres; the adapter converts to the sim's unit).
+             */
+            visibility_m: number;
+            /**
+             * Qnh Hpa
+             * @description Sea-level pressure, hectopascals.
+             */
+            qnh_hpa: number;
+            /**
+             * Temperature C
+             * @description Sea-level temperature, Celsius.
+             */
+            temperature_c: number;
+            /**
+             * Dewpoint C
+             * @description Sea-level dewpoint, Celsius. Never above temperature_c (clamped on construction). This is the feature spec's 'humidity' (D11).
+             */
+            dewpoint_c: number;
+            /**
+             * Precipitation Ratio
+             * @description 0 = none, 1 = torrential. Falls as snow when the temperature says so — the phase is the simulator's decision, not a second field.
+             */
+            precipitation_ratio: number;
+            /**
+             * Runway Contamination
+             * @description Surface state for friction.
+             * @enum {string}
+             */
+            runway_contamination: "dry" | "wet" | "puddles" | "snow" | "ice";
+        };
+        /**
+         * WindLayer
+         * @description One wind stratum. Direction is where the wind blows FROM, true degrees.
+         */
+        WindLayer: {
+            /**
+             * Altitude Ft
+             * @description Layer altitude, feet MSL.
+             */
+            altitude_ft: number;
+            /**
+             * Direction Deg
+             * @description Direction the wind blows FROM, TRUE degrees (METAR convention, and what the simulator's dataref expects). ATIS/tower winds are magnetic; converting for display is the UI's business, not this model's.
+             */
+            direction_deg: number;
+            /**
+             * Speed Kt
+             * @description Sustained wind speed, knots.
+             */
+            speed_kt: number;
+            /**
+             * Gust Increase Kt
+             * @description Peak gust above the sustained speed, knots. 20 kt gusting 30 is speed_kt=20, gust_increase_kt=10.
+             * @default 0
+             */
+            gust_increase_kt: number;
+            /**
+             * Turbulence Ratio
+             * @description 0 = smooth, 1 = severe.
+             * @default 0
+             */
+            turbulence_ratio: number;
         };
     };
     responses: never;
@@ -2084,6 +4586,40 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AircraftSetupResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    measure_api_geodesy_measure_get: {
+        parameters: {
+            query: {
+                lat1: number;
+                lon1: number;
+                lat2: number;
+                lon2: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MeasureResult"];
                 };
             };
             /** @description Validation Error */
@@ -2451,10 +4987,17 @@ export interface operations {
     };
     get_fixes_api_navdata_fixes_get: {
         parameters: {
-            query: {
-                ident: string;
+            query?: {
+                /** @description Fix identifier. */
+                ident?: string | null;
+                /** @description ICAO region code, e.g. 'LE'. */
                 region?: string | null;
+                /** @description Scope to one airport's terminal fixes. */
                 terminal_airport?: string | null;
+                lat?: number | null;
+                lon?: number | null;
+                radius_nm?: number;
+                limit?: number;
             };
             header?: never;
             path?: never;
@@ -2524,7 +5067,7 @@ export interface operations {
         };
         requestBody: {
             content: {
-                "application/json": components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
+                "application/json": components["schemas"]["RunwayPlacementRequest"] | components["schemas"]["RunwayThresholdPlacementRequest"] | components["schemas"]["ParkingPlacementRequest"] | components["schemas"]["CoordinatePlacementRequest"] | components["schemas"]["WaypointPlacementRequest"] | components["schemas"]["ProcedureLegPlacementRequest"] | components["schemas"]["HoldPlacementRequest"];
             };
         };
         responses: {
@@ -2577,6 +5120,1109 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_weather_api_weather_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherState"];
+                };
+            };
+        };
+    };
+    get_weather_manifest_api_weather_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherManifest"];
+                };
+            };
+        };
+    };
+    preview_weather_api_weather_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeatherRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_weather_api_weather_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WeatherRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WeatherApplyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_manifest_api_fuel_payload_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadManifest"];
+                };
+            };
+        };
+    };
+    get_fuel_payload_api_fuel_payload_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadState"];
+                };
+            };
+        };
+    };
+    preview_fuel_payload_api_fuel_payload_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FuelPayloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_fuel_payload_api_fuel_payload_apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FuelPayloadRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FuelPayloadApplyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_catalogue_api_failures_catalogue_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailureCatalogueResponse"];
+                };
+            };
+        };
+    };
+    get_status_api_failures_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+        };
+    };
+    inject_failure_api_failures_inject_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["InjectFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    arm_failure_route_api_failures_arm_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ArmFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArmedFailure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disarm_failure_api_failures_armed__armed_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                armed_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_failure_api_failures_clear_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ClearFailureRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_all_failures_api_failures_clear_all_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["FailuresStatus"];
+                };
+            };
+        };
+    };
+    get_pushback_manifest_api_pushback_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushbackManifest"];
+                };
+            };
+        };
+    };
+    preview_pushback_api_pushback_preview_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushbackPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    execute_pushback_api_pushback_execute_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PushbackRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PushbackResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_scenarios_api_scenarios_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioManifest"];
+                };
+            };
+        };
+    };
+    get_current_run_api_scenarios_run_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRunStatus"] | null;
+                };
+            };
+        };
+    };
+    get_scenario_api_scenarios__scenario_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    run_scenario_api_scenarios__scenario_id__run_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                scenario_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ScenarioRunStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_profiles_api_profiles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileSummary"][];
+                };
+            };
+        };
+    };
+    create_profile_api_profiles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_profile_api_profiles__profile_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    replace_profile_api_profiles__profile_id__put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrainingProfileCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_profile_api_profiles__profile_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_profile_route_api_profiles__profile_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProfileApplyResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_profile_api_profiles_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_profile_api_profiles_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrainingProfile"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    export_profile_api_profiles__profile_id__export_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_manifest_api_camera_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CameraManifest"];
+                };
+            };
+        };
+    };
+    set_view_api_camera_view_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CameraViewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CameraCommandResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_positions_api_camera_positions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedCameraPosition"][];
+                };
+            };
+        };
+    };
+    save_position_api_camera_positions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveCameraPositionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SavedCameraPosition"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    apply_position_api_camera_positions__position_id__apply_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CameraCommandResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_position_api_camera_positions__position_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                position_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_status_api_traffic_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficStatus"];
+                };
+            };
+        };
+    };
+    spawn_traffic_api_traffic_spawn_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TcasConflictSpawnRequest"] | components["schemas"]["RunwayIncursionSpawnRequest"] | components["schemas"]["ApproachSequenceSpawnRequest"] | components["schemas"]["TaxiTrafficSpawnRequest"] | components["schemas"]["CustomTrackSpawnRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficSpawnResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    despawn_traffic_api_traffic__traffic_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                traffic_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    clear_all_traffic_api_traffic_clear_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrafficStatus"];
                 };
             };
         };

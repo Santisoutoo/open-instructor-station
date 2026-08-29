@@ -19,7 +19,12 @@ from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
-from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition
+from core.camera.models import CameraOffset, CameraSupportManifest, CameraViewId
+from core.failures import ActiveFailure, FailureRef, FailureSupportManifest
+from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
+from core.pushback import PushbackRequest
+from core.traffic import TrafficContact, TrafficTrack
+from core.weather.models import WeatherSetup, WeatherState
 
 __all__ = [
     "Capabilities",
@@ -36,7 +41,10 @@ class Capabilities(BaseModel):
     dataclass so that it is served verbatim by ``GET /api/capabilities`` and
     lands in the OpenAPI schema the UI client is generated from.
 
-    Immutable — an adapter's capabilities never change at runtime.
+    Immutable — an adapter's capabilities are fixed for the lifetime of a
+    connection, resolved once at ``connect()`` and never mutated afterwards
+    (ai-traffic.md D3/D4: a connect-time probe may decide a flag, but nothing
+    moves it mid-session).
     """
 
     model_config = ConfigDict(frozen=True)
@@ -77,6 +85,19 @@ class CapabilityNotSupported(RuntimeError):
             f"Adapter {adapter_name!r} does not support {capability!r}. "
             f"Check Capabilities.{capability} before calling."
         )
+
+
+class WeatherRejected(RuntimeError):
+    """Raised when the simulator refuses to accept or hold a commanded weather write.
+
+    Adapter-agnostic on purpose: the caller (``server/weather_routes.py``) maps
+    this to one HTTP status (502 — the simulator, not the request, is at
+    fault) regardless of which adapter raised it. A concrete adapter defines
+    its own subclass carrying whatever diagnostic detail it has (see
+    ``adapters.xplane.xplane_adapter.XPlaneWeatherRejected``) rather than the
+    router importing an adapter-specific exception type directly, which would
+    break the moment a second adapter needs the same 502.
+    """
 
 
 @runtime_checkable
@@ -177,7 +198,165 @@ class SimAdapter(Protocol):
         rather than silently ignore it or half-apply the setup:
 
         * the autopilot block — :attr:`Capabilities.can_control_autopilot`;
-        * ``gross_weight_kg`` / ``fuel_kg`` — :attr:`Capabilities.can_set_fuel_payload`.
+        * ``gross_weight_kg`` / ``fuel_kg`` / ``loadout`` —
+          :attr:`Capabilities.can_set_fuel_payload`. When ``loadout`` and the
+          scalar fields are both set, ``loadout`` is authoritative and the
+          scalars are applied only when it is absent.
+        """
+        ...
+
+    async def pushback(self, request: PushbackRequest) -> None:
+        """Push the aircraft backward per ``request``, from wherever it is right now.
+
+        Re-reads position and heading itself (``core.pushback.pushback_target()``,
+        the same pure function ``POST /api/pushback/preview`` calls) rather than
+        trusting a target resolved earlier — a pushback is defined relative to
+        the CURRENT state, and re-resolving at write time is what keeps a
+        delayed request honest (the same lesson issue #39 taught
+        :meth:`set_position` about speed decay).
+
+        Raises :class:`core.pushback.PushbackNotOnGround` if the aircraft is
+        airborne. Requires :attr:`Capabilities.can_pushback`.
+        """
+        ...
+
+    async def get_camera_support(self) -> CameraSupportManifest:
+        """Which views and which sub-features this adapter can reach, one entry per
+        CAMERA_VIEW_IDS in catalogue order, plus custom_positions_supported. A
+        capability-free read: an adapter without can_control_camera returns every
+        view unsupported and custom_positions_supported=False, both with a stated
+        reason — "no" is an answer, never an exception.
+        """
+        ...
+
+    async def set_camera_view(self, view_id: CameraViewId) -> None:
+        """Switch to the named view now. Requires can_control_camera; a view_id the
+        manifest reports unsupported raises CapabilityNotSupported.
+        """
+        ...
+
+    async def get_camera_offset(self) -> CameraOffset | None:
+        """The current free/drone camera pose, resolved against the current
+        aircraft state, or None when there is nothing meaningful to report — not
+        currently in a free-camera view, or the adapter cannot read one. A
+        capability-free read, the get_airframe() posture: unknown is honest.
+        """
+        ...
+
+    async def set_camera_offset(self, offset: CameraOffset) -> None:
+        """Position the free/drone camera at `offset`, resolved against the
+        CURRENT aircraft state at write time (D4) — the same re-resolve-fresh
+        posture core.pushback.pushback_target() uses. Requires can_control_camera
+        AND the manifest's custom_positions_supported; raises
+        CapabilityNotSupported otherwise.
+        """
+        ...
+
+    async def get_weather(self) -> WeatherState:
+        """Read the commanded weather.
+
+        Requires Capabilities.can_set_weather — one flag gates the pair. Weather is
+        the one surface where the read has no consumer without the write: the panel
+        that displays it is the panel that edits it, and an adapter that cannot
+        control weather has no tab to feed. Splitting a can_read_weather off is a
+        one-line change the day the MSFS adapter proves it can read but not write;
+        it is deliberately not made on speculation.
+        """
+        ...
+
+    async def set_weather(self, setup: WeatherSetup) -> None:
+        """Apply every field of ``setup`` that is not None, leaving the rest untouched.
+
+        List fields replace wholesale: a provided list is the new complete set of
+        layers, [] commands calm/clear, None leaves the layers alone.
+
+        The adapter is responsible for making the write STICK: a simulator whose
+        own weather engine would overwrite manual values (X-Plane 12 real weather)
+        must be forced into manual mode first, and the mode verified, inside this
+        call — once per call, not per field. An adapter that cannot secure the
+        mode raises rather than writing values it knows will be destroyed.
+
+        Requires Capabilities.can_set_weather.
+        """
+        ...
+
+    async def get_failure_support(self) -> FailureSupportManifest:
+        """Which catalogue entries this adapter can inject, one entry per FAILURE_IDS,
+        in catalogue order. A capability-free read (same posture as get_airframe):
+        an adapter without can_inject_failures returns every entry unsupported with
+        that stated reason — "no" is an answer, never an exception.
+        """
+        ...
+
+    async def inject_failure(self, failure: FailureRef) -> None:
+        """Fail the referenced system immediately. Idempotent: injecting an
+        already-failed system changes nothing. Requires can_inject_failures;
+        an unsupported failure_id raises CapabilityNotSupported.
+        """
+        ...
+
+    async def clear_failure(self, failure: FailureRef) -> None:
+        """Repair the referenced system. Idempotent; clearing a working system is a
+        no-op. Requires can_inject_failures.
+        """
+        ...
+
+    async def clear_all_failures(self) -> None:
+        """Repair every failure this adapter can see. Idempotent.
+        Requires can_inject_failures.
+        """
+        ...
+
+    async def get_active_failures(self) -> tuple[ActiveFailure, ...]:
+        """Read back which supported failures are failed *right now*, from the
+        simulator itself — never from a ledger of what was asked for (a
+        teleport's fix_all_systems repairs everything behind the ledger's back).
+        A capability-free read: an adapter that cannot see failures returns ().
+        """
+        ...
+
+    async def get_loadout(self) -> LoadoutState:
+        """Read the current fuel and payload.
+
+        Requires Capabilities.can_set_fuel_payload — one flag gates the pair,
+        exactly the reasoning of get_weather()/set_weather(): fuel burns
+        continuously and AircraftSetupResult does not carry configuration, so the
+        panel that displays the loadout is the panel that edits it, and an
+        adapter that cannot control fuel/payload has no tab to feed.
+        """
+        ...
+
+    async def get_traffic_contacts(self) -> tuple[TrafficContact, ...]:
+        """Every live traffic entity this adapter (or its bridge) currently reports.
+
+        Capability-free read (the get_active_failures posture): an adapter
+        without can_spawn_traffic, or whose bridge is not currently reachable,
+        returns () rather than raising. "No traffic" is always an honest, cheap
+        answer.
+        """
+        ...
+
+    async def spawn_traffic(self, track: TrafficTrack) -> TrafficContact:
+        """Spawn one entity following ``track`` and return its initial contact,
+        carrying a fresh adapter-assigned traffic_id (ai-traffic.md D5).
+
+        Requires can_spawn_traffic. Raises
+        :class:`~core.traffic.TrafficCapacityExceeded` (D6) when the adapter is
+        already at whatever limit it enforces — never silently refuses and
+        never corrupts an existing entity's state instead.
+        """
+        ...
+
+    async def despawn_traffic(self, traffic_id: str) -> None:
+        """Remove one entity. Idempotent: an unknown or already-gone id is a
+        no-op, not an error — the same posture as clear_failure on a healthy
+        system. Requires can_spawn_traffic.
+        """
+        ...
+
+    async def clear_all_traffic(self) -> None:
+        """Despawn every entity this adapter is tracking. Idempotent.
+        Requires can_spawn_traffic.
         """
         ...
 
@@ -187,5 +366,17 @@ class SimAdapter(Protocol):
         Declared as a plain method returning an async iterator (not an ``async
         def``) so implementations can be async generators and callers can write
         ``async for state in adapter.stream_state(0.25)``.
+        """
+        ...
+
+    def stream_traffic(self, interval_s: float) -> AsyncIterator[tuple[TrafficContact, ...]]:
+        """Yield the full traffic picture roughly every ``interval_s`` seconds,
+        mirroring :meth:`stream_state`'s shape and reasoning: a plain method
+        returning an async iterator so implementations can be async generators.
+
+        Capability-free: an adapter without traffic support yields () forever
+        rather than raising, so a caller (the WS route) can iterate
+        unconditionally exactly like it does for state — no
+        adapter.capabilities check needed before the loop starts.
         """
         ...

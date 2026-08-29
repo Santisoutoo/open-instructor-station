@@ -56,6 +56,7 @@ __all__ = [
     "ISA_SEA_LEVEL_DENSITY_KG_M3",
     "ISA_SEA_LEVEL_PRESSURE_PA",
     "ISA_SEA_LEVEL_TEMPERATURE_C",
+    "METRES_PER_FOOT",
     "TROPOPAUSE_ALTITUDE_FT",
     "density_altitude_ft",
     "density_ratio",
@@ -73,7 +74,8 @@ __all__ = [
 # values this module works in stay consistent with the metric ones to the last
 # significant figure.
 
-_METRES_PER_FOOT = 0.3048
+#: Exact conversion: 1 foot = 0.3048 m.
+METRES_PER_FOOT: float = 0.3048
 _KELVIN_AT_ZERO_C = 273.15
 
 ISA_SEA_LEVEL_TEMPERATURE_C: float = 15.0
@@ -82,11 +84,11 @@ ISA_SEA_LEVEL_DENSITY_KG_M3: float = 1.225
 
 #: Tropospheric lapse rate: 6.5 °C per kilometre, expressed per foot
 #: (0.0019812 °C/ft, the familiar "2 °C per 1 000 ft").
-ISA_LAPSE_RATE_C_PER_FT: float = 0.0065 * _METRES_PER_FOOT
+ISA_LAPSE_RATE_C_PER_FT: float = 0.0065 * METRES_PER_FOOT
 
 #: Top of the modelled troposphere: 11 km. Above it the ISA temperature is
 #: constant, which changes the pressure law from a power to an exponential.
-TROPOPAUSE_ALTITUDE_FT: float = 11_000.0 / _METRES_PER_FOOT
+TROPOPAUSE_ALTITUDE_FT: float = 11_000.0 / METRES_PER_FOOT
 
 _ISA_SEA_LEVEL_TEMPERATURE_K: float = ISA_SEA_LEVEL_TEMPERATURE_C + _KELVIN_AT_ZERO_C
 _STANDARD_GRAVITY_M_PER_S2: float = 9.806_65
@@ -97,7 +99,7 @@ _DRY_AIR_GAS_CONSTANT_J_PER_KG_K: float = 287.052_87
 #: raising it to this power. ``L`` there is the lapse rate per *metre*, which is
 #: why it is converted back.
 _PRESSURE_EXPONENT: float = _STANDARD_GRAVITY_M_PER_S2 / (
-    (ISA_LAPSE_RATE_C_PER_FT / _METRES_PER_FOOT) * _DRY_AIR_GAS_CONSTANT_J_PER_KG_K
+    (ISA_LAPSE_RATE_C_PER_FT / METRES_PER_FOOT) * _DRY_AIR_GAS_CONSTANT_J_PER_KG_K
 )
 
 #: The density ratio is the pressure ratio divided by the temperature ratio, and
@@ -127,7 +129,7 @@ _TROPOPAUSE_DENSITY_RATIO: float = (
 #: temperature.
 _ISOTHERMAL_SCALE_HEIGHT_FT: float = (
     _DRY_AIR_GAS_CONSTANT_J_PER_KG_K * _TROPOPAUSE_TEMPERATURE_K / _STANDARD_GRAVITY_M_PER_S2
-) / _METRES_PER_FOOT
+) / METRES_PER_FOOT
 
 
 def isa_temperature_c(pressure_altitude_ft: float) -> float:

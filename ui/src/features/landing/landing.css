@@ -1,0 +1,221 @@
+/*
+ * Landing Analysis panel. Custom properties only — both themes are a value swap
+ * away (see index.css). Accent budget in this view: the selected landing card and
+ * focus rings; the report card speaks through the semantic ok/warn/danger colours,
+ * which do not count against the accent budget.
+ */
+
+/* ---------------------------------------------------------------- picker */
+
+.landing-panel__loading {
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.landing-picker {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.landing-picker__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 64px;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.landing-picker__card:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.landing-picker__card:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The debriefed landing: accent border — a sanctioned accent use in this view. */
+.landing-picker__card[aria-pressed='true'] {
+  border-color: var(--accent);
+}
+
+.landing-picker__label {
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.landing-picker__desc {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.landing-meta {
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* ---------------------------------------------------------------- charts */
+
+.landing-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.trace-chart {
+  margin: 0;
+  padding: 0.5rem 0.6rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.trace-chart--wide {
+  margin-bottom: 1rem;
+}
+
+.trace-chart__title {
+  margin-bottom: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.trace-chart__unit,
+.trace-chart__legend {
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.trace-chart__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.trace-chart__grid {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.trace-chart__grid--zero {
+  stroke: var(--text-dim);
+}
+
+.trace-chart__tick {
+  fill: var(--text-dim);
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.trace-chart__line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+
+.trace-chart__line--secondary {
+  stroke: var(--text-dim);
+  stroke-dasharray: 4 3;
+}
+
+.trace-chart__touchdown {
+  stroke: var(--text-dim);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.trace-chart__band {
+  fill: var(--border);
+  opacity: 0.35;
+}
+
+/* ----------------------------------------------------------- report card */
+
+.landing-report {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 0.5rem;
+  margin: 0 0 1rem;
+}
+
+.landing-report__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.landing-report__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.landing-report__value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 1.05rem;
+  font-weight: 600;
+}
+
+/* A dot per grade, next to the number — never colour alone on text. */
+.landing-report__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ok);
+}
+
+.landing-report__item[data-grade='warn'] .landing-report__dot {
+  background: var(--warn);
+}
+
+.landing-report__item[data-grade='warn'] .landing-report__value {
+  color: var(--warn);
+}
+
+.landing-report__item[data-grade='danger'] .landing-report__dot {
+  background: var(--danger);
+}
+
+.landing-report__item[data-grade='danger'] .landing-report__value {
+  color: var(--danger);
+}
+
+/* ---------------------------------------------------------------- export */
+
+.landing-export {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+}
+
+.landing-export__note {
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}

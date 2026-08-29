@@ -1,0 +1,24 @@
+name: "Engine failure after V1"
+description: >
+  Takeoff roll on runway 36 at ZZZZ. Engine 1 fails just after V1 (135 kt),
+  forcing a continued takeoff on one engine.
+tags: [failure, takeoff, engine]
+
+position:
+  type: runway_threshold
+  airport_icao: ZZZZ
+  runway_ident: "36"
+
+aircraft_state:
+  flaps_ratio: 0.2
+
+weather:
+  preset: cavok
+
+failures:
+  armed:
+    - failure_id: engine.failure
+      engine_index: 1
+      trigger:
+        type: speed_above
+        ias_kt: 135.0

@@ -1,0 +1,22 @@
+name: "Hydraulic failure"
+description: >
+  On approach to runway 36 at ZZZZ, 8 NM out, in clear weather, a total
+  hydraulic failure is armed to fire once the aircraft descends through
+  3,000 ft MSL — loss of hydraulic pressure well into the approach.
+tags: [failure, hydraulics, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: final_8nm
+
+weather:
+  preset: cavok
+
+failures:
+  armed:
+    - failure_id: hydraulics.system
+      trigger:
+        type: altitude_below
+        altitude_ft: 3000.0
