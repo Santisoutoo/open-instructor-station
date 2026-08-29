@@ -1,6 +1,6 @@
 /*
  * Instructor Map panel. Custom properties only — both themes are a value swap away
- * (see index.css). Amber budget in this view: the armed tool buttons (follow /
+ * (see index.css). Accent budget in this view: the armed tool buttons (follow /
  * measure / reposition via aria-pressed), the one solid "Send to Position tab"
  * action, and focus rings. Canvas drawings are painted by MapLibre with literal
  * colours (WebGL cannot read custom properties) — see useMapOverlays.ts.
@@ -284,7 +284,7 @@
   outline-offset: 2px;
 }
 
-/* Armed state: amber, one of the sanctioned accent uses in this view. */
+/* Armed state: the accent, one of the sanctioned accent uses in this view. */
 .map-tool[aria-pressed='true'] {
   border-color: var(--accent);
   color: var(--accent);
@@ -324,7 +324,7 @@
   margin-left: auto;
 }
 
-/* The one solid-amber action in this view. */
+/* The one solid-accent action in this view. */
 .map-staging__send {
   min-height: 44px;
   padding: 0 1rem;
