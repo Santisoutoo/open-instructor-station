@@ -1,7 +1,7 @@
 /*
  * Traffic panel. Custom properties only — both themes are a value swap away
  * (see index.css). Tablet-first: the contact list and CLEAR ALL sit at the top,
- * thumb-reachable, and every control is at least 44 px tall. Amber budget in this
+ * thumb-reachable, and every control is at least 44 px tall. Accent budget in this
  * view: focus rings and the one solid Spawn button of the active form.
  */
 
@@ -390,7 +390,7 @@
   outline-offset: 2px;
 }
 
-/* The one solid-amber primary action per form: Spawn. */
+/* The one solid-accent primary action per form: Spawn. */
 .traffic-form__spawn {
   justify-self: start;
   min-height: 48px;

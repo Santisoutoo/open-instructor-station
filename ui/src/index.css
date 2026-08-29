@@ -7,61 +7,63 @@
  * default (sim rooms are dim); an inline script in index.html stamps `data-theme` on
  * <html> before first paint, and uiSync keeps it in step with the store afterwards.
  *
- * The dark palette is "night ops": carbon neutrals with a warm drift, so the amber sits
- * in the same colour family as the ground it lands on — a dim cockpit, not a code editor.
- * The accent is aviation amber — one accent, few placements (active tab, the one primary
- * action per panel, focus rings). Everything else is neutral or semantic ok/warn/danger.
+ * The shell now shares Position's palette and type system (see position.css for the
+ * source of truth): cool blue-gray neutrals (oklch hue 250) instead of a warm drift, and
+ * a green accent instead of aviation amber — one accent, few placements (active tab, the
+ * one primary action per panel, focus rings). --ok converges with --accent (Position has
+ * no separate success token, its one green already carries both roles); --warn/--danger
+ * map to Position's caution/alert tones.
  *
- * Type is IBM Plex, self-hosted (imported in main.tsx; the station serves over LAN with
- * no internet, so every glyph ships in the bundle): Plex Sans for UI, Plex Mono for every
- * live value and identifier.
+ * Type is Schibsted Grotesk (UI) + Spline Sans Mono (every live value and identifier),
+ * self-hosted and imported eagerly in main.tsx — the station serves over LAN with no
+ * internet, so every glyph ships in the bundle.
  */
 
 :root,
 [data-theme='dark'] {
-  --bg: #16140f;
-  --bg-panel: #1d1a14;
-  --bg-raised: #26221a;
-  --border: #3b362b;
-  --text: #ece6d9;
-  --text-dim: #a69d8b;
-  --accent: #e8a33d;
-  --accent-strong: #f2b959;
-  --on-accent: #14100a;
-  --focus: #e8a33d;
-  --ok: #5aaf6d;
-  --warn: #cf9a2e;
-  --danger: #e8705f;
+  --bg: oklch(0.155 0.012 250);
+  --bg-panel: oklch(0.19 0.013 250);
+  --bg-raised: oklch(0.215 0.014 250);
+  --border: oklch(0.31 0.012 250);
+  --text: oklch(0.97 0.005 250);
+  --text-dim: oklch(0.76 0.008 250);
+  --accent: oklch(0.72 0.16 145);
+  --accent-strong: oklch(0.8 0.16 145);
+  --on-accent: oklch(0.17 0.03 145);
+  --focus: oklch(0.72 0.16 145);
+  --ok: oklch(0.72 0.16 145);
+  --warn: oklch(0.8 0.13 78);
+  --danger: oklch(0.68 0.17 25);
 
   color-scheme: dark;
 }
 
 /*
- * Light theme: warm off-white ground so the amber reads as one family with it. The
- * accent is darkened to hold 4.5:1 on white — it intentionally converges with --warn,
- * which is acceptable because warn is never colour-only (always paired with wording).
+ * Light theme: cool off-white ground matching Position's light variant. The accent is
+ * darkened to hold contrast on white — it intentionally converges with --ok, which is
+ * acceptable because state is never colour-only (always paired with wording).
  */
 [data-theme='light'] {
-  --bg: #f4f2ee;
-  --bg-panel: #ffffff;
-  --bg-raised: #ece9e2;
-  --border: #d5d0c6;
-  --text: #1c2128;
-  --text-dim: #59626e;
-  --accent: #9a6700;
-  --accent-strong: #7a5200;
-  --on-accent: #ffffff;
-  --focus: #9a6700;
-  --ok: #256e3a;
-  --warn: #9a6700;
-  --danger: #b5352a;
+  --bg: oklch(0.96 0.004 250);
+  --bg-panel: oklch(0.995 0.002 250);
+  --bg-raised: oklch(0.975 0.003 250);
+  --border: oklch(0.84 0.006 250);
+  --text: oklch(0.22 0.012 250);
+  --text-dim: oklch(0.38 0.012 250);
+  --accent: oklch(0.5 0.13 145);
+  --accent-strong: oklch(0.42 0.13 145);
+  --on-accent: oklch(0.99 0.005 145);
+  --focus: oklch(0.5 0.13 145);
+  --ok: oklch(0.5 0.13 145);
+  --warn: oklch(0.56 0.14 65);
+  --danger: oklch(0.5 0.18 25);
 
   color-scheme: light;
 }
 
 :root {
-  --font-ui: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Cascadia Mono', Consolas, monospace;
+  --font-ui: 'Schibsted Grotesk', 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'Spline Sans Mono', 'Cascadia Mono', Consolas, monospace;
 
   font-family: var(--font-ui);
   font-size: 16px;
@@ -192,7 +194,7 @@ h2 {
   padding: 0 1rem;
   background: transparent;
   border: none;
-  /* The amber underline on the active tab is one of the accent's few placements. */
+  /* The accent underline on the active tab is one of the accent's few placements. */
   border-bottom: 2px solid transparent;
   color: var(--text-dim);
   font-size: 0.95rem;
@@ -334,7 +336,7 @@ h2 {
 
 /*
  * A scenario in progress follows the instructor to every module: an outlined chip with
- * the run's name. Neutral on purpose — the solid amber chip is reserved for demo data.
+ * the run's name. Neutral on purpose — the solid accent chip is reserved for demo data.
  */
 .statusbar__scenario-chip {
   display: inline-flex;
@@ -357,7 +359,7 @@ h2 {
 
 /*
  * Synthetic data must never pass for the simulator: whenever the demo feed is what the
- * screens are showing, this solid amber chip stays in the status bar.
+ * screens are showing, this solid accent chip stays in the status bar.
  */
 .statusbar__demo-chip {
   padding: 0.15rem 0.6rem;
