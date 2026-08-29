@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -77,6 +77,57 @@ describe('the configuration fields', () => {
     expect(screen.getByLabelText('Flaps %')).toHaveValue(50);
   });
 
+  it('keeps "Flaps" ticked and the box genuinely clearable while re-entering a value', async () => {
+    // Regression for #164: `Number('')` is 0, not null, so clearing the box to type a
+    // replacement used to read back as "flaps off" and untick + disable the field on the
+    // same keystroke, before the instructor could type anything.
+    //
+    // A first fix (null-guarding the onChange) stopped that, but bound the box straight to
+    // the resolved-fallback value, which snapped a cleared box back to "50" on the very
+    // same render — the instructor could delete only the last digit of "50", never both.
+    // The box must stay genuinely empty while focused so a full replacement can be typed.
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercent = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercent).toHaveValue(50);
+    });
+
+    fireEvent.focus(flapsPercent);
+    fireEvent.change(flapsPercent, { target: { value: '' } });
+
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+    expect(flapsPercent).not.toBeDisabled();
+    expect(flapsPercent).toHaveValue(null);
+
+    fireEvent.change(flapsPercent, { target: { value: '30' } });
+    expect(flapsPercent).toHaveValue(30);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+
+    fireEvent.blur(flapsPercent);
+    expect(flapsPercent).toHaveValue(30);
+  });
+
+  it('reverts the Flaps % box to the resolved default when left empty', async () => {
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercent = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercent).toHaveValue(50);
+    });
+
+    fireEvent.focus(flapsPercent);
+    fireEvent.change(flapsPercent, { target: { value: '' } });
+    expect(flapsPercent).toHaveValue(null);
+
+    fireEvent.blur(flapsPercent);
+
+    expect(flapsPercent).toHaveValue(50);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+  });
+
   it('unticking "Flaps" commands flaps up rather than silently changing nothing', async () => {
     stubApi(positionRoutes());
     const store = renderBar();
@@ -111,6 +162,27 @@ describe('the configuration fields', () => {
       expect(screen.getByLabelText('IAS (kt)')).toHaveValue(121);
     });
     expect(screen.getByLabelText('Gear down')).toBeChecked();
+  });
+
+  it('lets the instructor clear "Override altitude (ft)" instead of snapping back to 0', async () => {
+    // Regression for #165: the field is a plain `number` in Redux (no "leave it alone"
+    // meaning to fall back on like IAS/Pitch), so the box used to re-render `0` on the
+    // same keystroke that was meant to clear it.
+    stubApi(positionRoutes());
+    const store = renderBar();
+
+    await userEvent.click(await screen.findByLabelText('Override altitude'));
+    const field = screen.getByLabelText('Override altitude (ft)');
+    expect(field).toHaveValue(0);
+
+    await userEvent.clear(field);
+    expect(field).toHaveValue(null);
+
+    await userEvent.type(field, '4500');
+    expect(field).toHaveValue(4500);
+    await waitFor(() => {
+      expect(store.getState().positionDesign.config.altitudeOverrideFt).toBe(4500);
+    });
   });
 
   it('disables Course and ILS frequency on a runway that publishes no ILS', async () => {
