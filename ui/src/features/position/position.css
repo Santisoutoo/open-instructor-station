@@ -26,6 +26,11 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
+  /* `.pos` is a CSS Grid item of `.app__tabpanel`; grid items default to `min-width: auto`,
+     which resolves to their content's min-content size. Without this, the `.pos-header`
+     tablist below has no width to shrink against and blows the whole screen out past the
+     viewport instead of scrolling. */
+  min-width: 0;
   background: var(--pos-bg);
   color: var(--pos-t1);
   font-family: 'Schibsted Grotesk', 'Segoe UI', system-ui, sans-serif;
@@ -133,10 +138,28 @@
   background: var(--pos-panel);
   border-bottom: 1px solid var(--pos-hair);
   position: relative;
+  min-width: 0;
 }
 
 .pos-header .tabbar {
+  /* No grow (`.pos-header__spacer` owns pushing the right-hand controls to the edge) but
+     shrinks from its natural content width when the row is squeezed, scrolling its own
+     overflow rather than the row itself. `min-width: 0` overrides the flex-item default of
+     `auto` (= content size) — without it the tablist pushed the header past the viewport
+     instead of yielding to `overflow-x: auto`; with a `0%` basis instead of `auto` it shrank
+     in lockstep with the (already-empty) spacer and nearly disappeared. */
   flex: 0 1 auto;
+  min-width: 0;
+  overflow-x: auto;
+  /* The shared `.tabbar` rule sets `scrollbar-width: none` — no native scrollbar, and no other
+     affordance — so a squeezed strip reads as "broken, text got cut off" rather than
+     "scrollable, more tabs to the right". An edge-fade `mask-image` was tried here first, but a
+     fade has no notion of scroll position: it fades whichever tab sits at each end regardless of
+     whether that direction is actually scrollable, which washed out the active first tab's label
+     and accent underline even with nothing to its left. A visible scrollbar has no such failure
+     mode — it's just always honest — so restore it here only (the rest of the app's header
+     usually has enough room that it doesn't matter there). */
+  scrollbar-width: thin;
 }
 
 .pos-header .tabbar__tab {
@@ -182,8 +205,11 @@
 }
 
 .pos-header__airport-name {
+  overflow: hidden;
+  max-width: 20ch;
   color: var(--pos-t2);
   white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .pos-header__load {
