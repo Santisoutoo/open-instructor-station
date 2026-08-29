@@ -3,7 +3,7 @@
  *
  * Staging a preset changes nothing in the simulator. This bar shows the *resolved* values —
  * the current weather with the staged preset + the instructor's overrides replacing whatever
- * they actually touch — and **one** solid-amber button commits them. Errors render here,
+ * they actually touch — and **one** solid-accent button commits them. Errors render here,
  * inline; never a modal over a running lesson.
  */
 

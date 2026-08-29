@@ -1,7 +1,7 @@
 /*
  * Weather panel. Custom properties only — both themes are a value swap away
  * (see index.css). Accent placements in this view: the staged tile's border, the
- * one solid-amber Apply button, and focus rings. Everything else is neutral.
+ * one solid-accent Apply button, and focus rings. Everything else is neutral.
  */
 
 .weather-panel {
@@ -60,7 +60,7 @@
   transition: border-color 80ms ease-out;
 }
 
-/* Staged is the amber border — one of the accent's few placements here. */
+/* Staged is the accent border — one of the accent's few placements here. */
 .weather-tile--staged,
 .weather-tile--staged:not(:disabled):hover {
   border-color: var(--accent);
@@ -354,7 +354,7 @@
   outline-offset: 2px;
 }
 
-/* The one solid amber primary in the view. */
+/* The one solid accent primary in the view. */
 .weather-staging__apply {
   min-height: 44px;
   padding: 0 1rem;

@@ -49,3 +49,57 @@ describe('App — full-bleed Position screen', () => {
     expect(document.getElementById('tabpanel-map')).toBeInTheDocument();
   });
 });
+
+describe('App — gated tabs', () => {
+  it('shows GateDelayedPanel instead of the real panel for a gated tab', async () => {
+    const store = setupStore();
+    render(
+      <Provider store={store}>
+        <App />
+      </Provider>,
+    );
+
+    store.dispatch(tabSelected('scenarios'));
+
+    expect(
+      await screen.findByRole('region', { name: 'Scenarios' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: /scenarios delayed/i }),
+    ).toBeInTheDocument();
+  });
+
+  it('does not gate Position or Weather', async () => {
+    const store = setupStore();
+    render(
+      <Provider store={store}>
+        <App />
+      </Provider>,
+    );
+
+    store.dispatch(tabSelected('weather'));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('heading', { name: /weather delayed/i }),
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it('"Back to home" on a gated panel returns to Position', async () => {
+    const store = setupStore();
+    render(
+      <Provider store={store}>
+        <App />
+      </Provider>,
+    );
+
+    store.dispatch(tabSelected('scenarios'));
+    const back = await screen.findByRole('button', { name: /back to home/i });
+    back.click();
+
+    await waitFor(() => {
+      expect(store.getState().ui.activeTab).toBe('position');
+    });
+  });
+});

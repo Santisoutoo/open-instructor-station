@@ -26,7 +26,7 @@
   transition: border-color 80ms ease-out;
 }
 
-/* Selection is the amber border — the accent's only other placement here. */
+/* Selection is the accent border — the accent's only other placement here. */
 .scenarios-card--selected,
 .scenarios-card--selected.scenarios-card--available:hover {
   border-color: var(--accent);
@@ -100,7 +100,7 @@
   color: var(--text-dim);
 }
 
-/* The one solid amber primary in the view. */
+/* The one solid accent primary in the view. */
 .scenarios-card__run {
   min-height: 44px;
   margin: 0.25rem 0.9rem 0.75rem;

@@ -5,7 +5,7 @@ import { TABS } from './tabs';
 
 /**
  * The module tab bar — the shell's navigation. A proper tablist: arrow keys move and
- * select (roving focus), the amber underline marks the active module, and the whole
+ * select (roving focus), the accent underline marks the active module, and the whole
  * strip scrolls horizontally when a narrow tablet cannot fit eight modules.
  */
 export function TabBar() {
