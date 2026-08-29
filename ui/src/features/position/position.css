@@ -867,9 +867,21 @@
   gap: 1rem;
 }
 
-/* Ticket-stub perforation: a row of tangent half-circle bites, painted in the page's own
-   background colour, cut into the card's top and bottom padding band. Scoped to .pos-rail —
-   see design doc §7.7 for why this is not a shared utility class yet. */
+/* Ticket-stub perforation: a row of tangent half-circle bites, cut into the card's top and
+   bottom padding band. Scoped to .pos-rail — see design doc §7.7 for why this is not a shared
+   utility class yet.
+   `7.5px, transparent 8.5px` is not an arbitrary feather: 7.5 + 8.5 = 16 = D (the tile size), so
+   adjacent dots' soft edges meet exactly at their shared tangent point — change either number
+   and a seam or a double-covered gap appears at every tile boundary.
+   The punch colour is `--pos-bg` (always darker than `--pos-rail` in both themes — the
+   elevation convention this whole design system already uses, so it reads as a hole rather than
+   an embossed highlight), with a `@supports`-gated override for browsers that support CSS
+   relative colour syntax: `--pos-bg` alone is only ΔL≈0.015 (OKLCH lightness) from `--pos-rail`
+   in the *light* theme — correct direction, too little magnitude — and no other existing token
+   is reliably darker than `--pos-rail` in *both* themes (dividers/lines are conventionally
+   lighter than their panel in dark mode, the opposite of what a recessed hole needs). Computing
+   the punch colour relative to `--pos-rail` itself guarantees the right direction and a real
+   margin in either theme, without hand-picking a token. */
 .pos-rail::before,
 .pos-rail::after {
   content: '';
@@ -882,6 +894,17 @@
   background-repeat: repeat-x;
   pointer-events: none;
   z-index: 1;
+}
+
+@supports (color: oklch(from red l c h)) {
+  .pos-rail::before,
+  .pos-rail::after {
+    background-image: radial-gradient(
+      circle at 8px 0,
+      oklch(from var(--pos-rail) calc(l - 0.1) c h) 7.5px,
+      transparent 8.5px
+    );
+  }
 }
 
 .pos-rail::before {
