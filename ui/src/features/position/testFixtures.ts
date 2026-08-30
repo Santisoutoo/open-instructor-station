@@ -18,6 +18,8 @@ import type {
   ParkingStand,
   PlacementPreview,
   PlacementResult,
+  Procedure,
+  ProcedureSummary,
   Runway,
   WeatherState,
 } from '../../api/models';
@@ -100,6 +102,106 @@ export const STANDS: readonly ParkingStand[] = [
 ];
 
 /** 240°/12 kt: an 11 kt tailwind on 04R and an 11 kt headwind on 22L. */
+function approach(
+  ident: string,
+  approach_type: NonNullable<ProcedureSummary['approach_type']> | null,
+  transition: string | null = null,
+): ProcedureSummary {
+  return {
+    airport_icao: ICAO,
+    kind: 'approach',
+    ident,
+    transition,
+    runway_idents: ['04R'],
+    approach_type,
+    leg_count: 3,
+    positionable_leg_count: 2,
+  };
+}
+
+/**
+ * The procedures LFMN "publishes" here: one SID, and approaches to 04R of three real types
+ * plus one the provider could not classify — enough for the type filter to have something
+ * to hide. Not in `positionRoutes()` by default: most screens want an empty list.
+ */
+export const PROCEDURES: readonly ProcedureSummary[] = [
+  {
+    airport_icao: ICAO,
+    kind: 'sid',
+    ident: 'BADO8A',
+    transition: null,
+    runway_idents: ['04R'],
+    approach_type: null,
+    leg_count: 4,
+    positionable_leg_count: 3,
+  },
+  approach('I04R', 'ils'),
+  // A named transition really arrives as "unknown" (its ARINC route type says only
+  // "transition"); the UI shows it as ILS by inheriting the common route's type.
+  approach('I04R', 'unknown', 'MUS'),
+  approach('R04R', 'rnav'),
+  approach('V04R', 'vor'),
+  approach('X04R', null),
+];
+
+const LEG_FLAGS = {
+  is_flyover: false,
+  is_initial_approach_fix: false,
+  is_final_approach_fix: false,
+  is_missed_approach_point: false,
+  is_missed_approach_leg: false,
+  is_end_of_procedure: false,
+} as const;
+
+/** The ILS 04R common route, with the climb-out `CA` the server refuses to place on. */
+export const PROCEDURE_I04R: Procedure = {
+  airport_icao: ICAO,
+  kind: 'approach',
+  ident: 'I04R',
+  transition: null,
+  runway_idents: ['04R'],
+  approach_type: 'ils',
+  legs: [
+    {
+      ...LEG_FLAGS,
+      sequence: 10,
+      path_terminator: 'IF',
+      is_positionable: true,
+      fix: {
+        ident: 'NERAS',
+        kind: 'fix',
+        position: { latitude: 43.5, longitude: 7.0, altitude_ft: 0 },
+      },
+      altitude: {
+        descriptor: '+',
+        min_ft: 3000,
+        min_is_flight_level: false,
+        max_is_flight_level: false,
+        display: 'at or above 3000 ft',
+      },
+    },
+    {
+      ...LEG_FLAGS,
+      sequence: 20,
+      path_terminator: 'CF',
+      is_positionable: true,
+      fix: {
+        ident: 'RW04R',
+        kind: 'runway',
+        position: { latitude: 43.6584, longitude: 7.2159, altitude_ft: 12 },
+      },
+    },
+    {
+      ...LEG_FLAGS,
+      sequence: 30,
+      path_terminator: 'CA',
+      is_missed_approach_leg: true,
+      is_positionable: false,
+      unpositionable_reason: 'A CA leg carries no defensible coordinate.',
+    },
+  ],
+};
+
 export const WEATHER: WeatherState = {
   wind_layers: [
     {
