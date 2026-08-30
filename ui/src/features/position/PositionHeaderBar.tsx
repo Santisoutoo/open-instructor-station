@@ -14,6 +14,7 @@ import { themeToggled } from '../../store/uiSlice';
 import { AirportMenu } from './AirportMenu';
 import { ScreenMenu } from './ScreenMenu';
 import { StartAtPopover } from './StartAtPopover';
+import { startAtLabelOf, startAtPopoverId } from './startAt';
 import {
   airportLoaded,
   airportMenuOpened,
@@ -30,7 +31,10 @@ export function PositionHeaderBar() {
   const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
   const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
   const screenMenuOpen = useAppSelector((state) => state.positionDesign.screenMenuOpen);
-  const startAtOpen = useAppSelector((state) => state.positionDesign.startAtOpen);
+  const startAtOpen = useAppSelector(
+    (state) =>
+      state.positionDesign.startAtOpen && state.positionDesign.startAtAnchor === 'header',
+  );
   const airportMenuOpen = useAppSelector((state) => state.positionDesign.airportMenuOpen);
   const connectionStatus = useAppSelector((state) => state.connection.status);
   const demoFeed = useAppSelector((state) => state.ui.demoFeed);
@@ -55,12 +59,7 @@ export function PositionHeaderBar() {
   }
 
   const connected = connectionStatus === 'connected';
-  const startAtLabel =
-    selectedStand !== null
-      ? `Stand ${selectedStand}`
-      : selectedRunway !== null
-        ? `Runway ${selectedRunway}`
-        : 'Not set';
+  const startAtLabel = startAtLabelOf(selectedRunway, selectedStand);
 
   const airportName = isError
     ? 'airport lookup failed'
@@ -130,14 +129,14 @@ export function PositionHeaderBar() {
         className="pos-header__startat-trigger"
         aria-haspopup="dialog"
         aria-expanded={startAtOpen}
-        aria-controls="pos-startat-popover"
+        aria-controls={startAtPopoverId('header')}
         onClick={() => {
-          dispatch(startAtToggled());
+          dispatch(startAtToggled('header'));
         }}
       >
         Start at <span className="pos-mono">{startAtLabel}</span>
       </button>
-      <StartAtPopover triggerRef={startAtTriggerRef} />
+      <StartAtPopover anchor="header" triggerRef={startAtTriggerRef} />
 
       <div className="pos-header__spacer" />
 

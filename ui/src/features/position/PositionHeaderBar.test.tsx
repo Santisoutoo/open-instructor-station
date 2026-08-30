@@ -9,6 +9,9 @@ import { initialPositionDesignState } from './positionDesignSlice';
 import { callsTo, stubApi } from './testApi';
 import { ICAO, positionRoutes } from './testFixtures';
 
+// The airport diagram is a MapLibre map now; jsdom has no WebGL (see test/maplibreStub).
+vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });

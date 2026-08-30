@@ -79,9 +79,20 @@ describe('screenMenuToggled / startAtToggled', () => {
     const menuOpen = reducer(undefined, screenMenuToggled());
     expect(menuOpen.screenMenuOpen).toBe(true);
 
-    const startAtOpen = reducer(menuOpen, startAtToggled());
+    const startAtOpen = reducer(menuOpen, startAtToggled('header'));
     expect(startAtOpen.startAtOpen).toBe(true);
+    expect(startAtOpen.startAtAnchor).toBe('header');
     expect(startAtOpen.screenMenuOpen).toBe(false);
+  });
+
+  it('the other trigger moves the open Start-at popover instead of closing it', () => {
+    const fromHeader = reducer(undefined, startAtToggled('header'));
+    const moved = reducer(fromHeader, startAtToggled('bottombar'));
+    expect(moved.startAtOpen).toBe(true);
+    expect(moved.startAtAnchor).toBe('bottombar');
+
+    const closed = reducer(moved, startAtToggled('bottombar'));
+    expect(closed.startAtOpen).toBe(false);
   });
 });
 

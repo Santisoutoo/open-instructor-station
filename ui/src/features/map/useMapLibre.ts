@@ -10,6 +10,8 @@
 
 import {
   Map as MaplibreMapCtor,
+  NavigationControl,
+  type LngLatBoundsLike,
   type Map as MapLibreMap,
   type StyleSpecification,
 } from 'maplibre-gl';
@@ -43,22 +45,57 @@ export interface MapLibreHandle {
   map: MapLibreMap | null;
 }
 
-export function useMapLibre(): MapLibreHandle {
+export interface MapLibreOptions {
+  /**
+   * Open fitted to this extent instead of `MAP_HOME`. Read once, when the map is created —
+   * a later change does not move a map the instructor may already be panning.
+   */
+  readonly bounds?: LngLatBoundsLike | undefined;
+  /** Pixels kept clear inside the frame when fitting `bounds`. */
+  readonly fitPadding?: number;
+  /** Never zoom closer than this when fitting `bounds` (one stand is not a whole airport). */
+  readonly fitMaxZoom?: number;
+  /** Add the +/− buttons. The Instructor Map has its own chrome; the airport diagram does not. */
+  readonly navigation?: boolean;
+  /** Fold the OSM attribution behind an "i" — the diagram is too small for the full line. */
+  readonly compactAttribution?: boolean;
+}
+
+export function useMapLibre(options: MapLibreOptions = {}): MapLibreHandle {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [map, setMap] = useState<MapLibreMap | null>(null);
+  // The options only matter at construction: a snapshot keeps the effect's dependency
+  // list empty, so a re-render with a new options object never tears the map down.
+  const [initialOptions] = useState(options);
 
   useEffect(() => {
     const container = containerRef.current;
     if (container === null) {
       return;
     }
+    const { bounds, fitPadding, fitMaxZoom, navigation, compactAttribution } =
+      initialOptions;
     const instance = new MaplibreMapCtor({
       container,
       style: OSM_STYLE,
-      center: [MAP_HOME.lon, MAP_HOME.lat],
-      zoom: MAP_HOME_ZOOM,
+      ...(bounds === undefined
+        ? { center: [MAP_HOME.lon, MAP_HOME.lat], zoom: MAP_HOME_ZOOM }
+        : {
+            bounds,
+            fitBoundsOptions: {
+              ...(fitPadding === undefined ? {} : { padding: fitPadding }),
+              ...(fitMaxZoom === undefined ? {} : { maxZoom: fitMaxZoom }),
+            },
+          }),
+      ...(compactAttribution === true ? { attributionControl: { compact: true } } : {}),
     });
-    // Async by nature, so this is not a synchronous set-state-in-effect.
+    if (navigation === true) {
+      instance.addControl(new NavigationControl({ showCompass: false }), 'top-right');
+    }
+    // Async by nature, so this is not a synchronous set-state-in-effect. Everything
+    // MapLibre does after the constructor rides on requestAnimationFrame, so in a hidden
+    // tab `load` simply waits until the tab is shown — do not "fix" a map that stays
+    // `null` under an occluded dev window.
     instance.once('load', () => {
       setMap(instance);
     });
@@ -79,7 +116,8 @@ export function useMapLibre(): MapLibreHandle {
       setMap(null);
       instance.remove();
     };
-  }, []);
+    // `initialOptions` is state that never changes, so this still runs exactly once.
+  }, [initialOptions]);
 
   return { containerRef, map };
 }

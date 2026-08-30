@@ -6,7 +6,10 @@ import { setupStore } from '../../store';
 import { PositionHeaderBar } from './PositionHeaderBar';
 import { initialPositionDesignState } from './positionDesignSlice';
 import { stubApi } from './testApi';
-import { ICAO, positionRoutes } from './testFixtures';
+import { ICAO, positionRoutes, STANDS } from './testFixtures';
+
+// The airport diagram is a MapLibre map now; jsdom has no WebGL (see test/maplibreStub).
+vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -37,6 +40,19 @@ describe('StartAtPopover', () => {
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+
+  it('a pointer press outside the popover closes it', async () => {
+    stubApi(positionRoutes());
+    await renderOpenPopover();
+
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    // `pointerdown`, not `click`: the close must beat the other anchor's trigger to the
+    // punch (see Popover.tsx) — this pins the event the implementation listens on.
+    fireEvent.pointerDown(document.body);
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
   it('lists the airport’s real runway ends, badging the one with an ILS', async () => {
@@ -82,6 +98,32 @@ describe('StartAtPopover', () => {
           element.textContent?.startsWith('A1') === true,
       );
     expect(listRow).toBeDefined();
+  });
+
+  it('renders every stand even when navdata repeats a parking name', async () => {
+    // Real apt.dat does this: LFMN publishes dozens of stands all named "Apron K parking".
+    // Duplicate React keys leave stale diagram buttons behind, so the key must not be the
+    // name alone — the console.error assertion is what actually pins that.
+    const a1 = STANDS.find((entry) => entry.name === 'A1');
+    if (a1 === undefined) {
+      throw new Error('fixture stand A1 is missing');
+    }
+    const duplicate = { ...a1, position: { ...a1.position, latitude: 43.661 } };
+    const consoleError = vi.spyOn(console, 'error');
+    stubApi(
+      positionRoutes({
+        [`airports/${ICAO}/parking`]: { body: [...STANDS, duplicate] },
+      }),
+    );
+    await renderOpenPopover();
+
+    expect(await screen.findByText('5 of 5')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Stand A1' })).toHaveLength(2);
+    const keyComplaints = consoleError.mock.calls.filter((call) =>
+      String(call[0]).includes('same key'),
+    );
+    expect(keyComplaints).toEqual([]);
+    consoleError.mockRestore();
   });
 
   it('says so, rather than showing an empty box, when the parking cannot be read', async () => {

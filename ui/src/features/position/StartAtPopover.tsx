@@ -24,8 +24,10 @@ import {
   startRunwaySelected,
   startStandSelected,
   type ParkingFilter,
+  type StartAtAnchor,
 } from './positionDesignSlice';
 import { runwaySelected } from './positionSlice';
+import { startAtPopoverId } from './startAt';
 import { useLoadedIcao, useRunways } from './usePositionData';
 
 /**
@@ -48,14 +50,24 @@ const KIND_LABEL: Record<Exclude<ParkingFilter, 'all'>, string> = {
   misc: 'Other',
 };
 
+/**
+ * Two triggers mount this component — the header's "Start at" and the bottom bar's "Pick
+ * stand / gate" — and only the one whose `anchor` the slice names renders the open panel.
+ * The bottom-bar instance floats *above* its trigger; the header's hangs below.
+ */
 export function StartAtPopover({
+  anchor,
   triggerRef,
 }: {
+  readonly anchor: StartAtAnchor;
   readonly triggerRef: RefObject<HTMLElement | null>;
 }) {
   const dispatch = useAppDispatch();
   const icao = useLoadedIcao();
-  const open = useAppSelector((state) => state.positionDesign.startAtOpen);
+  const open = useAppSelector(
+    (state) =>
+      state.positionDesign.startAtOpen && state.positionDesign.startAtAnchor === anchor,
+  );
   const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
   const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
   const parkingFilter = useAppSelector((state) => state.positionDesign.parkingFilter);
@@ -83,13 +95,17 @@ export function StartAtPopover({
 
   return (
     <Popover
-      id="pos-startat-popover"
+      id={startAtPopoverId(anchor)}
       open={open}
       onClose={() => {
-        dispatch(startAtToggled());
+        dispatch(startAtToggled(anchor));
       }}
       triggerRef={triggerRef}
-      className="pos-popover pos-startat"
+      className={
+        anchor === 'bottombar'
+          ? 'pos-popover pos-startat pos-startat--above'
+          : 'pos-popover pos-startat'
+      }
     >
       <div className="pos-startat__sidebar">
         <div className="pos-startat__section">
@@ -166,8 +182,9 @@ export function StartAtPopover({
           <p className="pos-startat__empty">The parking of {icao} could not be read.</p>
         )}
         <ul className="pos-startat__stands-list">
-          {shownStands.map((stand) => (
-            <li key={stand.name}>
+          {/* Name + index: real apt.dat parking names repeat (see AirportDiagram). */}
+          {shownStands.map((stand, index) => (
+            <li key={`${stand.name}#${String(index)}`}>
               <button
                 type="button"
                 className={

@@ -277,6 +277,27 @@
   gap: 1rem;
 }
 
+/* The bottom-bar instance floats above its trigger instead of hanging off the header. */
+.pos-startat--above {
+  top: auto;
+  bottom: calc(100% + 0.5rem);
+  left: auto;
+  right: 1rem;
+}
+
+/*
+ * On a short viewport (1280×800 tablet) the bottom bar wraps taller and the full-height
+ * sidebar pushes the popover's top edge past the top of the screen by a few pixels. The
+ * sidebar is the only column without its own cap — the stand list and the diagram are both
+ * 262px — so cap it and let it scroll, rather than shrinking the 44px touch rows.
+ */
+@media (max-height: 820px) {
+  .pos-startat--above .pos-startat__sidebar {
+    max-height: 396px;
+    overflow-y: auto;
+  }
+}
+
 .pos-startat__sidebar {
   display: flex;
   flex-direction: column;
@@ -368,29 +389,63 @@
 
 .pos-diagram {
   position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--pos-hair);
+  background: var(--pos-hover);
 }
 
-.pos-diagram__svg {
-  display: block;
+/* The MapLibre canvas: OSM tiles with the runway-strip line layer on top. */
+.pos-diagram__map {
+  position: absolute;
+  inset: 0;
 }
 
 /*
- * One line per physical strip, drawn between the two thresholds navdata publishes. The
- * mockup's terminal blocks and taxiway are gone with the sample data: apt.dat publishes no
- * terminal buildings, and inventing three rectangles would be decoration pretending to be
- * an aerodrome chart.
+ * Stands and runway labels are DOM, laid over the canvas and re-placed through
+ * `map.project` on every move (see AirportDiagram.tsx for why they are not markers or a
+ * symbol layer). The overlay itself lets gestures through to the map; only its children
+ * take the pointer.
  */
-.pos-diagram__runway-line {
-  stroke: var(--pos-t3);
-  stroke-width: 6;
-  stroke-linecap: round;
-  opacity: 0.55;
+.pos-diagram__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pos-diagram__overlay > * {
+  pointer-events: auto;
 }
 
 .pos-diagram__runway-label {
-  fill: var(--pos-t1);
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in oklch, var(--pos-panel) 80%, transparent);
+  color: var(--pos-t1);
   font-size: 9px;
-  font-family: 'Spline Sans Mono', monospace;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+/* The map control chrome, tinted to the panel rather than MapLibre's white. */
+.pos-diagram .maplibregl-ctrl-group {
+  background: var(--pos-panel);
+  box-shadow: 0 0 0 1px var(--pos-hair);
+}
+
+.pos-diagram .maplibregl-ctrl-group button + button {
+  border-top-color: var(--pos-hair);
+}
+
+/* MapLibre's control glyphs are black; the default (dark) panel needs them inverted. */
+.pos-diagram .maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+
+[data-theme='light'] .pos-diagram .maplibregl-ctrl-icon {
+  filter: none;
 }
 
 .pos-diagram__stand {
@@ -406,11 +461,18 @@
   cursor: pointer;
 }
 
+/*
+ * Fixed colours, not theme tokens: the dot sits on OSM tiles, which are light in both
+ * themes. The white ring is what keeps 298 overlapping dots at airport-overview zoom
+ * reading as a cluster of markers instead of one solid blob.
+ */
 .pos-diagram__stand-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--pos-line);
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  background: #2a3138;
+  border: 2px solid rgb(255 255 255 / 0.92);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
 .pos-diagram__stand--selected .pos-diagram__stand-dot {
@@ -588,7 +650,6 @@
 .pos-factrow__value--caution {
   color: var(--pos-caution);
 }
-
 
 /* -------------------------------------------------------- approach tab */
 
@@ -1050,6 +1111,7 @@
 /* ------------------------------------------------------------- bottom bar */
 
 .pos-bottombar {
+  position: relative;
   flex: none;
   display: flex;
   align-items: flex-start;
@@ -1124,6 +1186,13 @@
 
 .pos-bottombar__na {
   color: var(--pos-caution);
+}
+
+/* On its own row under Course / ILS frequency — the gap issue #166 points at. */
+.pos-bottombar__startat {
+  flex-basis: 100%;
+  padding-left: 0;
+  text-align: left;
 }
 
 /* ----------------------------------------------------------------- checkbox */
