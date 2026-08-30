@@ -336,6 +336,210 @@ PR 2    a. contract: models + empty endpoint returning the model (fixes OpenAPI)
 - Sequence: #175 (this module + the dependency stack), #176 (`ProcedureDiagram3D.tsx` + the
   2D/3D selector), #177 (visual polish + camera reset), #178 (optional OSM ground texture).
 
+#### 4.7.1 Design — #176: `ProcedureDiagram3D.tsx` + the 2D/3D selector
+
+**Component contract** — identical to the 2D `ProcedureDiagram`, read verbatim from
+`ProcedureDiagram.tsx` on `dev`:
+
+```ts
+interface ProcedureDiagram3DProps {
+  readonly layout: ProcedureLayout;
+  readonly courseDeg: number;
+  readonly selectedSequence: number | null;
+  readonly onSelectLeg: (sequence: number) => void;
+}
+```
+
+`runway?: Runway` is **not** added here — #177 adds it purely additively.
+
+- `<Canvas>` framed from `scene.cameraPose` (`buildProcedureScene`'s own fit), `<OrbitControls
+  makeDefault enableDamping>` with **no `minPolarAngle`/`maxPolarAngle` clamp** — the issue asks
+  explicitly for looking from below the horizon.
+- Lazy-loaded via a `React.lazy` boundary declared **inside `SidStarTab.tsx`** (not a new entry
+  in `ui/src/components/tabs.ts` — that registry lazy-loads the eight top-level app tabs; the
+  Position panel is already one of them, so this is a narrower, nested boundary):
+  `const ProcedureDiagram3D = lazy(() => import('./ProcedureDiagram3D').then((m) => ({ default:
+  m.ProcedureDiagram3D })));`, wrapped in `<Suspense fallback={...}>` only around the 3D branch.
+- One node marker per `SceneNode` (`scene.nodes`), one path segment per `SceneSegment`
+  (`scene.segments`), rendered from a per-segment `.map`, matching 2D's per-node/per-segment
+  loop shape so #177 can drop curtain meshes into the same per-segment iteration later.
+- Selection: an invisible hit-sphere mesh per `is_positionable` node (`raycast={() => null}` on
+  the visual marker so it never competes with the hit sphere for the click — mirrors 2D's
+  transparent 44×44 `<button>` over a purely visual `aria-hidden` dot), `onClick` calling
+  `onSelectLeg(node.sequence)`, `onPointerOver`/`onPointerOut` driving local hover state (no
+  `onSelectLeg` equivalent for hover — hover is component-internal, same as 2D has no hover
+  state at all beyond CSS).
+
+**Semantics parity with the 2D view — in scope for #176 itself** (the issue asks for this
+directly; it is not #177's "visual polish," which is runway/ground/billboard-labels/curtain
+color+theming/camera-reset — see #177's own issue text). Reuse the exact predicates 2D already
+has, duplicated locally in `ProcedureDiagram3D.tsx` rather than cross-imported — the same
+precedent `procedureScene.ts` itself sets by duplicating `FEET_PER_NAUTICAL_MILE` rather than
+importing a private constant from `procedureProjection.ts`:
+
+```ts
+function segmentIsDashed(from: SceneNode, to: SceneNode): boolean {
+  return !to.node.positioned || from.node.is_missed_approach || to.node.is_missed_approach;
+}
+
+function isGuessedAltitude(node: LayoutNode): boolean {
+  return node.altitude_source === 'interpolated' || node.altitude_source === 'unknown';
+}
+```
+
+- Dashed / de-emphasised segments: `segmentIsDashed(from, to)` selects a distinct material for
+  that path line (drei `<Line>` supports `dashed`/`dashSize`/`gapSize` directly — use that
+  rather than opacity, so the *meaning* — "not a resolved fix" or "missed approach" — stays
+  visually distinct from #177's later curtain de-emphasis, which is a separate, opacity-based
+  concern).
+- Hollow altitude markers: `isGuessedAltitude(node.node)` swaps the node marker's material —
+  e.g. a ring/wireframe sphere vs. a solid one — the 3D equivalent of 2D's
+  `pos-procdiagram__node--hollow` CSS class swap. No CSS classes reach into WebGL materials, so
+  this is a material/geometry choice made in the component, not a class name.
+- Compressed segments visibly marked, with true length in NM (`layout.segments.filter((s) =>
+  s.scale === 'compressed')`, identical to 2D's own filter):
+  - the segment's line rendered in a distinct style (reuse the dashed mechanism or a third
+    color — implementer's call, document the choice),
+  - a text callout at the segment midpoint reading `↔ {segment.true_length_nm.toFixed(1)} NM`
+    (`segment.true_length_nm`, same field 2D reads), via a drei `<Html>` positioned at the
+    midpoint of the segment's two path vertices (`curtain[0]`/`curtain[1]`, averaged). This is
+    the **one** place #176 needs `<Html>`-in-3D-space at all — node ident/altitude labels are
+    #177's job (its own issue text: "Node ident labels as billboards"), so #176 does not render
+    those. Establishing the `<Html>` pattern here for the compressed-segment callout gives #177
+    a working precedent to extend for its billboard labels, rather than inventing it from
+    scratch.
+- Legend: plain HTML text under the canvas (not scene content — no `<Html>`-in-3D needed for
+  this one), mirroring 2D's `pos-procdiagram__legend` string: `vertical ×{VERTICAL_EXAGGERATION}
+  · not to scale`, class `pos-procdiagram3d__legend`.
+
+**Selector — state.** `positionDesignSlice.ts` (screen chrome, not `positionSlice.ts`'s
+server-intent shape, not local `useState` — a tab switch away and back must not lose the
+choice). **Exact naming from the issue text** (the field is `diagramMode`, not
+`procedureViewMode` — read the issue verbatim before implementing, it is authoritative):
+
+```ts
+export const DIAGRAM_MODES = ['2d', '3d'] as const;
+export type DiagramMode = (typeof DIAGRAM_MODES)[number];
+```
+
+Add to `PositionDesignState`: `diagramMode: DiagramMode;`. Initial value in
+`initialPositionDesignState`: `diagramMode: '2d'`.
+
+```ts
+diagramModeSelected(state, action: PayloadAction<DiagramMode>) {
+  state.diagramMode = action.payload;
+},
+```
+
+**Survival across resets is a real requirement — it is easy to get wrong by analogy with
+other fields that do reset.** The issue states explicitly: *"It is a view preference, not
+airport-scoped: it survives `clearAirportScopedState()` and `situationReset()`."*
+- `clearAirportScopedState` already wouldn't touch it (it mutates specific fields in place;
+  simply never add `diagramMode` to that function's body).
+- `situationReset` **does** need an explicit carve-out, the same way it already keeps
+  `icaoInput`/`loadedIcao`:
+  ```ts
+  situationReset(state) {
+    return {
+      ...initialPositionDesignState,
+      icaoInput: state.icaoInput,
+      loadedIcao: state.loadedIcao,
+      diagramMode: state.diagramMode,
+    };
+  },
+  ```
+  Test this explicitly — it is the one place the naive "just spread initial state" pattern
+  would silently violate the issue's own requirement.
+
+**Selector — UI.** New `ProcedureViewToggle.tsx` (or inline in `SidStarTab.tsx` if small enough
+— implementer's call), two `aria-pressed` buttons ("2D"/"3D"), `role="group"`, dispatching
+`diagramModeSelected`. Mounted in `SidStarTab.tsx` directly above the diagram, inside
+`.pos-sidstartab__diagram` (same column as the diagram itself, per §4.3's split-view layout, so
+it stays reachable without scrolling past the leg list on a narrow viewport).
+
+**Mount site — `SidStarTab.tsx`.** Both modes read `state.positionDesign.diagramMode` and
+consume the *same* `layout`/`selection`/`runway`-derived `courseDeg` the 2D branch already
+computes — no duplicated data fetching. Clicking a 3D node dispatches the same
+`procedureLegSelected` the leg list and the 2D dots already use — bidirectional selection is
+free, it is the same Redux action from a third dispatch site.
+
+**Remount-on-toggle is deliberate** (the issue leaves this open, asking to "decide in the PR" —
+this design picks remount and states why, so it isn't re-litigated per-PR): switching `2d → 3d
+→ 2d` unmounts/remounts `ProcedureDiagram3D`, unlike `App.tsx`'s map panel (which stays mounted
+across tab switches specifically to preserve a WebGL context that's expensive to reacquire and
+holds live subscriptions). The procedure diagram has neither: `buildProcedureScene` is a pure,
+cheap recompute, and remounting means the camera is always re-fit from `scene.cameraPose` on
+the way back in — which is the right default and covers most of what a "reset camera" button
+would do, ahead of #177 adding one for orbiting-without-leaving-3D.
+
+**Test stub — `ui/src/test/threeStub.ts`.** Mirrors `maplibreStub.ts`'s role (jsdom has no
+WebGL), but the mechanism differs: stub `Canvas` to a passthrough that renders `children`
+through ordinary `ReactDOM`, **not** stub the r3f JSX intrinsics (`<mesh>`, `<group>`,
+`<sphereGeometry>`, `<meshBasicMaterial>`, lights) at all — those are just lowercase tag names,
+so once inside the stubbed `Canvas` they render as literal custom elements and their
+`onClick`/`onPointerOver`/`onPointerOut` props wire through React's real synthetic-event system
+like any other host component. Use a real `Object3D` property (`name`) as the query hook —
+`data-testid` on an r3f element gets misinterpreted at real runtime as a nested prop path, so
+never use it there even though the stub wouldn't itself object.
+
+```ts
+// ui/src/test/threeStub.ts
+export const threeFiberStub = {
+  Canvas: ({ children }: { children?: ReactNode }) => children,
+  useThree: () => ({}),
+  useFrame: () => {},
+};
+
+export const threeDreiStub = {
+  OrbitControls: (props: Record<string, unknown>) => <orbit-controls-stub {...toStubAttrs(props)} />,
+  Line: ({ points }: { points: readonly unknown[] }) => <line-stub data-point-count={points.length} />,
+  Html: ({ children }: { children?: ReactNode }) => <html-stub>{children}</html-stub>,
+};
+```
+
+(`toStubAttrs` keeps only primitive props as DOM attributes.) Each test file registers the
+mocks itself via `vi.mock('@react-three/fiber', ...)` / `vi.mock('@react-three/drei', ...)` —
+per-file, matching how `maplibre-gl` is mocked today, not a global `setup.ts` registration. The
+stub is stateless for #176 (no ref registry, nothing to clear in `afterEach`); #177 extends it
+with an instance registry (mirroring `maplibreStub`'s `Map.created`) only when it needs an
+`OrbitControls` ref for its camera-reset button — not built here.
+
+**Test plan:**
+- `ProcedureDiagram3D.test.tsx`: one hit-mesh per `is_positionable` node, none for the others;
+  clicking one calls `onSelectLeg` with its `sequence`; `selectedSequence` changes the selected
+  node's rendered attributes; a dashed-segment case (`positioned: false` or
+  `is_missed_approach: true`) renders the `dashed` line variant, a normal segment doesn't; a
+  guessed-altitude node renders the hollow-marker variant; a `scale: 'compressed'` segment
+  renders its `<Html>` true-length callout with the right NM text; `OrbitControls` mounts once
+  with a `target` attribute present (not asserting its numeric value — that's #175's own,
+  already-tested job).
+- `ProcedureViewToggle.test.tsx` (or the inline equivalent's own assertions): `aria-pressed`
+  matches `mode`, clicking the other button calls the change handler with it.
+- `positionDesignSlice.test.ts`: `diagramModeSelected` sets the field; `situationReset`
+  **preserves** `diagramMode` (load `'3d'`, reset, assert it is still `'3d'`) — this is the
+  test that would catch the naive-reset mistake; a reducer test proving `airportLoaded` /
+  `clearAirportScopedState` does not touch it either.
+- `SidStarTab.test.tsx` (extend): mock `./ProcedureDiagram3D` to a `data-testid` stand-in (the
+  `Suspense` boundary makes the switch asynchronous — use `await screen.findByTestId(...)`, a
+  bare `getByTestId` will flake); toggling 2D→3D→2D renders the right branch each time; the
+  mocked 3D component receives the same `selectedSequence` a leg-list click would produce.
+
+**Files** — created: `ProcedureDiagram3D.tsx`, `ProcedureDiagram3D.test.tsx`,
+`ProcedureViewToggle.tsx` + its test (if split out), `ui/src/test/threeStub.ts`. Modified:
+`SidStarTab.tsx` (+ its test), `positionDesignSlice.ts` (+ its test), `position.css` (new
+`.pos-procdiagram3d`, `.pos-procdiagram3d__canvas`, `.pos-sidstartab__view-toggle`,
+`.pos-procdiagram3d__legend` rules, sized/aspect-ratio'd like `.pos-procdiagram` since a WebGL
+canvas has no `viewBox` auto-scaling and an unset height collapses to 0). **Unmodified, stated
+so nobody adds a speculative change**: `ui/package.json` (three/r3f/drei already dependencies
+since #175), `ui/src/components/tabs.ts` (wrong lazy boundary — see above), `core/` (nothing
+here touches sim-agnostic logic; `ProcedureLayout` is unchanged).
+
+**Not parallel with #177** (which extends `ProcedureDiagram3D.tsx` and cannot start until this
+merges — confirmed by the already-approved #177 implementation plan, which explicitly blocks on
+this component existing). Inside #176 itself, the component+stub track and the
+selector+slice+mount-site track touch disjoint files and can proceed in parallel once this
+contract is fixed.
+
 ---
 
 ## 5. Verification
