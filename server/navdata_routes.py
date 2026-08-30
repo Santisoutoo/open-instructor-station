@@ -49,9 +49,11 @@ from core.navdata.models import (
     ParkingStand,
     Procedure,
     ProcedureKind,
+    ProcedureLayout,
     ProcedureSummary,
 )
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
+from core.procedure_layout import procedure_layout
 from server._shared import _not_found_or_404
 from server.deps import get_navdata
 
@@ -252,6 +254,33 @@ def get_procedure(
         _provider().get_procedure(icao, kind, ident, transition),
         f"Procedure {ident.upper()!r} at {icao.upper()}",
     )
+
+
+@router.get(
+    "/airports/{icao}/procedures/{kind}/{ident}/layout",
+    response_model=ProcedureLayout,
+)
+def get_procedure_layout(
+    icao: str,
+    kind: ProcedureKind,
+    ident: str,
+    transition: str | None = None,
+    runway_ident: str | None = None,
+) -> ProcedureLayout:
+    """The procedure laid out to scale, anchored at the airport.
+
+    ``runway_ident`` only matters for a SID: its own legs never touch a runway
+    fix (a departure climbs away from one, it does not carry it as a leg), so
+    there is nothing in the procedure itself to anchor on. An approach or a
+    STAR resolves its own anchor from its legs and ignores the parameter.
+    """
+    procedure = _found(
+        _provider().get_procedure(icao, kind, ident, transition),
+        f"Procedure {ident.upper()!r} at {icao.upper()}",
+    )
+    airport = _found(_provider().get_airport(icao), f"Airport {icao.upper()!r}")
+    runway = _provider().get_runway(icao, runway_ident) if runway_ident else None
+    return procedure_layout(procedure, airport, runway=runway)
 
 
 @router.get("/navaids", response_model=list[Navaid])

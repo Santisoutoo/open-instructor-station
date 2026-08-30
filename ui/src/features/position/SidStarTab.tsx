@@ -9,7 +9,11 @@
  */
 
 import { useRef } from 'react';
-import { useGetProcedureQuery, useGetProceduresQuery } from '../../api/instructorApi';
+import {
+  useGetProcedureLayoutQuery,
+  useGetProcedureQuery,
+  useGetProceduresQuery,
+} from '../../api/instructorApi';
 import type { Procedure, ProcedureLeg } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
 import {
@@ -22,6 +26,7 @@ import {
 } from './approachTypes';
 import { FactRow } from './FactRow';
 import { Popover } from './Popover';
+import { ProcedureDiagram } from './ProcedureDiagram';
 import {
   PROCEDURE_FAMILIES,
   approachFilterSelected,
@@ -169,6 +174,16 @@ export function SidStarTab() {
       kind,
       ident: selection?.ident ?? '',
       transition: selection?.transition ?? null,
+    },
+    { skip: selection === null },
+  );
+  const { data: layout } = useGetProcedureLayoutQuery(
+    {
+      icao,
+      kind,
+      ident: selection?.ident ?? '',
+      transition: selection?.transition ?? null,
+      runwayIdent: runway?.ident ?? null,
     },
     { skip: selection === null },
   );
@@ -334,14 +349,26 @@ export function SidStarTab() {
           can be placed on.
         </p>
       ) : (
-        <ProcedureBody
-          procedure={procedure}
-          commonTypes={commonTypes}
-          sequence={selection?.sequence ?? null}
-          onSelectLeg={(sequence) => {
-            dispatch(procedureLegSelected(sequence));
-          }}
-        />
+        <>
+          {layout !== undefined && (
+            <ProcedureDiagram
+              layout={layout}
+              courseDeg={runway?.true_bearing_deg ?? 0}
+              selectedSequence={selection?.sequence ?? null}
+              onSelectLeg={(sequence) => {
+                dispatch(procedureLegSelected(sequence));
+              }}
+            />
+          )}
+          <ProcedureBody
+            procedure={procedure}
+            commonTypes={commonTypes}
+            sequence={selection?.sequence ?? null}
+            onSelectLeg={(sequence) => {
+              dispatch(procedureLegSelected(sequence));
+            }}
+          />
+        </>
       )}
     </div>
   );

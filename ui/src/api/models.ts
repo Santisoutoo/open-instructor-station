@@ -93,6 +93,19 @@ export type ProcedureKind = ProcedureSummary['kind'];
  */
 export type ApproachType = NonNullable<ProcedureSummary['approach_type']>;
 
+/** A procedure's legs laid out to scale, anchored at the airport — `.../procedures/.../layout`. */
+export type ProcedureLayout = components['schemas']['ProcedureLayout'];
+
+/** One leg's position in the to-scale picture. */
+export type LayoutNode = components['schemas']['LayoutNode'];
+
+/** One drawn edge between two consecutive `LayoutNode`s. */
+export type LayoutSegment = components['schemas']['LayoutSegment'];
+
+export type LayoutScale = LayoutSegment['scale'];
+
+export type AltitudeSource = LayoutNode['altitude_source'];
+
 /** A published holding pattern. */
 export type Hold = components['schemas']['Hold'];
 
@@ -438,8 +451,7 @@ export type TrafficStatus = components['schemas']['TrafficStatus'];
 export type TrafficSpawnResult = components['schemas']['TrafficSpawnResult'];
 
 /** Converge an intruder on the user aircraft's own projected track. */
-export type TcasConflictSpawnRequest =
-  components['schemas']['TcasConflictSpawnRequest'];
+export type TcasConflictSpawnRequest = components['schemas']['TcasConflictSpawnRequest'];
 
 /** The three named TCAS presets. */
 export type TcasSeverity = TcasConflictSpawnRequest['severity'];
@@ -462,12 +474,10 @@ export type ApproachSequenceSpawnRequest =
 export type TrafficApproachCategory = ApproachSequenceSpawnRequest['category'];
 
 /** A traffic entity ground-taxiing an explicit route. */
-export type TaxiTrafficSpawnRequest =
-  components['schemas']['TaxiTrafficSpawnRequest'];
+export type TaxiTrafficSpawnRequest = components['schemas']['TaxiTrafficSpawnRequest'];
 
 /** The escape hatch: a hand-built track, e.g. authored from map clicks. */
-export type CustomTrackSpawnRequest =
-  components['schemas']['CustomTrackSpawnRequest'];
+export type CustomTrackSpawnRequest = components['schemas']['CustomTrackSpawnRequest'];
 
 /**
  * The discriminated union `POST /api/traffic/spawn` takes.

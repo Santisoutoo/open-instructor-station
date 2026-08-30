@@ -1,7 +1,9 @@
 # Position Manager — approach-type breakdown and a to-scale procedure view
 
 Design for issue [#168](https://github.com/Santisoutoo/open-instructor-station/issues/168).
-Extends `position-manager.md` (§ SID/STAR tab) and `position-redesign-v3.md`. Status: **proposed**.
+Extends `position-manager.md` (§ SID/STAR tab) and `position-redesign-v3.md`. Status: **done** —
+Part 1 merged as #172, Part 2 as the PR this branch opens. See the note at the end of §4 for
+what changed between this design and the shipped code.
 
 ---
 
@@ -288,6 +290,28 @@ PR 2    a. contract: models + empty endpoint returning the model (fixes OpenAPI)
         e. start the backend, `cd ui && npm run generate:api` (hits :8000 live),
            wire getProcedureLayout + SidStarTab, run everything
 ```
+
+### 4.6 What changed between this design and the shipped code
+
+- **The gap this design left open**: `procedure_layout(procedure, airport)` had no way to
+  anchor a SID, whose legs never touch a runway fix (confirmed against the `ZZZ1A` fixture —
+  `CA → DF ZZALF → RF ZZARC → TF ZZBRA`, no `fix.kind == "runway"` anywhere). Resolved with a
+  third `runway: Runway | None = None` parameter and a precedence: a leg's own runway fix wins
+  when one exists; else the supplied `Runway`'s `threshold` becomes the origin *outside* the
+  node list, walked outward from leg 0; else `last_fix`, unchanged. The server resolves
+  `runway_ident` via the already-existing `NavdataProvider.get_runway`, ignoring it whenever
+  the procedure resolves its own anchor.
+- **`ident` on a `LayoutNode`** falls back through `fix.ident → fix_ref.ident → path_terminator`
+  — not just `fix_ref → terminator` as first drafted — matching `SidStarTab.tsx`'s own
+  `LegRow` convention (`leg.fix?.ident ?? leg.fix_ref?.ident ?? '—'`) exactly, so an unresolved
+  `IF ZZMIS` reads "ZZMIS" in the diagram, not the uninformative "IF".
+- **`altitude_source: "runway"` is not hollow.** A runway threshold's elevation is as real as a
+  published constraint — only `"interpolated"`/`"unknown"` mean this diagram invented the
+  number — `ProcedureDiagram.tsx`'s `isGuessedAltitude` reflects that.
+- **Live-verified at LEMD**: `I32LW` (an ILS with a 30 NM enroute segment) drew runway-up with
+  the break glyph and true-length label on the compressed segment; `BARD3B/RW14R` (a SID with
+  no runway leg of its own) anchored via the supplied `Runway` with no crash; clicking a node
+  updated the leg selection and facts row, exactly like the row list.
 
 ---
 

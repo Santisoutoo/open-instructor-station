@@ -352,6 +352,31 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/navdata/airports/{icao}/procedures/{kind}/{ident}/layout": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Procedure Layout
+         * @description The procedure laid out to scale, anchored at the airport.
+         *
+         *     ``runway_ident`` only matters for a SID: its own legs never touch a runway
+         *     fix (a departure climbs away from one, it does not carry it as a leg), so
+         *     there is nothing in the procedure itself to anchor on. An approach or a
+         *     STAR resolves its own anchor from its legs and ignores the parameter.
+         */
+        get: operations["get_procedure_layout_api_navdata_airports__icao__procedures__kind___ident__layout_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/navdata/navaids": {
         parameters: {
             query?: never;
@@ -2646,6 +2671,92 @@ export interface components {
             engine_index?: number | null;
         };
         /**
+         * LayoutNode
+         * @description One leg's position in the to-scale picture — not necessarily its true one.
+         *
+         *     A fix-less leg (:attr:`positioned` False) has no defensible coordinate, so it is
+         *     advanced a nominal distance along course instead; it is still returned, for the same
+         *     reason :class:`ProcedureLeg` returns unpositionable legs — an instructor reading the
+         *     picture needs to see the climb leg, they simply cannot click it.
+         */
+        LayoutNode: {
+            /**
+             * Sequence
+             * @description The source leg's own sequence number.
+             */
+            sequence: number;
+            /**
+             * Ident
+             * @description The resolved fix's ident, else the raw ARINC key of an unresolved one (ProcedureLeg.fix_ref) so it still reads as a name, else the path terminator.
+             */
+            ident: string;
+            /**
+             * X Nm
+             * @description East of the airport reference point, drawn frame.
+             */
+            x_nm: number;
+            /**
+             * Y Nm
+             * @description North of the airport reference point, drawn frame.
+             */
+            y_nm: number;
+            /** Altitude Ft */
+            altitude_ft: number;
+            /**
+             * Altitude Source
+             * @enum {string}
+             */
+            altitude_source: "published" | "runway" | "interpolated" | "unknown";
+            /**
+             * Positioned
+             * @description False for a leg with no fix — x_nm/y_nm are a nominal advance, not real.
+             */
+            positioned: boolean;
+            /**
+             * Is Positionable
+             * @description Whether the leg is clickable in the diagram.
+             */
+            is_positionable: boolean;
+            /**
+             * Is Missed Approach
+             * @default false
+             */
+            is_missed_approach: boolean;
+            /**
+             * Is Runway
+             * @description True for the single runway-threshold node.
+             * @default false
+             */
+            is_runway: boolean;
+        };
+        /**
+         * LayoutSegment
+         * @description One drawn edge between two consecutive :class:`LayoutNode`.
+         */
+        LayoutSegment: {
+            /** From Sequence */
+            from_sequence: number;
+            /** To Sequence */
+            to_sequence: number;
+            /** True Length Nm */
+            true_length_nm: number;
+            /**
+             * Drawn Length Nm
+             * @description Never exceeds true_length_nm.
+             */
+            drawn_length_nm: number;
+            /**
+             * Scale
+             * @enum {string}
+             */
+            scale: "to_scale" | "compressed";
+            /**
+             * Bearing Deg
+             * @description True bearing from the first node to the second.
+             */
+            bearing_deg: number;
+        };
+        /**
          * LightsSetup
          * @description Exterior light switches. ``None`` means "leave this switch untouched".
          */
@@ -3082,6 +3193,65 @@ export interface components {
              * @default []
              */
             legs: components["schemas"]["ProcedureLeg"][];
+        };
+        /**
+         * ProcedureLayout
+         * @description A procedure's legs laid out to scale, anchored at the airport.
+         *
+         *     Distances between nodes and altitude changes are proportional to their real values —
+         *     the point is to see how long the enroute segments are next to how short and steep the
+         *     final is. A segment too long relative to the rest is drawn capped, never silently: see
+         *     :data:`LayoutScale`. See ``core/procedure_layout.py`` for how ``anchor`` is chosen.
+         */
+        ProcedureLayout: {
+            /** Airport Icao */
+            airport_icao: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "sid" | "star" | "approach";
+            /** Ident */
+            ident: string;
+            /** Transition */
+            transition?: string | null;
+            /** Approach Type */
+            approach_type?: ("ils" | "loc" | "rnav" | "gps" | "vor" | "vor_dme" | "ndb" | "ndb_dme" | "lda" | "sdf" | "gls" | "mls" | "igs" | "unknown") | null;
+            /**
+             * Anchor
+             * @description What sits at the drawn origin (0, 0): the runway-threshold node, when the procedure's own legs (or a supplied Runway) resolve one, else the last positioned fix. The airport reference point is never the origin itself — see airport_x_nm/airport_y_nm.
+             * @enum {string}
+             */
+            anchor: "runway" | "last_fix";
+            /**
+             * Airport X Nm
+             * @description The airport reference point's own drawn position. A short, uncompressed true offset from the runway node when anchor is 'runway'; one further capped segment beyond the last node, exactly like any other, when anchor is 'last_fix'.
+             */
+            airport_x_nm: number;
+            /** Airport Y Nm */
+            airport_y_nm: number;
+            /** Airport Elevation Ft */
+            airport_elevation_ft: number;
+            /** Nodes */
+            nodes: components["schemas"]["LayoutNode"][];
+            /** Segments */
+            segments: components["schemas"]["LayoutSegment"][];
+            /** Total True Length Nm */
+            total_true_length_nm: number;
+            /** Compressed Segment Count */
+            compressed_segment_count: number;
+            /**
+             * Long Factor
+             * @description A segment past long_factor x the median compresses.
+             * @default 3
+             */
+            long_factor: number;
+            /**
+             * Nominal Leg Nm
+             * @description Drawn advance for a leg with no fix.
+             * @default 2
+             */
+            nominal_leg_nm: number;
         };
         /**
          * ProcedureLeg
@@ -4933,6 +5103,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Procedure"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_procedure_layout_api_navdata_airports__icao__procedures__kind___ident__layout_get: {
+        parameters: {
+            query?: {
+                transition?: string | null;
+                runway_ident?: string | null;
+            };
+            header?: never;
+            path: {
+                icao: string;
+                kind: "sid" | "star" | "approach";
+                ident: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ProcedureLayout"];
                 };
             };
             /** @description Validation Error */

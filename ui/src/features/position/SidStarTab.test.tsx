@@ -9,6 +9,7 @@ import {
   procedureSelected,
   type ProcedureFamily,
 } from './positionDesignSlice';
+import type { ProcedureLayout } from '../../api/models';
 import { SidStarTab } from './SidStarTab';
 import { stubApi } from './testApi';
 import { ICAO, PROCEDURE_I04R, PROCEDURES, positionRoutes } from './testFixtures';
@@ -17,15 +18,75 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/** A minimal but valid layout for I04R — two nodes, one segment, nothing compressed. */
+const LAYOUT_I04R: ProcedureLayout = {
+  airport_icao: ICAO,
+  kind: 'approach',
+  ident: 'I04R',
+  transition: null,
+  approach_type: 'ils',
+  anchor: 'runway',
+  airport_x_nm: 0.1,
+  airport_y_nm: 0.1,
+  airport_elevation_ft: 12,
+  nodes: [
+    {
+      sequence: 10,
+      ident: 'NERAS',
+      x_nm: 0,
+      y_nm: -8,
+      altitude_ft: 3000,
+      altitude_source: 'published',
+      positioned: true,
+      is_positionable: true,
+      is_missed_approach: false,
+      is_runway: false,
+    },
+    {
+      sequence: 20,
+      ident: 'RW04R',
+      x_nm: 0,
+      y_nm: 0,
+      altitude_ft: 12,
+      altitude_source: 'runway',
+      positioned: true,
+      is_positionable: true,
+      is_missed_approach: false,
+      is_runway: true,
+    },
+  ],
+  segments: [
+    {
+      from_sequence: 10,
+      to_sequence: 20,
+      true_length_nm: 8,
+      drawn_length_nm: 8,
+      scale: 'to_scale',
+      bearing_deg: 180,
+    },
+  ],
+  total_true_length_nm: 8,
+  compressed_segment_count: 0,
+  long_factor: 3.0,
+  nominal_leg_nm: 2.0,
+};
+
 /**
  * `stubApi` answers with the first fragment that matches, and the ident URL contains the
  * list URL — so the specific routes are declared first, ahead of everything
  * `positionRoutes` adds, rather than passed as overrides (an override keeps the list key's
- * position). The list is split by the `kind` query the tab sends, as the server would.
+ * position). The `/layout` routes are declared before their own procedure-detail route: the
+ * detail URL is a substring of the layout URL, so the shorter fragment would otherwise win
+ * and hand the layout query a `Procedure` body it cannot read. The list is split by the
+ * `kind` query the tab sends, as the server would.
  */
 function routes() {
   return {
+    [`airports/${ICAO}/procedures/approach/I04R/layout`]: { body: LAYOUT_I04R },
     [`airports/${ICAO}/procedures/approach/I04R`]: { body: PROCEDURE_I04R },
+    [`airports/${ICAO}/procedures/approach/R04R/layout`]: {
+      body: { ...LAYOUT_I04R, ident: 'R04R', approach_type: 'rnav' },
+    },
     [`airports/${ICAO}/procedures/approach/R04R`]: {
       body: { ...PROCEDURE_I04R, ident: 'R04R', approach_type: 'rnav' },
     },
@@ -164,5 +225,32 @@ describe('an open approach', () => {
     const facts = document.querySelector('.pos-sidstartab__facts');
     expect(facts?.textContent).toContain('Approach type');
     expect(facts?.textContent).toContain('ILS');
+  });
+
+  it('draws the to-scale diagram above the leg list, once the layout arrives', async () => {
+    renderTab('final');
+    await screen.findByText('4 in navdata');
+    const list = await openIdentMenu();
+
+    await userEvent.click(within(list).getByRole('option', { name: /I04R/ }));
+
+    expect(
+      await screen.findByRole('img', { name: 'Procedure diagram for I04R' }),
+    ).toBeInTheDocument();
+  });
+
+  it('selecting a node on the diagram picks the same leg the row list would', async () => {
+    renderTab('final');
+    await screen.findByText('4 in navdata');
+    const list = await openIdentMenu();
+    await userEvent.click(within(list).getByRole('option', { name: /I04R/ }));
+    await screen.findByRole('img', { name: 'Procedure diagram for I04R' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'NERAS' }));
+
+    expect(screen.getByRole('button', { name: 'NERAS' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
   });
 });
