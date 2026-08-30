@@ -160,17 +160,19 @@ for the OpenAPI schema):
 LayoutScale = Literal["to_scale", "compressed"]
 AltitudeSource = Literal["published", "runway", "interpolated", "unknown"]
 
+
 class LayoutNode(BaseModel):
     sequence: int
-    ident: str                       # fix ident, or the terminator ("CA") when there is no fix
-    x_nm: float                      # east of the anchor, drawn (post-compression) frame
-    y_nm: float                      # north of the anchor
+    ident: str  # fix ident, or the terminator ("CA") when there is no fix
+    x_nm: float  # east of the anchor, drawn (post-compression) frame
+    y_nm: float  # north of the anchor
     altitude_ft: float
     altitude_source: AltitudeSource
-    positioned: bool                 # False for fix-less legs (D10)
-    is_positionable: bool            # clickable
+    positioned: bool  # False for fix-less legs (D10)
+    is_positionable: bool  # clickable
     is_missed_approach: bool
     is_runway: bool
+
 
 class LayoutSegment(BaseModel):
     from_sequence: int
@@ -178,7 +180,8 @@ class LayoutSegment(BaseModel):
     true_length_nm: float
     drawn_length_nm: float
     scale: LayoutScale
-    bearing_deg: float               # true
+    bearing_deg: float  # true
+
 
 class ProcedureLayout(BaseModel):
     airport_icao: str
@@ -187,7 +190,9 @@ class ProcedureLayout(BaseModel):
     transition: str | None
     approach_type: ApproachType | None
     anchor: Literal["runway", "last_fix"]
-    airport_x_nm: float; airport_y_nm: float; airport_elevation_ft: float   # (0,0) unless STAR
+    airport_x_nm: float
+    airport_y_nm: float
+    airport_elevation_ft: float  # (0,0) unless STAR
     nodes: tuple[LayoutNode, ...]
     segments: tuple[LayoutSegment, ...]
     total_true_length_nm: float
