@@ -17,6 +17,7 @@ import type {
   PlacementResult,
   Procedure,
   ProcedureKind,
+  ProcedureLayout,
   ProcedureSummary,
   Runway,
   AirportSummary,
@@ -152,6 +153,30 @@ export const instructorApi = createApi({
         params: transition == null ? {} : { transition },
       }),
     }),
+    /**
+     * `runwayIdent` only matters for a SID — its own legs never touch a runway fix, so the
+     * server needs the selected runway to anchor on. It is sent unconditionally rather than
+     * only for SIDs: the endpoint itself decides when it is relevant, so the caller does not
+     * have to duplicate that rule.
+     */
+    getProcedureLayout: builder.query<
+      ProcedureLayout,
+      {
+        icao: string;
+        kind: ProcedureKind;
+        ident: string;
+        transition?: string | null;
+        runwayIdent?: string | null;
+      }
+    >({
+      query: ({ icao, kind, ident, transition, runwayIdent }) => ({
+        url: `navdata/airports/${icao}/procedures/${kind}/${ident}/layout`,
+        params: {
+          ...(transition == null ? {} : { transition }),
+          ...(runwayIdent == null ? {} : { runway_ident: runwayIdent }),
+        },
+      }),
+    }),
     getHolds: builder.query<Hold[], { airportIcao?: string; fixIdent?: string }>({
       query: ({ airportIcao, fixIdent }) => ({
         url: 'navdata/holds',
@@ -195,6 +220,7 @@ export const {
   useGetParkingQuery,
   useGetProceduresQuery,
   useGetProcedureQuery,
+  useGetProcedureLayoutQuery,
   useGetHoldsQuery,
   usePreviewPlacementQuery,
   useApplyPlacementMutation,
