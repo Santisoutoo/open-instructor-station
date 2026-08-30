@@ -22,7 +22,7 @@
  * 10 NM final, which is the failure CLAUDE.md's placement-speed note exists to prevent.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useApplyPlacementMutation,
   useGetCapabilitiesQuery,
@@ -37,11 +37,14 @@ import {
   configChanged,
   sendToggled,
   situationReset,
+  startAtToggled,
   type AircraftConfigState,
 } from './positionDesignSlice';
 import { placementStaged, setupOverridden, staleCleared } from './positionSlice';
 import { overridesOrNull } from './setup';
 import { unflyableReason } from './speed';
+import { StartAtPopover } from './StartAtPopover';
+import { startAtLabelOf, startAtPopoverId } from './startAt';
 import {
   useGroundElevationFt,
   useIls,
@@ -66,6 +69,16 @@ export function BottomBar() {
   const dispatch = useAppDispatch();
   const config = useAppSelector((state) => state.positionDesign.config);
   const send = useAppSelector((state) => state.positionDesign.send);
+  const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
+  const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
+  // The second entry point to the Start-at picker (issue #166): an instructor setting flaps
+  // and gear down here should not have to travel back to the header to change the stand.
+  const startAtOpen = useAppSelector(
+    (state) =>
+      state.positionDesign.startAtOpen &&
+      state.positionDesign.startAtAnchor === 'bottombar',
+  );
+  const startAtTriggerRef = useRef<HTMLButtonElement>(null);
   const runway = useSelectedRunway();
   // Tri-state on purpose: `null` while the lookup is in flight. Collapsing it to a boolean
   // is what made the bar tell an instructor an ILS runway had none for a frame.
@@ -346,6 +359,23 @@ export function BottomBar() {
           ILS frequency
           {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
         </label>
+        <button
+          ref={startAtTriggerRef}
+          type="button"
+          className="pos-textaction pos-bottombar__startat"
+          aria-haspopup="dialog"
+          aria-expanded={startAtOpen}
+          aria-controls={startAtPopoverId('bottombar')}
+          onClick={() => {
+            dispatch(startAtToggled('bottombar'));
+          }}
+        >
+          Pick stand / gate{' '}
+          <span className="pos-mono">
+            {startAtLabelOf(selectedRunway, selectedStand)}
+          </span>
+        </button>
+        <StartAtPopover anchor="bottombar" triggerRef={startAtTriggerRef} />
       </fieldset>
 
       <div className="pos-bottombar__spacer" />

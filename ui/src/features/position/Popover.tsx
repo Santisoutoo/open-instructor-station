@@ -33,7 +33,11 @@ export function Popover({
       return;
     }
 
-    function handleClick(event: MouseEvent) {
+    // `pointerdown`, not `click`: the close must land BEFORE any other trigger's own
+    // `click` handler runs. With `click` both fire on the same event and cancel out —
+    // observed with the Start-at popover's two anchors, where clicking the other trigger
+    // switched the anchor and this stale listener immediately switched it back.
+    function handlePointerDown(event: PointerEvent) {
       const target = event.target as Node;
       if (contentRef.current?.contains(target) === true) {
         return;
@@ -50,10 +54,10 @@ export function Popover({
       }
     }
 
-    document.addEventListener('click', handleClick);
+    document.addEventListener('pointerdown', handlePointerDown);
     document.addEventListener('keydown', handleKeyDown);
     return () => {
-      document.removeEventListener('click', handleClick);
+      document.removeEventListener('pointerdown', handlePointerDown);
       document.removeEventListener('keydown', handleKeyDown);
     };
   }, [open, onClose, triggerRef]);

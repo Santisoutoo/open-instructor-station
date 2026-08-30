@@ -5,7 +5,9 @@ import {
   DIAGRAM_WIDTH,
   MINIMUM_SPAN_DEG,
   diagramBounds,
+  extentOf,
   projectLatLon,
+  runwayStrips,
   type LatLon,
 } from './standProjection';
 
@@ -96,5 +98,39 @@ describe('projectLatLon', () => {
     const verticalPx = Math.abs((north?.y ?? 0) - (south?.y ?? 0));
     const horizontalPx = Math.abs((east?.x ?? 0) - (west?.x ?? 0));
     expect(horizontalPx).toBeCloseTo(verticalPx, 6);
+  });
+});
+
+describe('runwayStrips', () => {
+  const end = (ident: string, opposite_ident: string | null, latitude: number) => ({
+    ident,
+    opposite_ident,
+    threshold: { latitude, longitude: NICE.longitude },
+  });
+
+  it('pairs each end with its opposite exactly once', () => {
+    const strips = runwayStrips([end('04R', '22L', 43.65), end('22L', '04R', 43.67)]);
+    expect(strips).toHaveLength(1);
+    expect(strips[0]?.key).toBe('04R/22L');
+  });
+
+  it('invents no strip for an end whose opposite is not in the index', () => {
+    expect(runwayStrips([end('04R', '22L', 43.65)])).toHaveLength(0);
+    expect(runwayStrips([end('18', null, 43.65)])).toHaveLength(0);
+  });
+});
+
+describe('extentOf', () => {
+  it('is null with nothing to fit, and the SW/NE corners otherwise', () => {
+    expect(extentOf([])).toBeNull();
+    expect(
+      extentOf([
+        { latitude: 43.65, longitude: 7.2 },
+        { latitude: 43.68, longitude: 7.23 },
+      ]),
+    ).toEqual([
+      [7.2, 43.65],
+      [7.23, 43.68],
+    ]);
   });
 });

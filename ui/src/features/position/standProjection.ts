@@ -120,3 +120,67 @@ export function projectLatLon(point: LatLon, bounds: DiagramBounds): DiagramPoin
     y: DIAGRAM_HEIGHT / 2 - (point.latitude - centreLat) * scale,
   };
 }
+
+/** The subset of a runway record the strip pairing reads. */
+export interface RunwayEnd extends LatLonThreshold {
+  readonly ident: string;
+  readonly opposite_ident?: string | null | undefined;
+}
+
+interface LatLonThreshold {
+  readonly threshold: LatLon;
+}
+
+/** One physical strip: the two ends navdata publishes for it, paired once. */
+export interface Strip<R extends RunwayEnd = RunwayEnd> {
+  readonly key: string;
+  readonly from: R;
+  readonly to: R;
+}
+
+/**
+ * Pair each runway end with its opposite, once.
+ *
+ * `opposite_ident` is navdata's own answer to "the other end of this strip", so the pairing
+ * never has to guess from the numbers. An end whose opposite is not in the index yields no
+ * strip: its threshold is still labelled, but no line is invented for it.
+ */
+export function runwayStrips<R extends RunwayEnd>(
+  runways: readonly R[],
+): readonly Strip<R>[] {
+  const byIdent = new Map(runways.map((runway) => [runway.ident, runway]));
+  const seen = new Set<string>();
+  const result: Strip<R>[] = [];
+  for (const runway of runways) {
+    const opposite =
+      runway.opposite_ident == null ? undefined : byIdent.get(runway.opposite_ident);
+    if (opposite === undefined) {
+      continue;
+    }
+    const key = [runway.ident, opposite.ident].sort().join('/');
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push({ key, from: runway, to: opposite });
+  }
+  return result;
+}
+
+/**
+ * The south-west / north-east corners of everything the diagram shows, as MapLibre's
+ * `[[west, south], [east, north]]` — or `null` when there is nothing to fit.
+ */
+export function extentOf(
+  points: readonly LatLon[],
+): [[number, number], [number, number]] | null {
+  if (points.length === 0) {
+    return null;
+  }
+  const lats = points.map((point) => point.latitude);
+  const lons = points.map((point) => point.longitude);
+  return [
+    [Math.min(...lons), Math.min(...lats)],
+    [Math.max(...lons), Math.max(...lats)],
+  ];
+}
