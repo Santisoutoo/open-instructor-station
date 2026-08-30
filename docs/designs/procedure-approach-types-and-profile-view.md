@@ -65,7 +65,7 @@ compressed to fit is visibly marked as such.
 | D2 | Approach type is a **sub-filter that appears under the two approach chips**, not a fifth top-level chip and not a rewrite of `ProcedureFamily`. | A transition to an ILS is still an ILS; the family split (transition vs common route) stays meaningful. `PROCEDURE_FAMILIES` and `procedureKindOf` are untouched. |
 | D3 | The type filter is **client-side**, and its chips are **derived from the data** (only types the airport publishes appear, plus *All*). | Unlike `ParkingList`'s server `kind` param, the chip row itself needs the unfiltered list; an airport with only RNAV must not offer an empty ILS chip. No server change. |
 | D4 | The 3D view is an **expansion of the SID/STAR tab**, drawn above the leg list, like `CircuitDiagram` sits above the finals in `ApproachTrainingTab`. | Clicking a node selects the leg (`procedureLegSelected`) — same interaction as the marker dots. A separate tab would split "pick a leg" across two places. |
-| D5 | **SVG oblique projection**, no 3D library. | Consistent with `CircuitDiagram`/`AirportDiagram`, testable in jsdom, no bundle growth, theme tokens apply. A dependency only earns its place if free camera orbit is ever asked for. |
+| D5 | **SVG oblique projection**, no 3D library. | Consistent with `CircuitDiagram`/`AirportDiagram`, testable in jsdom, no bundle growth, theme tokens apply. A dependency only earns its place if free camera orbit is ever asked for. *Superseded for the 3D view by §4.7 — free camera orbit was asked for (issues #175–178); this decision and its reasoning are unchanged for the 2D view, which stays the default.* |
 | D6 | **Layout math lives in `core/`** (`core/procedure_layout.py`), served by one new endpoint; the UI only projects and draws. | Sim-agnostic, pytest-covered without a browser, follows `core/camera/geometry.py`. Compression decisions are policy, and policy belongs where it can be unit-tested. |
 | D7 | Lateral layout is a **chain walk**: each segment keeps its **true bearing** but gets a **capped drawn length**; the chain is anchored at the runway (approach/SID) or at the last fix with the airport drawn at its true bearing (STAR). | Keeps every turn's real geometry; compression only ever shortens a straight run. Anchoring at the runway keeps the "from the airport" framing the issue asks for. |
 | D8 | A segment is compressed when longer than `LONG_FACTOR × median(segment lengths)` (`LONG_FACTOR = 3`), drawn at that cap, and flagged `scale: "compressed"` with its true length. Nothing is ever stretched or clipped. | Median is robust to one 40 NM enroute transition. Short legs are not a scale problem — they are a label-fit problem the UI solves with a minimum pixel length **and the same break glyph** so a stretched leg is marked too. |
@@ -312,6 +312,29 @@ PR 2    a. contract: models + empty endpoint returning the model (fixes OpenAPI)
   the break glyph and true-length label on the compressed segment; `BARD3B/RW14R` (a SID with
   no runway leg of its own) anchored via the supplied `Runway` with no crash; clicking a node
   updated the leg selection and facts row, exactly like the row list.
+
+### 4.7 Amendment — a 3D procedure view was asked for (issues #175–178)
+
+- D5 above chose SVG over a 3D library specifically because "a dependency only earns its place
+  if free camera orbit is ever asked for." Free camera orbit has now been asked for.
+- `three`, `@react-three/fiber` (**v9** — v8 targets React 18, this repo is on React 19) and
+  `@react-three/drei` are added in #175. MapLibre is untouched — it remains the map library for
+  the instructor map; the 3D procedure view is an unrelated, separate component.
+- Alternatives considered and rejected: MapLibre + deck.gl (the camera stays map-locked, so it
+  cannot free-orbit or look from below the horizon), CesiumJS (~3 MB, brings a terrain/imagery
+  pipeline this view explicitly doesn't want).
+- `ui/src/features/position/procedureScene.ts` (#175) mirrors `procedureProjection.ts`'s pure
+  `ProcedureLayout → geometry` structure for 3D scene-space instead of an SVG viewBox, and
+  re-exports `VERTICAL_EXAGGERATION` so both views declare the same factor. Unlike the 2D
+  module, scene geometry stays in an unrotated, north-aligned world frame — `courseDeg` only
+  sets the camera's initial azimuth, not vertex positions, since a free-orbiting camera has no
+  auto-fit to rotate for, and a north-aligned ground plane is what a future OSM texture (#178)
+  needs to line up with real-world tile coordinates.
+- One forward-looking caveat for #178: nodes with `positioned: false` carry nominal, not real,
+  coordinates (D10: "a nominal advance... flagged `positioned: false`"), so any OSM
+  ground-texture alignment near those legs is inherently approximate — non-blocking today.
+- Sequence: #175 (this module + the dependency stack), #176 (`ProcedureDiagram3D.tsx` + the
+  2D/3D selector), #177 (visual polish + camera reset), #178 (optional OSM ground texture).
 
 ---
 
