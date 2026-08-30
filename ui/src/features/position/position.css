@@ -906,6 +906,58 @@
   white-space: nowrap;
 }
 
+/* Node ident/altitude billboard label (#177), rendered by drei's <Html> over the canvas — same
+   floating-contrast-box treatment as .pos-procdiagram3d__break, above. */
+.pos-procdiagram3d__label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(10, 14, 20, 0.75);
+  font-size: 10px;
+  font-family: 'Spline Sans Mono', monospace;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.pos-procdiagram3d__label-ident {
+  color: var(--pos-t1);
+}
+
+.pos-procdiagram3d__label-altitude {
+  color: var(--pos-t3);
+}
+
+.pos-procdiagram3d__toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.pos-procdiagram3d__toolbar .pos-procdiagram3d__legend {
+  margin: 0;
+}
+
+.pos-procdiagram3d__reset-camera {
+  padding: 3px 8px;
+  border: 1px solid var(--pos-hair);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--pos-t2);
+  font-size: 10px;
+  font-family: 'Spline Sans Mono', monospace;
+  cursor: pointer;
+}
+
+.pos-procdiagram3d__reset-camera:hover {
+  border-color: var(--pos-accent);
+  color: var(--pos-accent);
+}
+
 /* -------------------------------------------------------------- SID/STAR */
 
 .pos-sidstartab {

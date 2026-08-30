@@ -13,8 +13,10 @@
 
 import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
-import type { LayoutNode, LayoutSegment, ProcedureLayout } from '../../api/models';
+import type { LayoutNode, LayoutSegment, ProcedureLayout, Runway } from '../../api/models';
+import { orbitControlsInstances } from '../../test/threeStub';
 import { ProcedureDiagram3D } from './ProcedureDiagram3D';
+import { buildProcedureScene } from './procedureScene';
 
 vi.mock('@react-three/fiber', async () => {
   const { threeFiberStub } = await import('../../test/threeStub');
@@ -111,10 +113,21 @@ const LAYOUT: ProcedureLayout = {
   nominal_leg_nm: 2.0,
 };
 
+const RUNWAY: Runway = {
+  airport_icao: 'ZZZZ',
+  ident: '32L',
+  threshold: { latitude: 0, longitude: 0, altitude_ft: 0 },
+  true_bearing_deg: 320,
+  length_m: 3000,
+  elevation_ft: 0,
+  displaced_threshold_m: 0,
+};
+
 function renderDiagram(
   overrides: Partial<{
     selectedSequence: number | null;
     onSelectLeg: (sequence: number) => void;
+    runway: Runway | undefined;
   }> = {},
 ) {
   const onSelectLeg = overrides.onSelectLeg ?? vi.fn();
@@ -124,6 +137,7 @@ function renderDiagram(
       courseDeg={0}
       selectedSequence={overrides.selectedSequence ?? null}
       onSelectLeg={onSelectLeg}
+      runway={overrides.runway}
     />,
   );
   return { ...utils, onSelectLeg };
@@ -135,6 +149,12 @@ function hitMesh(sequence: number): Element | null {
 
 function visualMesh(sequence: number): Element | null {
   return document.querySelector(`mesh[name^="procdiagram3d-node-${String(sequence)}"]`);
+}
+
+function curtainMesh(fromSequence: number, toSequence: number): Element | null {
+  return document.querySelector(
+    `mesh[name^="procdiagram3d-curtain-${String(fromSequence)}-${String(toSequence)}"]`,
+  );
 }
 
 describe('node hit targets', () => {
@@ -214,5 +234,87 @@ describe('legend', () => {
   it('states the vertical exaggeration factor', () => {
     renderDiagram();
     expect(screen.getByText(/vertical ×5/)).toBeInTheDocument();
+  });
+});
+
+describe('ground plane (#177)', () => {
+  it('always renders one ground mesh', () => {
+    renderDiagram();
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-ground"]')).toHaveLength(1);
+  });
+});
+
+describe('runway quad (#177)', () => {
+  it('renders when both a runway and an is_runway layout node exist', () => {
+    renderDiagram({ runway: RUNWAY });
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(1);
+  });
+
+  it('does not render when no runway prop is passed', () => {
+    renderDiagram();
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(0);
+  });
+
+  it('does not render when the layout has no is_runway node, even with a runway prop', () => {
+    const noRunwayNode: ProcedureLayout = {
+      ...LAYOUT,
+      nodes: LAYOUT.nodes.map((n) => ({ ...n, is_runway: false })),
+    };
+    render(
+      <ProcedureDiagram3D
+        layout={noRunwayNode}
+        courseDeg={0}
+        selectedSequence={null}
+        onSelectLeg={vi.fn()}
+        runway={RUNWAY}
+      />,
+    );
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(0);
+  });
+});
+
+describe('curtain fill (#177)', () => {
+  it('renders one filled mesh per segment', () => {
+    renderDiagram();
+    expect(document.querySelectorAll('mesh[name^="procdiagram3d-curtain-"]')).toHaveLength(3);
+  });
+
+  it('marks the curtain of a dashed (unresolved-fix) segment as dimmed, a plain one not', () => {
+    renderDiagram();
+    expect(curtainMesh(10, 40)?.getAttribute('name')).toContain('dimmed');
+    expect(curtainMesh(10, 20)?.getAttribute('name')).not.toContain('dimmed');
+  });
+});
+
+describe('node ident/altitude labels (#177)', () => {
+  it('renders each node ident with its rounded altitude', () => {
+    renderDiagram();
+    expect(screen.getByText('ALPHA')).toBeInTheDocument();
+    expect(screen.getByText('3000 ft')).toBeInTheDocument();
+    expect(screen.getByText('BRAVO')).toBeInTheDocument();
+    expect(screen.getByText('2000 ft')).toBeInTheDocument();
+  });
+});
+
+describe('camera reset (#177)', () => {
+  it('drives the same OrbitControls ref instance back to the fitted default pose', () => {
+    renderDiagram();
+    const scene = buildProcedureScene(LAYOUT, 0);
+    expect(orbitControlsInstances).toHaveLength(1);
+    const controls = orbitControlsInstances[0]!;
+
+    // Simulate an orbit: move the ref's target/position/update-count away from the default.
+    controls.target.set(999, 999, 999);
+    controls.object.position.set(999, 999, 999);
+
+    fireEvent.click(screen.getByRole('button', { name: /reset camera/i }));
+
+    expect(controls.target.x).toBeCloseTo(scene.cameraPose.target[0], 6);
+    expect(controls.target.y).toBeCloseTo(scene.cameraPose.target[1], 6);
+    expect(controls.target.z).toBeCloseTo(scene.cameraPose.target[2], 6);
+    expect(controls.object.position.x).toBeCloseTo(scene.cameraPose.position[0], 6);
+    expect(controls.object.position.y).toBeCloseTo(scene.cameraPose.position[1], 6);
+    expect(controls.object.position.z).toBeCloseTo(scene.cameraPose.position[2], 6);
+    expect(controls.updateCallCount).toBe(1);
   });
 });
