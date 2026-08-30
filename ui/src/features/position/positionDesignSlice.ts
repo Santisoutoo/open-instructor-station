@@ -26,7 +26,7 @@
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { ParkingKind } from '../../api/models';
+import type { ApproachType, ParkingKind } from '../../api/models';
 import { DEFAULT_FINAL, type FinalPlacementName } from './finals';
 
 export const DESIGN_TAB_IDS = ['approach', 'sidstar', 'airwork', 'custom'] as const;
@@ -61,6 +61,12 @@ export const PARKING_FILTERS = [
  */
 export const PROCEDURE_FAMILIES = ['sid', 'star', 'apptr', 'final'] as const;
 export type ProcedureFamily = (typeof PROCEDURE_FAMILIES)[number];
+
+/**
+ * The approach chips' sub-filter: one of the server's own `ApproachType`s, or everything.
+ * Only meaningful under `apptr` and `final`; the SID and STAR chips ignore it.
+ */
+export type ApproachFilter = 'all' | ApproachType;
 
 export const AIRWORK_LEVELS = ['FL300', 'FL200', 'FL100', 'FL050'] as const;
 export type AirworkLevel = (typeof AIRWORK_LEVELS)[number];
@@ -160,6 +166,7 @@ export interface PositionDesignState {
   /** Which of the server's seven finals the two final markers place on. */
   finalPlacement: FinalPlacementName;
   procedureFamily: ProcedureFamily;
+  approachFilter: ApproachFilter;
   procedure: ProcedureSelection | null;
   procedureMenuOpen: boolean;
   airworkLevel: AirworkLevel;
@@ -199,6 +206,7 @@ export const initialPositionDesignState: PositionDesignState = {
   selectedMarker: 'final-3nm',
   finalPlacement: DEFAULT_FINAL,
   procedureFamily: 'sid',
+  approachFilter: 'all',
   procedure: null,
   procedureMenuOpen: false,
   airworkLevel: 'FL100',
@@ -212,6 +220,9 @@ function clearAirportScopedState(state: PositionDesignState) {
   state.selectedRunway = null;
   state.selectedStand = null;
   state.procedure = null;
+  // The chips are derived from what the airport publishes; a type the last airport had
+  // may not exist here, and a filter nothing matches would look like "no approaches".
+  state.approachFilter = 'all';
   state.custom = initialCustom;
   state.config = initialConfig;
 }
@@ -289,6 +300,12 @@ const positionDesignSlice = createSlice({
     },
     procedureFamilySelected(state, action: PayloadAction<ProcedureFamily>) {
       state.procedureFamily = action.payload;
+      state.procedure = null;
+      state.approachFilter = 'all';
+    },
+    /** Narrow the approach chips by type. The open procedure may no longer be listed. */
+    approachFilterSelected(state, action: PayloadAction<ApproachFilter>) {
+      state.approachFilter = action.payload;
       state.procedure = null;
     },
     /** Open a procedure. Its leg is not chosen yet — `sequence` starts `null`. */
@@ -400,6 +417,7 @@ export const {
   markerSelected,
   finalPlacementSelected,
   procedureFamilySelected,
+  approachFilterSelected,
   procedureSelected,
   procedureLegSelected,
   procedureMenuToggled,

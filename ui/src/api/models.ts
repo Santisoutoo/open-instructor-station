@@ -87,6 +87,12 @@ export type ProcedureLeg = components['schemas']['ProcedureLeg'];
 
 export type ProcedureKind = ProcedureSummary['kind'];
 
+/**
+ * The server's classification of an approach (ILS, RNAV, VOR, …), decoded from the ARINC 424
+ * route type by the navdata provider. Absent on SIDs and STARs.
+ */
+export type ApproachType = NonNullable<ProcedureSummary['approach_type']>;
+
 /** A published holding pattern. */
 export type Hold = components['schemas']['Hold'];
 

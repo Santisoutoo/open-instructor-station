@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import reducer, {
   airportLoaded,
+  approachFilterSelected,
   configChanged,
   coordinateHandoffReceived,
   designTabSelected,
@@ -141,6 +142,34 @@ describe('the procedure selection', () => {
       procedureSelected({ ident: 'BADO8A', transition: null }),
     );
     expect(reducer(opened, procedureFamilySelected('star')).procedure).toBeNull();
+  });
+});
+
+describe('the approach-type filter', () => {
+  it('narrows the chips and drops the open procedure, which may no longer be listed', () => {
+    const opened = reducer(
+      reducer(undefined, procedureFamilySelected('final')),
+      procedureSelected({ ident: 'R04R', transition: null }),
+    );
+    const narrowed = reducer(opened, approachFilterSelected('ils'));
+    expect(narrowed.approachFilter).toBe('ils');
+    expect(narrowed.procedure).toBeNull();
+  });
+
+  it('is reset by a family switch — the other family may not publish that type', () => {
+    const narrowed = reducer(undefined, approachFilterSelected('vor'));
+    expect(reducer(narrowed, procedureFamilySelected('apptr')).approachFilter).toBe(
+      'all',
+    );
+  });
+
+  it('is reset by loading another airport — its chips are derived from its own data', () => {
+    const narrowed = reducer(
+      reducer(undefined, airportLoaded('LEMD')),
+      approachFilterSelected('ndb'),
+    );
+    expect(reducer(narrowed, airportLoaded('LEBL')).approachFilter).toBe('all');
+    expect(reducer(narrowed, airportLoaded('LEMD')).approachFilter).toBe('ndb');
   });
 });
 

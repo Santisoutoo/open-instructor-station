@@ -775,6 +775,36 @@
   gap: 0.4rem;
 }
 
+/* The approach-type sub-filter: a second, quieter chip row under the family chips. */
+.pos-sidstartab__type {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding-left: 0.75rem;
+  border-left: 2px solid var(--pos-hair);
+}
+
+.pos-sidstartab__type-label {
+  margin-right: 0.25rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--pos-t3);
+}
+
+.pos-sidstartab__type-count {
+  margin-left: 0.35rem;
+  color: var(--pos-t3);
+}
+
+.pos-sidstartab__ident-type {
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  color: var(--pos-t3);
+}
+
 .pos-sidstartab__ident {
   position: relative;
   display: flex;

@@ -12,10 +12,19 @@ import { useRef } from 'react';
 import { useGetProcedureQuery, useGetProceduresQuery } from '../../api/instructorApi';
 import type { Procedure, ProcedureLeg } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
+import {
+  APPROACH_TYPE_LABEL,
+  approachTypeMatches,
+  approachTypeOf,
+  approachTypesIn,
+  commonApproachTypes,
+  familyHasApproachType,
+} from './approachTypes';
 import { FactRow } from './FactRow';
 import { Popover } from './Popover';
 import {
   PROCEDURE_FAMILIES,
+  approachFilterSelected,
   procedureFamilySelected,
   procedureLegSelected,
   procedureMenuToggled,
@@ -82,10 +91,12 @@ function ProcedureBody({
   procedure,
   sequence,
   onSelectLeg,
+  commonTypes,
 }: {
   readonly procedure: Procedure;
   readonly sequence: number | null;
   readonly onSelectLeg: (sequence: number) => void;
+  readonly commonTypes: ReadonlyMap<string, NonNullable<Procedure['approach_type']>>;
 }) {
   const chosen = procedure.legs.find((leg) => leg.sequence === sequence);
   const firstPositionable = procedure.legs.find((leg) => leg.is_positionable);
@@ -105,6 +116,14 @@ function ProcedureBody({
       </ul>
       <div className="pos-sidstartab__facts">
         <FactRow label="Transition" value={procedure.transition ?? 'common route'} />
+        {procedure.kind === 'approach' && (
+          <FactRow
+            label="Approach type"
+            value={
+              APPROACH_TYPE_LABEL[approachTypeOf(procedure, commonTypes) ?? 'unknown']
+            }
+          />
+        )}
         <FactRow label="First waypoint" value={shown?.fix?.ident ?? '—'} />
         <FactRow
           label="Altitude restriction"
@@ -119,6 +138,7 @@ export function SidStarTab() {
   const dispatch = useAppDispatch();
   const icao = useLoadedIcao();
   const family = useAppSelector((state) => state.positionDesign.procedureFamily);
+  const approachFilter = useAppSelector((state) => state.positionDesign.approachFilter);
   const selection = useAppSelector((state) => state.positionDesign.procedure);
   const menuOpen = useAppSelector((state) => state.positionDesign.procedureMenuOpen);
   const runway = useSelectedRunway();
@@ -129,8 +149,18 @@ export function SidStarTab() {
     { icao, kind },
     { skip: icao === '' },
   );
-  const matching = (procedures ?? []).filter((procedure) =>
+  // The type chips come from the family's own procedures: an airport with only RNAV
+  // approaches must not offer an empty ILS chip. Transitions inherit their common
+  // route's type, so the lookup is built from every approach, not just the family's.
+  const commonTypes = commonApproachTypes(procedures ?? []);
+  const ofFamily = (procedures ?? []).filter((procedure) =>
     procedureFamilyMatches(family, procedure.transition),
+  );
+  const approachTypes = familyHasApproachType(family)
+    ? approachTypesIn(ofFamily, commonTypes)
+    : [];
+  const matching = ofFamily.filter((procedure) =>
+    approachTypeMatches(family, approachFilter, procedure, commonTypes),
   );
 
   const { data: procedure } = useGetProcedureQuery(
@@ -167,6 +197,47 @@ export function SidStarTab() {
         ))}
       </div>
 
+      {approachTypes.length > 1 && (
+        <div
+          className="pos-sidstartab__type"
+          role="radiogroup"
+          aria-label="Approach type"
+        >
+          <span className="pos-sidstartab__type-label">Type</span>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={approachFilter === 'all'}
+            className={
+              approachFilter === 'all' ? 'pos-chip pos-chip--selected' : 'pos-chip'
+            }
+            onClick={() => {
+              dispatch(approachFilterSelected('all'));
+            }}
+          >
+            All
+            <span className="pos-sidstartab__type-count">{String(ofFamily.length)}</span>
+          </button>
+          {approachTypes.map(({ type, count }) => (
+            <button
+              key={type}
+              type="button"
+              role="radio"
+              aria-checked={approachFilter === type}
+              className={
+                approachFilter === type ? 'pos-chip pos-chip--selected' : 'pos-chip'
+              }
+              onClick={() => {
+                dispatch(approachFilterSelected(type));
+              }}
+            >
+              {APPROACH_TYPE_LABEL[type]}
+              <span className="pos-sidstartab__type-count">{String(count)}</span>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="pos-sidstartab__ident">
         <button
           ref={triggerRef}
@@ -200,6 +271,7 @@ export function SidStarTab() {
           >
             {matching.map((entry) => {
               const transition = entry.transition ?? null;
+              const type = approachTypeOf(entry, commonTypes);
               return (
                 <li key={`${entry.ident}-${transition ?? ''}`}>
                   <button
@@ -214,7 +286,14 @@ export function SidStarTab() {
                       dispatch(procedureSelected({ ident: entry.ident, transition }));
                     }}
                   >
-                    {entry.ident}
+                    <span>
+                      {entry.ident}
+                      {type !== null && (
+                        <span className="pos-sidstartab__ident-type">
+                          {APPROACH_TYPE_LABEL[type]}
+                        </span>
+                      )}
+                    </span>
                     <span className="pos-sidstartab__ident-via">
                       {transition ?? 'common route'} ·{' '}
                       {String(entry.positionable_leg_count)}/{String(entry.leg_count)}{' '}
@@ -228,7 +307,9 @@ export function SidStarTab() {
               <li className="pos-sidstartab__ident-empty">
                 {isError
                   ? 'The procedures of this airport could not be read.'
-                  : 'No procedure of this type in the navigation data.'}
+                  : approachFilter === 'all'
+                    ? 'No procedure of this type in the navigation data.'
+                    : `No ${APPROACH_TYPE_LABEL[approachFilter]} approach in the navigation data.`}
               </li>
             )}
           </ul>
@@ -255,6 +336,7 @@ export function SidStarTab() {
       ) : (
         <ProcedureBody
           procedure={procedure}
+          commonTypes={commonTypes}
           sequence={selection?.sequence ?? null}
           onSelectLeg={(sequence) => {
             dispatch(procedureLegSelected(sequence));
