@@ -8,7 +8,7 @@
  * `is_positionable` and the reason are both computed by the navdata provider.
  */
 
-import { useRef } from 'react';
+import { Suspense, lazy, useRef } from 'react';
 import {
   useGetProcedureLayoutQuery,
   useGetProcedureQuery,
@@ -27,9 +27,11 @@ import {
 import { FactRow } from './FactRow';
 import { Popover } from './Popover';
 import { ProcedureDiagram } from './ProcedureDiagram';
+import { ProcedureViewToggle } from './ProcedureViewToggle';
 import {
   PROCEDURE_FAMILIES,
   approachFilterSelected,
+  diagramModeSelected,
   procedureFamilySelected,
   procedureLegSelected,
   procedureMenuToggled,
@@ -42,6 +44,16 @@ import {
   useLoadedIcao,
   useSelectedRunway,
 } from './usePositionData';
+
+/**
+ * Lazy-loaded so three.js/`@react-three/fiber`/`@react-three/drei` never enter the main
+ * bundle. Declared here, not in `ui/src/components/tabs.ts` — that registry lazy-loads the
+ * eight top-level app tabs, and the Position panel is already one of them; this is a
+ * narrower boundary nested one level deeper, only around the 3D branch of this one tab.
+ */
+const ProcedureDiagram3D = lazy(() =>
+  import('./ProcedureDiagram3D').then((module) => ({ default: module.ProcedureDiagram3D })),
+);
 
 const FAMILY_LABEL: Record<ProcedureFamily, string> = {
   sid: 'Departure · SID',
@@ -146,8 +158,11 @@ export function SidStarTab() {
   const approachFilter = useAppSelector((state) => state.positionDesign.approachFilter);
   const selection = useAppSelector((state) => state.positionDesign.procedure);
   const menuOpen = useAppSelector((state) => state.positionDesign.procedureMenuOpen);
+  const diagramMode = useAppSelector((state) => state.positionDesign.diagramMode);
   const runway = useSelectedRunway();
   const triggerRef = useRef<HTMLButtonElement>(null);
+  // Shared by both diagram branches — the 2D and 3D views must orient identically.
+  const courseDeg = runway?.true_bearing_deg ?? 0;
 
   const kind = procedureKindOf(family);
   const { data: procedures, isError } = useGetProceduresQuery(
@@ -351,14 +366,37 @@ export function SidStarTab() {
       ) : (
         <>
           {layout !== undefined && (
-            <ProcedureDiagram
-              layout={layout}
-              courseDeg={runway?.true_bearing_deg ?? 0}
-              selectedSequence={selection?.sequence ?? null}
-              onSelectLeg={(sequence) => {
-                dispatch(procedureLegSelected(sequence));
-              }}
-            />
+            <div className="pos-sidstartab__diagram">
+              <ProcedureViewToggle
+                mode={diagramMode}
+                onSelect={(mode) => {
+                  dispatch(diagramModeSelected(mode));
+                }}
+              />
+              {diagramMode === '2d' ? (
+                <ProcedureDiagram
+                  layout={layout}
+                  courseDeg={courseDeg}
+                  selectedSequence={selection?.sequence ?? null}
+                  onSelectLeg={(sequence) => {
+                    dispatch(procedureLegSelected(sequence));
+                  }}
+                />
+              ) : (
+                <Suspense
+                  fallback={<p className="pos-sidstartab__diagram-loading">Loading 3D view…</p>}
+                >
+                  <ProcedureDiagram3D
+                    layout={layout}
+                    courseDeg={courseDeg}
+                    selectedSequence={selection?.sequence ?? null}
+                    onSelectLeg={(sequence) => {
+                      dispatch(procedureLegSelected(sequence));
+                    }}
+                  />
+                </Suspense>
+              )}
+            </div>
           )}
           <ProcedureBody
             procedure={procedure}

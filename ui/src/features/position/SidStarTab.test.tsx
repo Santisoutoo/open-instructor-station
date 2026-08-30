@@ -6,6 +6,7 @@ import { setupStore } from '../../store';
 import {
   approachFilterSelected,
   initialPositionDesignState,
+  procedureLegSelected,
   procedureSelected,
   type ProcedureFamily,
 } from './positionDesignSlice';
@@ -13,6 +14,22 @@ import type { ProcedureLayout } from '../../api/models';
 import { SidStarTab } from './SidStarTab';
 import { stubApi } from './testApi';
 import { ICAO, PROCEDURE_I04R, PROCEDURES, positionRoutes } from './testFixtures';
+
+/**
+ * The lazy-loaded 3D view is behind a `Suspense` boundary of its own — mocked to a
+ * `data-testid` stand-in that echoes the one prop this file's tests need, `selectedSequence`,
+ * rather than pulling the whole `@react-three/fiber`/`@react-three/drei` stub in here too
+ * (that belongs to `ProcedureDiagram3D.test.tsx`).
+ */
+vi.mock('./ProcedureDiagram3D', () => ({
+  ProcedureDiagram3D: ({
+    selectedSequence,
+  }: {
+    readonly selectedSequence: number | null;
+  }) => (
+    <div data-testid="procdiagram3d-stub" data-selected-sequence={String(selectedSequence)} />
+  ),
+}));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -251,6 +268,78 @@ describe('an open approach', () => {
     expect(screen.getByRole('button', { name: 'NERAS' })).toHaveAttribute(
       'aria-pressed',
       'true',
+    );
+  });
+});
+
+describe('the 2D/3D diagram selector', () => {
+  async function openI04R() {
+    const store = renderTab('final');
+    await screen.findByText('4 in navdata');
+    const list = await openIdentMenu();
+    await userEvent.click(within(list).getByRole('option', { name: /I04R/ }));
+    await screen.findByRole('img', { name: 'Procedure diagram for I04R' });
+    return store;
+  }
+
+  it('defaults to 2D, and toggling to 3D and back swaps the rendered branch', async () => {
+    await openI04R();
+
+    await userEvent.click(screen.getByRole('button', { name: '3D' }));
+
+    // The Suspense boundary makes the swap asynchronous — a bare queryByTestId would flake.
+    expect(await screen.findByTestId('procdiagram3d-stub')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('img', { name: 'Procedure diagram for I04R' }),
+    ).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: '2D' }));
+
+    expect(
+      await screen.findByRole('img', { name: 'Procedure diagram for I04R' }),
+    ).toBeInTheDocument();
+    expect(screen.queryByTestId('procdiagram3d-stub')).not.toBeInTheDocument();
+  });
+
+  it('the 2D/3D buttons reflect the active mode', async () => {
+    await openI04R();
+
+    expect(screen.getByRole('button', { name: '2D' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByRole('button', { name: '3D' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: '3D' }));
+    await screen.findByTestId('procdiagram3d-stub');
+
+    expect(screen.getByRole('button', { name: '2D' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    );
+    expect(screen.getByRole('button', { name: '3D' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('the mocked 3D component receives the same selectedSequence a leg-list click would produce', async () => {
+    const store = await openI04R();
+
+    await userEvent.click(screen.getByRole('button', { name: '3D' }));
+    const stub = await screen.findByTestId('procdiagram3d-stub');
+    expect(stub).toHaveAttribute('data-selected-sequence', 'null');
+
+    act(() => {
+      store.dispatch(procedureLegSelected(10));
+    });
+
+    expect(screen.getByTestId('procdiagram3d-stub')).toHaveAttribute(
+      'data-selected-sequence',
+      '10',
     );
   });
 });

@@ -869,6 +869,43 @@
   font-family: 'Spline Sans Mono', monospace;
 }
 
+/* ----------------------------------------------------------- procedure diagram, 3D */
+
+/* Sized explicitly, unlike the 2D SVG's viewBox: a WebGL canvas has no auto-scaling, and an
+   unset height collapses to 0. Same footprint as .pos-procdiagram so the 2D/3D toggle doesn't
+   jump the layout underneath it. */
+.pos-procdiagram3d {
+  position: relative;
+  width: 600px;
+  max-width: 100%;
+}
+
+.pos-procdiagram3d__canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 600 / 380;
+}
+
+.pos-procdiagram3d__legend {
+  margin: 4px 0 0;
+  color: var(--pos-t3);
+  font-size: 10px;
+  font-family: 'Spline Sans Mono', monospace;
+}
+
+/* The compressed-segment true-length callout, rendered by drei's <Html> over the canvas — it
+   needs its own contrast box since it floats over whatever the scene draws underneath it. */
+.pos-procdiagram3d__break {
+  display: inline-block;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(10, 14, 20, 0.75);
+  color: #e0a83c;
+  font-size: 10px;
+  font-family: 'Spline Sans Mono', monospace;
+  white-space: nowrap;
+}
+
 /* -------------------------------------------------------------- SID/STAR */
 
 .pos-sidstartab {
@@ -905,6 +942,24 @@
 .pos-sidstartab__type-count {
   margin-left: 0.35rem;
   color: var(--pos-t3);
+}
+
+/* Wraps the diagram of whichever mode is active, plus the toggle that picks it — one column,
+   so the toggle stays reachable without scrolling past the leg list on a narrow viewport. */
+.pos-sidstartab__diagram {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.pos-sidstartab__view-toggle {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.pos-sidstartab__diagram-loading {
+  color: var(--pos-t3);
+  font-size: 0.85rem;
 }
 
 .pos-sidstartab__ident-type {

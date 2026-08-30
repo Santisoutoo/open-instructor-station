@@ -71,6 +71,14 @@ export type ApproachFilter = 'all' | ApproachType;
 export const AIRWORK_LEVELS = ['FL300', 'FL200', 'FL100', 'FL050'] as const;
 export type AirworkLevel = (typeof AIRWORK_LEVELS)[number];
 
+/**
+ * The SID/STAR tab's 2D/3D procedure-diagram selector. A view preference, not airport-scoped
+ * state — it survives `clearAirportScopedState` and is explicitly carried through
+ * `situationReset`, unlike everything that function actually clears.
+ */
+export const DIAGRAM_MODES = ['2d', '3d'] as const;
+export type DiagramMode = (typeof DIAGRAM_MODES)[number];
+
 export const CUSTOM_ORIGINS = ['runway-relative', 'coordinates'] as const;
 export type CustomOrigin = (typeof CUSTOM_ORIGINS)[number];
 
@@ -169,6 +177,7 @@ export interface PositionDesignState {
   approachFilter: ApproachFilter;
   procedure: ProcedureSelection | null;
   procedureMenuOpen: boolean;
+  diagramMode: DiagramMode;
   airworkLevel: AirworkLevel;
   custom: CustomLocationState;
   config: AircraftConfigState;
@@ -209,6 +218,7 @@ export const initialPositionDesignState: PositionDesignState = {
   approachFilter: 'all',
   procedure: null,
   procedureMenuOpen: false,
+  diagramMode: '2d',
   airworkLevel: 'FL100',
   custom: initialCustom,
   config: initialConfig,
@@ -325,6 +335,9 @@ const positionDesignSlice = createSlice({
     procedureMenuToggled(state) {
       state.procedureMenuOpen = !state.procedureMenuOpen;
     },
+    diagramModeSelected(state, action: PayloadAction<DiagramMode>) {
+      state.diagramMode = action.payload;
+    },
     airworkLevelSelected(state, action: PayloadAction<AirworkLevel>) {
       state.airworkLevel = action.payload;
     },
@@ -392,12 +405,16 @@ const positionDesignSlice = createSlice({
     sendToggled(state, action: PayloadAction<keyof SendWithPositionState>) {
       state.send[action.payload] = !state.send[action.payload];
     },
-    /** "Reset situation": back to a blank screen, keeping the loaded airport. */
+    /**
+     * "Reset situation": back to a blank screen, keeping the loaded airport — and the
+     * 2D/3D diagram choice, which is a view preference rather than part of the situation.
+     */
     situationReset(state) {
       return {
         ...initialPositionDesignState,
         icaoInput: state.icaoInput,
         loadedIcao: state.loadedIcao,
+        diagramMode: state.diagramMode,
       };
     },
   },
@@ -421,6 +438,7 @@ export const {
   procedureSelected,
   procedureLegSelected,
   procedureMenuToggled,
+  diagramModeSelected,
   airworkLevelSelected,
   customOriginSelected,
   customFieldChanged,
