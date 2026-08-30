@@ -142,6 +142,12 @@ export interface SendWithPositionState {
   ilsFrequency: boolean;
 }
 
+/**
+ * The header's "Start at" and the bottom bar's "Pick stand / gate" share one popover and
+ * one open flag; the anchor says which of the two mounted instances renders it.
+ */
+export type StartAtAnchor = 'header' | 'bottombar';
+
 export interface PositionDesignState {
   /** The header's editable ICAO text field. */
   icaoInput: string;
@@ -149,6 +155,7 @@ export interface PositionDesignState {
   loadedIcao: string;
   screenMenuOpen: boolean;
   startAtOpen: boolean;
+  startAtAnchor: StartAtAnchor;
   airportMenuOpen: boolean;
   parkingFilter: ParkingFilter;
   /** Mutually exclusive with `selectedStand`. */
@@ -190,6 +197,7 @@ export const initialPositionDesignState: PositionDesignState = {
   loadedIcao: '',
   screenMenuOpen: false,
   startAtOpen: false,
+  startAtAnchor: 'header',
   airportMenuOpen: false,
   parkingFilter: 'all',
   selectedRunway: null,
@@ -256,7 +264,14 @@ const positionDesignSlice = createSlice({
         state.airportMenuOpen = false;
       }
     },
-    startAtToggled(state) {
+    startAtToggled(state, action: PayloadAction<StartAtAnchor>) {
+      // Pressing the *other* trigger while open moves the popover rather than closing it:
+      // the instructor asked for the picker, not for nothing.
+      if (state.startAtOpen && state.startAtAnchor !== action.payload) {
+        state.startAtAnchor = action.payload;
+        return;
+      }
+      state.startAtAnchor = action.payload;
       state.startAtOpen = !state.startAtOpen;
       if (state.startAtOpen) {
         state.screenMenuOpen = false;

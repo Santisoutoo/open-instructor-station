@@ -88,6 +88,21 @@ export class Map extends StubEvented {
   zoomIn(): void {}
   zoomOut(): void {}
   easeTo(): void {}
+  fitBounds(): this {
+    return this;
+  }
+  addControl(): this {
+    return this;
+  }
+  /** Never reached in tests: the map stays `null`, so no consumer projects through it. */
+  project(): { x: number; y: number } {
+    return { x: 0, y: 0 };
+  }
+}
+
+/** The +/− control the airport diagram adds; the stub map's `addControl` ignores it. */
+export class NavigationControl {
+  constructor(_options?: unknown) {}
 }
 
 /** The subset of `MarkerOptions` the app constructs markers with. */
@@ -143,4 +158,4 @@ export function resetMaplibreStub(): void {
   Marker.created.length = 0;
 }
 
-export default { Map, Marker };
+export default { Map, Marker, NavigationControl };

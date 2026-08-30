@@ -277,6 +277,27 @@
   gap: 1rem;
 }
 
+/* The bottom-bar instance floats above its trigger instead of hanging off the header. */
+.pos-startat--above {
+  top: auto;
+  bottom: calc(100% + 0.5rem);
+  left: auto;
+  right: 1rem;
+}
+
+/*
+ * On a short viewport (1280×800 tablet) the bottom bar wraps taller and the full-height
+ * sidebar pushes the popover's top edge past the top of the screen by a few pixels. The
+ * sidebar is the only column without its own cap — the stand list and the diagram are both
+ * 262px — so cap it and let it scroll, rather than shrinking the 44px touch rows.
+ */
+@media (max-height: 820px) {
+  .pos-startat--above .pos-startat__sidebar {
+    max-height: 396px;
+    overflow-y: auto;
+  }
+}
+
 .pos-startat__sidebar {
   display: flex;
   flex-direction: column;
@@ -368,29 +389,63 @@
 
 .pos-diagram {
   position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+  border: 1px solid var(--pos-hair);
+  background: var(--pos-hover);
 }
 
-.pos-diagram__svg {
-  display: block;
+/* The MapLibre canvas: OSM tiles with the runway-strip line layer on top. */
+.pos-diagram__map {
+  position: absolute;
+  inset: 0;
 }
 
 /*
- * One line per physical strip, drawn between the two thresholds navdata publishes. The
- * mockup's terminal blocks and taxiway are gone with the sample data: apt.dat publishes no
- * terminal buildings, and inventing three rectangles would be decoration pretending to be
- * an aerodrome chart.
+ * Stands and runway labels are DOM, laid over the canvas and re-placed through
+ * `map.project` on every move (see AirportDiagram.tsx for why they are not markers or a
+ * symbol layer). The overlay itself lets gestures through to the map; only its children
+ * take the pointer.
  */
-.pos-diagram__runway-line {
-  stroke: var(--pos-t3);
-  stroke-width: 6;
-  stroke-linecap: round;
-  opacity: 0.55;
+.pos-diagram__overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.pos-diagram__overlay > * {
+  pointer-events: auto;
 }
 
 .pos-diagram__runway-label {
-  fill: var(--pos-t1);
+  position: absolute;
+  transform: translate(-50%, -50%);
+  padding: 0 3px;
+  border-radius: 3px;
+  background: color-mix(in oklch, var(--pos-panel) 80%, transparent);
+  color: var(--pos-t1);
   font-size: 9px;
-  font-family: 'Spline Sans Mono', monospace;
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+/* The map control chrome, tinted to the panel rather than MapLibre's white. */
+.pos-diagram .maplibregl-ctrl-group {
+  background: var(--pos-panel);
+  box-shadow: 0 0 0 1px var(--pos-hair);
+}
+
+.pos-diagram .maplibregl-ctrl-group button + button {
+  border-top-color: var(--pos-hair);
+}
+
+/* MapLibre's control glyphs are black; the default (dark) panel needs them inverted. */
+.pos-diagram .maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+
+[data-theme='light'] .pos-diagram .maplibregl-ctrl-icon {
+  filter: none;
 }
 
 .pos-diagram__stand {
@@ -406,11 +461,18 @@
   cursor: pointer;
 }
 
+/*
+ * Fixed colours, not theme tokens: the dot sits on OSM tiles, which are light in both
+ * themes. The white ring is what keeps 298 overlapping dots at airport-overview zoom
+ * reading as a cluster of markers instead of one solid blob.
+ */
 .pos-diagram__stand-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
-  background: var(--pos-line);
+  width: 8px;
+  height: 8px;
+  border-radius: 3px;
+  background: #2a3138;
+  border: 2px solid rgb(255 255 255 / 0.92);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.4);
 }
 
 .pos-diagram__stand--selected .pos-diagram__stand-dot {
@@ -588,7 +650,6 @@
 .pos-factrow__value--caution {
   color: var(--pos-caution);
 }
-
 
 /* -------------------------------------------------------- approach tab */
 
@@ -879,7 +940,9 @@
   flex: none;
   width: 480px;
   min-height: 0;
-  padding: 8px 0;
+  padding: 15px 0; /* must equal the notch pseudo-elements' height below, or the punch band
+    (z-index: 1, painted over .pos-rail__scroll) bleeds into the scrollable content instead of
+    sitting entirely inside the padding band */
   background: var(--pos-rail);
   border-left: 1px solid var(--pos-hair);
   display: flex;
@@ -900,9 +963,15 @@
 /* Ticket-stub perforation: a row of tangent half-circle bites, cut into the card's top and
    bottom padding band. Scoped to .pos-rail — see design doc §7.7 for why this is not a shared
    utility class yet.
-   `7.5px, transparent 8.5px` is not an arbitrary feather: 7.5 + 8.5 = 16 = D (the tile size), so
-   adjacent dots' soft edges meet exactly at their shared tangent point — change either number
-   and a seam or a double-covered gap appears at every tile boundary.
+   `14.5px, transparent 15.5px` is not an arbitrary feather: it's D/2 ± 0.5 for a D=30px tile,
+   so 14.5 + 15.5 = 30 = D and adjacent dots' soft edges meet exactly at their shared tangent
+   point — change either number (or D) without keeping this sum-to-D and a seam or a
+   double-covered gap appears at every tile boundary. The pseudo-element `height` must equal the
+   true tangent radius D/2 (15px) to show the full punched hemisphere, and the circle's x-center
+   (`circle at 15px 0`) must be D/2 too. Two prior passes undershot: 16px tiles (7.5/8.5 stops)
+   read as too faint a ripple to register as a ticket stub at a glance, and 22px tiles
+   (10.5/11.5 stops) were still visually shallow with too many bites in the row — this widens
+   the bite to a 29px-diameter notch (fewer, deeper teeth per issue #167 follow-up).
    The punch colour is `--pos-bg` (always darker than `--pos-rail` in both themes — the
    elevation convention this whole design system already uses, so it reads as a hole rather than
    an embossed highlight), with a `@supports`-gated override for browsers that support CSS
@@ -910,18 +979,30 @@
    in the *light* theme — correct direction, too little magnitude — and no other existing token
    is reliably darker than `--pos-rail` in *both* themes (dividers/lines are conventionally
    lighter than their panel in dark mode, the opposite of what a recessed hole needs). Computing
-   the punch colour relative to `--pos-rail` itself guarantees the right direction and a real
-   margin in either theme, without hand-picking a token. */
+   the punch colour relative to `--pos-rail` itself guarantees the right direction; the delta was
+   widened from -0.1 to -0.15, then to -0.18 (issue #167 follow-up) — checked against both theme
+   tokens so it can't clip: dark `--pos-rail` L=0.215 → 0.035, light L=0.975 → 0.795, both clear
+   of 0 with margin left for the tokens to drift.
+   Flat colour contrast alone still read as "the same" at a glance even at 29px and ΔL=0.18 (a
+   reporter's own words, issue #167) — two tones next to each other is a weak depth signal on a
+   near-black dark theme where lightness is already compressed. `filter: drop-shadow` adds a real
+   shading cue instead: it silhouettes the pseudo-element's own alpha channel (the scalloped
+   background-image, not a rectangle), so the shadow traces each bite's curve and reads as a
+   punched-through edge rather than a printed pattern. It is defined once, pre-transform, on the
+   shared selector: `.pos-rail::after` mirrors it via `scaleY(-1)` (see below), which flips the
+   `1px` offset too, so the shadow still falls toward the panel's *centre* on both edges instead
+   of one of them casting "backwards". */
 .pos-rail::before,
 .pos-rail::after {
   content: '';
   position: absolute;
   left: -1px; /* compensates the 1px border-left so the strip spans exactly 480px, see below */
   right: 0;
-  height: 8px;
-  background-image: radial-gradient(circle at 8px 0, var(--pos-bg) 7.5px, transparent 8.5px);
-  background-size: 16px 16px;
+  height: 15px;
+  background-image: radial-gradient(circle at 15px 0, var(--pos-bg) 14.5px, transparent 15.5px);
+  background-size: 30px 30px;
   background-repeat: repeat-x;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));
   pointer-events: none;
   z-index: 1;
 }
@@ -930,9 +1011,9 @@
   .pos-rail::before,
   .pos-rail::after {
     background-image: radial-gradient(
-      circle at 8px 0,
-      oklch(from var(--pos-rail) calc(l - 0.1) c h) 7.5px,
-      transparent 8.5px
+      circle at 15px 0,
+      oklch(from var(--pos-rail) calc(l - 0.18) c h) 14.5px,
+      transparent 15.5px
     );
   }
 }
@@ -1060,6 +1141,7 @@
 /* ------------------------------------------------------------- bottom bar */
 
 .pos-bottombar {
+  position: relative;
   flex: none;
   display: flex;
   align-items: flex-start;
@@ -1134,6 +1216,13 @@
 
 .pos-bottombar__na {
   color: var(--pos-caution);
+}
+
+/* On its own row under Course / ILS frequency — the gap issue #166 points at. */
+.pos-bottombar__startat {
+  flex-basis: 100%;
+  padding-left: 0;
+  text-align: left;
 }
 
 /* ----------------------------------------------------------------- checkbox */

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -7,6 +7,9 @@ import { BottomBar } from './BottomBar';
 import { initialPositionDesignState } from './positionDesignSlice';
 import { callsTo, stubApi } from './testApi';
 import { AIRBORNE_PREVIEW, CAPABILITIES, ICAO, positionRoutes } from './testFixtures';
+
+// The airport diagram is a MapLibre map now; jsdom has no WebGL (see test/maplibreStub).
+vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -75,6 +78,57 @@ describe('the configuration fields', () => {
       expect(screen.getByLabelText('Flaps')).toBeChecked();
     });
     expect(screen.getByLabelText('Flaps %')).toHaveValue(50);
+  });
+
+  it('keeps "Flaps" ticked and the box genuinely clearable while re-entering a value', async () => {
+    // Regression for #164: `Number('')` is 0, not null, so clearing the box to type a
+    // replacement used to read back as "flaps off" and untick + disable the field on the
+    // same keystroke, before the instructor could type anything.
+    //
+    // A first fix (null-guarding the onChange) stopped that, but bound the box straight to
+    // the resolved-fallback value, which snapped a cleared box back to "50" on the very
+    // same render — the instructor could delete only the last digit of "50", never both.
+    // The box must stay genuinely empty while focused so a full replacement can be typed.
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercent = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercent).toHaveValue(50);
+    });
+
+    fireEvent.focus(flapsPercent);
+    fireEvent.change(flapsPercent, { target: { value: '' } });
+
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+    expect(flapsPercent).not.toBeDisabled();
+    expect(flapsPercent).toHaveValue(null);
+
+    fireEvent.change(flapsPercent, { target: { value: '30' } });
+    expect(flapsPercent).toHaveValue(30);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
+
+    fireEvent.blur(flapsPercent);
+    expect(flapsPercent).toHaveValue(30);
+  });
+
+  it('reverts the Flaps % box to the resolved default when left empty', async () => {
+    stubApi(positionRoutes());
+    renderBar();
+
+    const flapsPercent = await screen.findByLabelText('Flaps %');
+    await waitFor(() => {
+      expect(flapsPercent).toHaveValue(50);
+    });
+
+    fireEvent.focus(flapsPercent);
+    fireEvent.change(flapsPercent, { target: { value: '' } });
+    expect(flapsPercent).toHaveValue(null);
+
+    fireEvent.blur(flapsPercent);
+
+    expect(flapsPercent).toHaveValue(50);
+    expect(screen.getByLabelText('Flaps')).toBeChecked();
   });
 
   it('unticking "Flaps" commands flaps up rather than silently changing nothing', async () => {
@@ -343,5 +397,59 @@ describe('Set position', () => {
       await screen.findByText(/does not declare can_set_position/),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Set position/ })).toBeDisabled();
+  });
+});
+
+describe('the stand / gate picker (issue #166)', () => {
+  it('opens the Start-at popover above the bar, from the "Sent with the position" group', async () => {
+    stubApi(positionRoutes());
+    const store = renderBar();
+
+    const trigger = screen.getByRole('button', { name: /^Pick stand \/ gate/ });
+    expect(trigger.closest('fieldset')?.textContent).toContain('Sent with the position');
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+
+    await userEvent.click(trigger);
+
+    const dialog = screen.getByRole('dialog');
+    expect(dialog).toHaveClass('pos-startat--above');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    expect(trigger).toHaveAttribute('aria-controls', dialog.id);
+    expect(store.getState().positionDesign.startAtAnchor).toBe('bottombar');
+  });
+
+  it('picks a stand from the map and prints it on the trigger', async () => {
+    stubApi(positionRoutes());
+    const store = renderBar();
+    await userEvent.click(screen.getByRole('button', { name: /^Pick stand \/ gate/ }));
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Stand A1' }));
+
+    expect(store.getState().positionDesign.selectedStand).toBe('A1');
+    expect(
+      screen.getByRole('button', { name: /^Pick stand \/ gate/ }).textContent,
+    ).toContain('Stand A1');
+  });
+
+  it('Escape closes it and hands focus back to the bar’s own trigger', async () => {
+    stubApi(positionRoutes());
+    renderBar();
+    const trigger = screen.getByRole('button', { name: /^Pick stand \/ gate/ });
+    await userEvent.click(trigger);
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it('does not render the popover when the header owns it', () => {
+    stubApi(positionRoutes());
+    renderBar({
+      positionDesign: designState({ startAtOpen: true, startAtAnchor: 'header' }),
+    });
+
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 });

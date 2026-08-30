@@ -22,7 +22,7 @@
  * 10 NM final, which is the failure CLAUDE.md's placement-speed note exists to prevent.
  */
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   useApplyPlacementMutation,
   useGetCapabilitiesQuery,
@@ -37,11 +37,14 @@ import {
   configChanged,
   sendToggled,
   situationReset,
+  startAtToggled,
   type AircraftConfigState,
 } from './positionDesignSlice';
 import { placementStaged, setupOverridden, staleCleared } from './positionSlice';
 import { overridesOrNull } from './setup';
 import { unflyableReason } from './speed';
+import { StartAtPopover } from './StartAtPopover';
+import { startAtLabelOf, startAtPopoverId } from './startAt';
 import {
   useGroundElevationFt,
   useIls,
@@ -66,6 +69,16 @@ export function BottomBar() {
   const dispatch = useAppDispatch();
   const config = useAppSelector((state) => state.positionDesign.config);
   const send = useAppSelector((state) => state.positionDesign.send);
+  const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
+  const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
+  // The second entry point to the Start-at picker (issue #166): an instructor setting flaps
+  // and gear down here should not have to travel back to the header to change the stand.
+  const startAtOpen = useAppSelector(
+    (state) =>
+      state.positionDesign.startAtOpen &&
+      state.positionDesign.startAtAnchor === 'bottombar',
+  );
+  const startAtTriggerRef = useRef<HTMLButtonElement>(null);
   const runway = useSelectedRunway();
   // Tri-state on purpose: `null` while the lookup is in flight. Collapsing it to a boolean
   // is what made the bar tell an instructor an ILS runway had none for a frame.
@@ -79,6 +92,17 @@ export function BottomBar() {
 
   const [applyPlacement, applyState] = useApplyPlacementMutation();
   const [flash, setFlash] = useState<string | null>(null);
+
+  // The Flaps % box's own characters, decoupled from `flapsValue` below while the
+  // instructor is mid-edit. `flapsValue` re-derives to the resolved default the instant
+  // the field is empty (that's what lets the checkbox and preview panel stay correct), so
+  // binding the input to it directly snapped a cleared box straight back to "50" before a
+  // second backspace could land — the instructor could delete only the last digit, never
+  // both. Left alone while focused, this mirrors the resolved default again once the field
+  // blurs empty, or the moment it stops being focused for any other reason.
+  const [flapsFocused, setFlapsFocused] = useState(false);
+  const [flapsText, setFlapsText] = useState('');
+  const [flapsSyncedFrom, setFlapsSyncedFrom] = useState<number | null>(null);
 
   // "Override altitude (ft)" is a plain `number` in Redux, unlike IAS/Pitch's `number |
   // null` — there is no "leave it alone" meaning to fall back on, since the override is
@@ -156,6 +180,16 @@ export function BottomBar() {
     config.flapsPercent ??
     (merged.flaps_ratio == null ? 0 : Math.round(merged.flaps_ratio * 100));
   const flapsOn = flapsValue > 0;
+
+  // Follows the resolved value the same way SliderControl follows its own external
+  // world — adjusted during render, not in an effect, so the sync is visible on the
+  // very render it happens rather than one frame later. Blocked while focused so it
+  // cannot fight a keystroke; `onBlur` below covers the one case this can't (the
+  // instructor leaves the box empty and the resolved value hasn't itself changed).
+  if (!flapsFocused && flapsValue !== flapsSyncedFrom) {
+    setFlapsSyncedFrom(flapsValue);
+    setFlapsText(String(flapsValue));
+  }
 
   const speedReason = unflyableReason({
     altitudeFt: merged.altitude_ft ?? preview?.placement.position.altitude_ft ?? null,
@@ -238,9 +272,24 @@ export function BottomBar() {
             type="number"
             className="pos-field__input pos-mono"
             disabled={!flapsOn}
-            value={flapsValue}
+            value={flapsText}
+            onFocus={() => {
+              setFlapsFocused(true);
+            }}
+            onBlur={() => {
+              setFlapsFocused(false);
+              // The render-time sync above only fires when `flapsValue` itself changes,
+              // which does not catch "left empty, resolved value unchanged" — blurring on
+              // an empty box must still restore it.
+              setFlapsSyncedFrom(flapsValue);
+              setFlapsText(String(flapsValue));
+            }}
             onChange={(event) => {
-              setConfig('flapsPercent', Number(event.target.value));
+              setFlapsText(event.target.value);
+              setConfig(
+                'flapsPercent',
+                event.target.value === '' ? null : Number(event.target.value),
+              );
             }}
           />
         </label>
@@ -310,6 +359,23 @@ export function BottomBar() {
           ILS frequency
           {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
         </label>
+        <button
+          ref={startAtTriggerRef}
+          type="button"
+          className="pos-textaction pos-bottombar__startat"
+          aria-haspopup="dialog"
+          aria-expanded={startAtOpen}
+          aria-controls={startAtPopoverId('bottombar')}
+          onClick={() => {
+            dispatch(startAtToggled('bottombar'));
+          }}
+        >
+          Pick stand / gate{' '}
+          <span className="pos-mono">
+            {startAtLabelOf(selectedRunway, selectedStand)}
+          </span>
+        </button>
+        <StartAtPopover anchor="bottombar" triggerRef={startAtTriggerRef} />
       </fieldset>
 
       <div className="pos-bottombar__spacer" />
