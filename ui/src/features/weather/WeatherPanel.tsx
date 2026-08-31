@@ -30,14 +30,14 @@ import {
 } from './format';
 import { weatherGate } from './gate';
 import { PresetGrid } from './PresetGrid';
-import { buildWeatherRequest, mergeForDisplay } from './resolve';
+import { buildManualWeatherRequest, buildWeatherRequest, mergeForDisplay } from './resolve';
 import {
   useApplyWeatherMutation,
   useGetWeatherManifestQuery,
   useGetWeatherStateQuery,
   usePreviewWeatherQuery,
 } from './weatherApi';
-import { overrideSet, stagingCleared } from './weatherSlice';
+import { overrideSet, stagingCleared, weatherSource } from './weatherSlice';
 import { WeatherStagingBar } from './WeatherStagingBar';
 import { WindLayerEditor } from './WindLayerEditor';
 import './weather.css';
@@ -73,6 +73,7 @@ export function WeatherPanel() {
   const { selectedPresetId, overrides, staged } = useAppSelector(
     (state) => state.weather,
   );
+  const source = weatherSource({ selectedPresetId, overrides, staged });
   // Read-only prefill from the Position panel — never dispatched into.
   const selectedIcao = useAppSelector((state) => state.position.selectedIcao);
   const selectedRunwayIdent = useAppSelector(
@@ -93,9 +94,10 @@ export function WeatherPanel() {
   // Mirrors `features/position/StagingBar.tsx`: the instructor's own edits are merged
   // client-side (below) rather than round-tripped through the server on every keystroke,
   // which would also reset each edit to whatever the next preview response says the moment
-  // it lands.
+  // it lands. Manual mode (WS-2) never previews at all — a setup-only preview would just
+  // echo the setup back.
   const previewRequest =
-    staged && preset !== undefined
+    source === 'preset' && preset !== undefined
       ? buildWeatherRequest(preset.id, {}, selectedIcao, selectedRunwayIdent)
       : null;
   const {
@@ -109,24 +111,49 @@ export function WeatherPanel() {
 
   const [applyWeather, applyState] = useApplyWeatherMutation();
 
-  // Two-stage merge: the server's resolved preset over the current weather, then the
-  // instructor's own overrides over that — the same shape `mergeForDisplay` already gives
-  // for a `WeatherSetup` overlay, applied twice.
+  // Preset mode: the server's resolved preset over the current weather, then the
+  // instructor's own overrides over that. Manual mode and the unstaged case share one path —
+  // the current weather with the (possibly empty) overrides replacing whatever they touch,
+  // computed client-side with no server round-trip. An empty overlay is exactly `current`
+  // itself, which is what lets the editors show — and edit — today's weather before anything
+  // is staged at all (WS-1: staging only happens once the instructor actually changes a field).
   const resolved: WeatherState | null =
-    preview !== undefined && current !== undefined
-      ? mergeForDisplay(mergeForDisplay(current, preview.setup), overrides)
-      : null;
+    current === undefined
+      ? null
+      : source === 'preset'
+        ? preview !== undefined
+          ? mergeForDisplay(mergeForDisplay(current, preview.setup), overrides)
+          : null
+        : mergeForDisplay(current, overrides);
+
+  // WS-1's edge case: an override added then deleted can leave `staged=true, overrides={}` —
+  // a manual stage with nothing to send, which the server would refuse (422: neither preset
+  // nor setup). Disable Apply and say why, rather than let it 422.
+  const manualOverridesEmpty = source === 'manual' && Object.keys(overrides).length === 0;
 
   const commit = () => {
-    if (preset === undefined) {
+    if (source === 'preset') {
+      if (preset === undefined) {
+        return;
+      }
+      void applyWeather(
+        buildWeatherRequest(preset.id, overrides, selectedIcao, selectedRunwayIdent),
+      )
+        .unwrap()
+        .then(() => dispatch(stagingCleared()))
+        .catch(() => {
+          // Rendered from applyState.isError below; nothing to do here.
+        });
       return;
     }
-    void applyWeather(buildWeatherRequest(preset.id, overrides, selectedIcao, selectedRunwayIdent))
-      .unwrap()
-      .then(() => dispatch(stagingCleared()))
-      .catch(() => {
-        // Rendered from applyState.isError below; nothing to do here.
-      });
+    if (source === 'manual' && !manualOverridesEmpty) {
+      void applyWeather(buildManualWeatherRequest(overrides))
+        .unwrap()
+        .then(() => dispatch(stagingCleared()))
+        .catch(() => {
+          // Rendered from applyState.isError below; nothing to do here.
+        });
+    }
   };
 
   const setField = (field: keyof WeatherSetup, value: unknown) => {
@@ -153,57 +180,61 @@ export function WeatherPanel() {
         onCommit={commit}
       />
 
-      {staged && preset !== undefined && previewFailed && (
+      {source === 'preset' && previewFailed && (
         <p className="panel__error">
           {errorMessage(previewError, 'This weather could not be worked out.')}
         </p>
       )}
 
-      {staged && preset !== undefined && !previewFailed && resolved === null && (
+      {source === 'preset' && !previewFailed && resolved === null && (
         <p className="panel__empty">Working out the weather…</p>
       )}
 
-      {resolved !== null && preset !== undefined && (
-        <>
-          <div className="weather-editors">
-            <WindLayerEditor
-              layers={resolved.wind_layers}
-              disabled={applyState.isLoading}
-              onChange={(layers) => {
-                setField('wind_layers', layers);
-              }}
-            />
-            <CloudLayerEditor
-              layers={resolved.cloud_layers}
-              disabled={applyState.isLoading}
-              onChange={(layers) => {
-                setField('cloud_layers', layers);
-              }}
-            />
-            <AtmosphereForm
-              resolved={resolved}
-              disabled={applyState.isLoading}
-              onField={(field, value) => {
-                setField(field, value);
-              }}
-              onContamination={(value: RunwayContamination) => {
-                setField('runway_contamination', value);
-              }}
-            />
-          </div>
-          <WeatherStagingBar
-            presetLabel={preset.label}
-            resolved={resolved}
-            applying={applyState.isLoading || previewFetching}
-            errorText={
-              applyState.isError
-                ? errorMessage(applyState.error, 'The weather could not be applied.')
-                : null
-            }
-            onApply={commit}
-            onDismiss={() => dispatch(stagingCleared())}
+      {gate.open && resolved !== null && (
+        <div className="weather-editors">
+          <WindLayerEditor
+            layers={resolved.wind_layers}
+            disabled={applyState.isLoading}
+            onChange={(layers) => {
+              setField('wind_layers', layers);
+            }}
           />
-        </>
+          <CloudLayerEditor
+            layers={resolved.cloud_layers}
+            disabled={applyState.isLoading}
+            onChange={(layers) => {
+              setField('cloud_layers', layers);
+            }}
+          />
+          <AtmosphereForm
+            resolved={resolved}
+            disabled={applyState.isLoading}
+            onField={(field, value) => {
+              setField(field, value);
+            }}
+            onContamination={(value: RunwayContamination) => {
+              setField('runway_contamination', value);
+            }}
+          />
+        </div>
+      )}
+
+      {source !== null && resolved !== null && (
+        <WeatherStagingBar
+          {...(preset !== undefined ? { presetLabel: preset.label } : {})}
+          resolved={resolved}
+          applying={applyState.isLoading || previewFetching}
+          disabledReason={
+            manualOverridesEmpty ? 'No changes yet — edit a field to apply.' : null
+          }
+          errorText={
+            applyState.isError
+              ? errorMessage(applyState.error, 'The weather could not be applied.')
+              : null
+          }
+          onApply={commit}
+          onDismiss={() => dispatch(stagingCleared())}
+        />
       )}
     </section>
   );
