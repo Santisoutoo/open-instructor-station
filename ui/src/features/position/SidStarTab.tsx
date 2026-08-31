@@ -41,6 +41,7 @@ import {
 import {
   procedureFamilyMatches,
   procedureKindOf,
+  useAirport,
   useLoadedIcao,
   useSelectedRunway,
 } from './usePositionData';
@@ -52,7 +53,9 @@ import {
  * narrower boundary nested one level deeper, only around the 3D branch of this one tab.
  */
 const ProcedureDiagram3D = lazy(() =>
-  import('./ProcedureDiagram3D').then((module) => ({ default: module.ProcedureDiagram3D })),
+  import('./ProcedureDiagram3D').then((module) => ({
+    default: module.ProcedureDiagram3D,
+  })),
 );
 
 const FAMILY_LABEL: Record<ProcedureFamily, string> = {
@@ -160,6 +163,9 @@ export function SidStarTab() {
   const menuOpen = useAppSelector((state) => state.positionDesign.procedureMenuOpen);
   const diagramMode = useAppSelector((state) => state.positionDesign.diagramMode);
   const runway = useSelectedRunway();
+  // The ARP georeferences the 3D view's OSM ground texture (#178). `useAirport()` shares
+  // RTK Query's cache with every other caller, so this is a read, not a new request.
+  const { airport } = useAirport();
   const triggerRef = useRef<HTMLButtonElement>(null);
   // Shared by both diagram branches — the 2D and 3D views must orient identically.
   const courseDeg = runway?.true_bearing_deg ?? 0;
@@ -384,7 +390,9 @@ export function SidStarTab() {
                 />
               ) : (
                 <Suspense
-                  fallback={<p className="pos-sidstartab__diagram-loading">Loading 3D view…</p>}
+                  fallback={
+                    <p className="pos-sidstartab__diagram-loading">Loading 3D view…</p>
+                  }
                 >
                   <ProcedureDiagram3D
                     layout={layout}
@@ -394,6 +402,7 @@ export function SidStarTab() {
                       dispatch(procedureLegSelected(sequence));
                     }}
                     runway={runway ?? undefined}
+                    airportPosition={airport?.position}
                   />
                 </Suspense>
               )}

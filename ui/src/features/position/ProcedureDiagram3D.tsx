@@ -29,14 +29,17 @@
 import { useMemo, useRef, useState, type ComponentRef } from 'react';
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
 import { Billboard, Html, Line, OrbitControls } from '@react-three/drei';
-import { DoubleSide, Vector3 } from 'three';
-import type { LayoutNode, Runway } from '../../api/models';
+import { DoubleSide, Vector3, type CanvasTexture } from 'three';
+import type { GeoPosition, LayoutNode, Runway } from '../../api/models';
+import { sceneOrigin } from './groundTexture';
+import { useGroundTexture } from './useGroundTexture';
 import { usePosThemePalette, type PosThemePalette } from './usePosThemePalette';
 import {
   NOMINAL_RUNWAY_WIDTH_M,
   VERTICAL_EXAGGERATION,
   buildProcedureScene,
   buildRunwayQuad,
+  groundPlaneFootprint,
   type ProcedureLayout,
   type ProcedureScene,
   type SceneExtents,
@@ -46,7 +49,9 @@ import {
 } from './procedureScene';
 
 function segmentIsDashed(from: SceneNode, to: SceneNode): boolean {
-  return !to.node.positioned || from.node.is_missed_approach || to.node.is_missed_approach;
+  return (
+    !to.node.positioned || from.node.is_missed_approach || to.node.is_missed_approach
+  );
 }
 
 /**
@@ -100,16 +105,6 @@ const NODE_RADIUS_FRACTION = 0.025;
 const HIT_RADIUS_FACTOR = 3;
 const DASH_SIZE_NM = 0.15;
 const GAP_SIZE_NM = 0.1;
-
-/**
- * Padding factor for the ground plane's XZ span — distinct from `procedureScene.ts`'s own
- * `FIT_MARGIN_FACTOR` (which pads a *radius* for the camera's bounding-sphere fit; applying
- * that same, smaller factor directly to a span would leave the plane's edge visibly close to
- * the outermost node from a shallow orbit angle). A floor keeps a tight or single-node layout
- * from getting a vanishingly small plane.
- */
-const GROUND_MARGIN_FACTOR = 1.6;
-const MIN_GROUND_SPAN_NM = 1;
 
 function midpoint(a: Vec3, b: Vec3): Vec3 {
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
@@ -299,22 +294,39 @@ function ProcedureNode3D({
 }
 
 /**
- * A flat, neutral mesh sized from `scene.extents`' XZ footprint (#177) — no texture (#178's
- * job, explicitly out of scope here). `side={DoubleSide}` so it still reads from an orbit below
+ * A flat mesh sized from `groundPlaneFootprint(scene.extents)` — the *same* footprint
+ * `useGroundTexture` fetches OSM tiles for (#178), so texture and geometry provably cover
+ * one rect. With a `texture`, the composite renders at full brightness (`color` on a mapped
+ * `meshBasicMaterial` is a tint *multiplier*, so `#ffffff` means "the map as-is"); without
+ * one — `'unavailable'`, `'loading'` and `'error'` alike — exactly the #177 neutral
+ * `palette.hair` plane, so offline, mid-fetch and failed all render identically and nothing
+ * ever throws into the canvas. The mesh `name` carries the textured/plain state (#176's
+ * name-carries-state convention). `side={DoubleSide}` so it still reads from an orbit below
  * the horizon.
  */
-function GroundPlane({ extents, color }: { readonly extents: SceneExtents; readonly color: string }) {
-  const width = Math.max(extents.maxX - extents.minX, MIN_GROUND_SPAN_NM) * GROUND_MARGIN_FACTOR;
-  const depth = Math.max(extents.maxZ - extents.minZ, MIN_GROUND_SPAN_NM) * GROUND_MARGIN_FACTOR;
+function GroundPlane({
+  extents,
+  color,
+  texture,
+}: {
+  readonly extents: SceneExtents;
+  readonly color: string;
+  readonly texture?: CanvasTexture | null;
+}) {
+  const footprint = groundPlaneFootprint(extents);
 
   return (
     <mesh
-      name="procdiagram3d-ground"
-      position={[extents.centerX, 0, extents.centerZ]}
+      name={texture != null ? 'procdiagram3d-ground--textured' : 'procdiagram3d-ground'}
+      position={[footprint.centerX, 0, footprint.centerZ]}
       rotation={[-Math.PI / 2, 0, 0]}
     >
-      <planeGeometry args={[width, depth]} />
-      <meshBasicMaterial color={color} side={DoubleSide} />
+      <planeGeometry args={[footprint.widthNm, footprint.depthNm]} />
+      {texture != null ? (
+        <meshBasicMaterial map={texture} color="#ffffff" side={DoubleSide} />
+      ) : (
+        <meshBasicMaterial color={color} side={DoubleSide} />
+      )}
     </mesh>
   );
 }
@@ -427,6 +439,7 @@ export function ProcedureDiagram3D({
   selectedSequence,
   onSelectLeg,
   runway,
+  airportPosition,
 }: {
   readonly layout: ProcedureLayout;
   /** The orienting course — the runway's, when one is known; 0 (north-up) otherwise. Only
@@ -440,6 +453,11 @@ export function ProcedureDiagram3D({
    *  explicit `undefined` on an optional prop. The runway quad only renders when this AND an
    *  `is_runway` layout node both exist. */
   readonly runway?: Runway | undefined;
+  /** The ARP, from `useAirport()` in `SidStarTab` (#178) — georeferences the ground plane
+   *  for the OSM texture. Same `?: X | undefined` shape as `runway` above, and the same
+   *  `exactOptionalPropertyTypes` reasoning. Without it (or on a `last_fix` layout, whose
+   *  inverse is not trustworthy — see `sceneOrigin`) the plain ground plane renders. */
+  readonly airportPosition?: GeoPosition | undefined;
 }) {
   const [hoveredSequence, setHoveredSequence] = useState<number | null>(null);
   const scene = buildProcedureScene(layout, courseDeg);
@@ -449,6 +467,9 @@ export function ProcedureDiagram3D({
   // subtree (see usePosThemePalette's docstring for why document.documentElement can't be used).
   const containerRef = useRef<HTMLDivElement>(null);
   const palette = usePosThemePalette(containerRef);
+  const origin =
+    airportPosition === undefined ? null : sceneOrigin(layout, airportPosition);
+  const { texture, status: textureStatus } = useGroundTexture(origin, scene.extents);
 
   const runwayNode = scene.nodes.find((sceneNode) => sceneNode.node.is_runway);
 
@@ -464,26 +485,48 @@ export function ProcedureDiagram3D({
 
   return (
     <div className="pos-procdiagram3d" ref={containerRef}>
-      <Canvas
-        className="pos-procdiagram3d__canvas"
-        camera={{ position: scene.cameraPose.position, fov: scene.cameraPose.fov }}
-      >
-        <GroundPlane extents={scene.extents} color={palette.hair} />
-        {runway !== undefined && runwayNode !== undefined && (
-          <RunwayMesh runwayNode={runwayNode} runway={runway} />
-        )}
-        <ProcedureSceneContent
-          scene={scene}
-          selectedSequence={selectedSequence}
-          hoveredSequence={hoveredSequence}
-          palette={palette}
-          onHoverChange={setHoveredSequence}
-          onSelectLeg={onSelectLeg}
-        />
-        {/* No minPolarAngle/maxPolarAngle: looking at the procedure from below the horizon
+      {/* The stage wrapper anchors the OSM attribution to the canvas itself rather than to
+          the whole component (whose bottom edge is the toolbar below the canvas). */}
+      <div className="pos-procdiagram3d__stage">
+        <Canvas
+          className="pos-procdiagram3d__canvas"
+          camera={{ position: scene.cameraPose.position, fov: scene.cameraPose.fov }}
+        >
+          <GroundPlane extents={scene.extents} color={palette.hair} texture={texture} />
+          {runway !== undefined && runwayNode !== undefined && (
+            <RunwayMesh runwayNode={runwayNode} runway={runway} />
+          )}
+          <ProcedureSceneContent
+            scene={scene}
+            selectedSequence={selectedSequence}
+            hoveredSequence={hoveredSequence}
+            palette={palette}
+            onHoverChange={setHoveredSequence}
+            onSelectLeg={onSelectLeg}
+          />
+          {/* No minPolarAngle/maxPolarAngle: looking at the procedure from below the horizon
             must work, per the issue. */}
-        <OrbitControls ref={controlsRef} makeDefault enableDamping target={scene.cameraPose.target} />
-      </Canvas>
+          <OrbitControls
+            ref={controlsRef}
+            makeDefault
+            enableDamping
+            target={scene.cameraPose.target}
+          />
+        </Canvas>
+        {/* Required whenever OSM pixels are on screen — and only then: for every non-ready
+          status the plain plane renders and the credit is correctly absent. The text
+          matches useMapLibre.ts's attribution string character-for-character. */}
+        {textureStatus === 'ready' && (
+          <a
+            className="pos-procdiagram3d__attribution"
+            href="https://www.openstreetmap.org/copyright"
+            target="_blank"
+            rel="noreferrer"
+          >
+            © OpenStreetMap contributors
+          </a>
+        )}
+      </div>
       <div className="pos-procdiagram3d__toolbar">
         <button
           type="button"

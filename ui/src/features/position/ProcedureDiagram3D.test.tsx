@@ -12,11 +12,19 @@
  */
 
 import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it, vi } from 'vitest';
-import type { LayoutNode, LayoutSegment, ProcedureLayout, Runway } from '../../api/models';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { CanvasTexture } from 'three';
+import type {
+  GeoPosition,
+  LayoutNode,
+  LayoutSegment,
+  ProcedureLayout,
+  Runway,
+} from '../../api/models';
 import { orbitControlsInstances } from '../../test/threeStub';
 import { ProcedureDiagram3D } from './ProcedureDiagram3D';
 import { buildProcedureScene } from './procedureScene';
+import { useGroundTexture } from './useGroundTexture';
 
 vi.mock('@react-three/fiber', async () => {
   const { threeFiberStub } = await import('../../test/threeStub');
@@ -25,6 +33,18 @@ vi.mock('@react-three/fiber', async () => {
 vi.mock('@react-three/drei', async () => {
   const { threeDreiStub } = await import('../../test/threeStub');
   return threeDreiStub;
+});
+// The hook's fetch cannot run in jsdom, so the component tests mock it at its module
+// boundary (#178) — the hook's own behaviour is `useGroundTexture.test.ts`'s job.
+vi.mock('./useGroundTexture', () => ({
+  useGroundTexture: vi.fn(),
+}));
+
+const useGroundTextureMock = vi.mocked(useGroundTexture);
+
+beforeEach(() => {
+  // The default for every test that is not about the texture: the plain #177 plane.
+  useGroundTextureMock.mockReturnValue({ texture: null, status: 'unavailable' });
 });
 
 const FLAGS = {
@@ -35,7 +55,9 @@ const FLAGS = {
   is_runway: false,
 } as const;
 
-function node(overrides: Partial<LayoutNode> & Pick<LayoutNode, 'sequence' | 'ident'>): LayoutNode {
+function node(
+  overrides: Partial<LayoutNode> & Pick<LayoutNode, 'sequence' | 'ident'>,
+): LayoutNode {
   return { x_nm: 0, y_nm: 0, altitude_ft: 2000, ...FLAGS, ...overrides };
 }
 
@@ -97,7 +119,12 @@ const LAYOUT: ProcedureLayout = {
     }),
   ],
   segments: [
-    segment({ from_sequence: 10, to_sequence: 20, true_length_nm: 4, drawn_length_nm: 4 }),
+    segment({
+      from_sequence: 10,
+      to_sequence: 20,
+      true_length_nm: 4,
+      drawn_length_nm: 4,
+    }),
     segment({
       from_sequence: 20,
       to_sequence: 30,
@@ -105,7 +132,12 @@ const LAYOUT: ProcedureLayout = {
       true_length_nm: 12.4,
       drawn_length_nm: 4,
     }),
-    segment({ from_sequence: 10, to_sequence: 40, true_length_nm: 5, drawn_length_nm: 5 }),
+    segment({
+      from_sequence: 10,
+      to_sequence: 40,
+      true_length_nm: 5,
+      drawn_length_nm: 5,
+    }),
   ],
   total_true_length_nm: 21.4,
   compressed_segment_count: 1,
@@ -128,6 +160,7 @@ function renderDiagram(
     selectedSequence: number | null;
     onSelectLeg: (sequence: number) => void;
     runway: Runway | undefined;
+    airportPosition: GeoPosition | undefined;
   }> = {},
 ) {
   const onSelectLeg = overrides.onSelectLeg ?? vi.fn();
@@ -138,6 +171,7 @@ function renderDiagram(
       selectedSequence={overrides.selectedSequence ?? null}
       onSelectLeg={onSelectLeg}
       runway={overrides.runway}
+      airportPosition={overrides.airportPosition}
     />,
   );
   return { ...utils, onSelectLeg };
@@ -240,19 +274,25 @@ describe('legend', () => {
 describe('ground plane (#177)', () => {
   it('always renders one ground mesh', () => {
     renderDiagram();
-    expect(document.querySelectorAll('mesh[name="procdiagram3d-ground"]')).toHaveLength(1);
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-ground"]')).toHaveLength(
+      1,
+    );
   });
 });
 
 describe('runway quad (#177)', () => {
   it('renders when both a runway and an is_runway layout node exist', () => {
     renderDiagram({ runway: RUNWAY });
-    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(1);
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(
+      1,
+    );
   });
 
   it('does not render when no runway prop is passed', () => {
     renderDiagram();
-    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(0);
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(
+      0,
+    );
   });
 
   it('does not render when the layout has no is_runway node, even with a runway prop', () => {
@@ -269,14 +309,18 @@ describe('runway quad (#177)', () => {
         runway={RUNWAY}
       />,
     );
-    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(0);
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-runway"]')).toHaveLength(
+      0,
+    );
   });
 });
 
 describe('curtain fill (#177)', () => {
   it('renders one filled mesh per segment', () => {
     renderDiagram();
-    expect(document.querySelectorAll('mesh[name^="procdiagram3d-curtain-"]')).toHaveLength(3);
+    expect(
+      document.querySelectorAll('mesh[name^="procdiagram3d-curtain-"]'),
+    ).toHaveLength(3);
   });
 
   it('marks the curtain of a dashed (unresolved-fix) segment as dimmed, a plain one not', () => {
@@ -293,6 +337,66 @@ describe('node ident/altitude labels (#177)', () => {
     expect(screen.getByText('3000 ft')).toBeInTheDocument();
     expect(screen.getByText('BRAVO')).toBeInTheDocument();
     expect(screen.getByText('2000 ft')).toBeInTheDocument();
+  });
+});
+
+describe('OSM ground texture (#178)', () => {
+  it('renders the textured ground mesh and the attribution link when ready', () => {
+    useGroundTextureMock.mockReturnValue({
+      texture: new CanvasTexture({} as unknown as HTMLCanvasElement),
+      status: 'ready',
+    });
+    renderDiagram();
+
+    expect(
+      document.querySelectorAll('mesh[name="procdiagram3d-ground--textured"]'),
+    ).toHaveLength(1);
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-ground"]')).toHaveLength(
+      0,
+    );
+    const attribution = screen.getByRole('link', {
+      name: '© OpenStreetMap contributors',
+    });
+    expect(attribution).toHaveAttribute(
+      'href',
+      'https://www.openstreetmap.org/copyright',
+    );
+  });
+
+  it("renders today's plain plane and no attribution on error", () => {
+    useGroundTextureMock.mockReturnValue({ texture: null, status: 'error' });
+    renderDiagram();
+
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-ground"]')).toHaveLength(
+      1,
+    );
+    expect(
+      document.querySelectorAll('mesh[name="procdiagram3d-ground--textured"]'),
+    ).toHaveLength(0);
+    expect(screen.queryByRole('link', { name: /OpenStreetMap/ })).not.toBeInTheDocument();
+  });
+
+  it("renders today's plain plane and no attribution when unavailable", () => {
+    renderDiagram();
+
+    expect(document.querySelectorAll('mesh[name="procdiagram3d-ground"]')).toHaveLength(
+      1,
+    );
+    expect(screen.queryByRole('link', { name: /OpenStreetMap/ })).not.toBeInTheDocument();
+  });
+
+  it('hands the hook a null origin without an ARP, the recovered origin with one', () => {
+    renderDiagram();
+    expect(useGroundTextureMock).toHaveBeenLastCalledWith(null, expect.anything());
+
+    // LAYOUT is runway-anchored with a zero ARP offset, so the origin is the ARP itself.
+    renderDiagram({
+      airportPosition: { latitude: 40.5, longitude: -3.5, altitude_ft: 0 },
+    });
+    expect(useGroundTextureMock).toHaveBeenLastCalledWith(
+      { latitude: 40.5, longitude: -3.5 },
+      expect.anything(),
+    );
   });
 });
 
