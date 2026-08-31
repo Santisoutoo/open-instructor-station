@@ -1,4 +1,4 @@
-import { act, render, screen, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -10,24 +10,41 @@ import {
   procedureSelected,
   type ProcedureFamily,
 } from './positionDesignSlice';
-import type { ProcedureLayout } from '../../api/models';
+import type { GeoPosition, ProcedureLayout } from '../../api/models';
 import { SidStarTab } from './SidStarTab';
 import { stubApi } from './testApi';
-import { ICAO, PROCEDURE_I04R, PROCEDURES, positionRoutes } from './testFixtures';
+import {
+  AIRPORT,
+  ICAO,
+  PROCEDURE_I04R,
+  PROCEDURES,
+  positionRoutes,
+} from './testFixtures';
 
 /**
  * The lazy-loaded 3D view is behind a `Suspense` boundary of its own — mocked to a
- * `data-testid` stand-in that echoes the one prop this file's tests need, `selectedSequence`,
- * rather than pulling the whole `@react-three/fiber`/`@react-three/drei` stub in here too
- * (that belongs to `ProcedureDiagram3D.test.tsx`).
+ * `data-testid` stand-in that echoes the two props this file's tests need
+ * (`selectedSequence`, and since #178 `airportPosition`), rather than pulling the whole
+ * `@react-three/fiber`/`@react-three/drei` stub in here too (that belongs to
+ * `ProcedureDiagram3D.test.tsx`).
  */
 vi.mock('./ProcedureDiagram3D', () => ({
   ProcedureDiagram3D: ({
     selectedSequence,
+    airportPosition,
   }: {
     readonly selectedSequence: number | null;
+    readonly airportPosition?: GeoPosition | undefined;
   }) => (
-    <div data-testid="procdiagram3d-stub" data-selected-sequence={String(selectedSequence)} />
+    <div
+      data-testid="procdiagram3d-stub"
+      data-selected-sequence={String(selectedSequence)}
+      data-airport-position={
+        airportPosition === undefined
+          ? 'undefined'
+          : `${String(airportPosition.latitude)},${String(airportPosition.longitude)}`
+      }
+    />
   ),
 }));
 
@@ -324,6 +341,21 @@ describe('the 2D/3D diagram selector', () => {
       'aria-pressed',
       'true',
     );
+  });
+
+  it("the mocked 3D component receives the loaded airport's position (#178)", async () => {
+    await openI04R();
+
+    await userEvent.click(screen.getByRole('button', { name: '3D' }));
+    const stub = await screen.findByTestId('procdiagram3d-stub');
+
+    // The airport search answers asynchronously; the prop settles once it lands.
+    await waitFor(() => {
+      expect(stub).toHaveAttribute(
+        'data-airport-position',
+        `${String(AIRPORT.position.latitude)},${String(AIRPORT.position.longitude)}`,
+      );
+    });
   });
 
   it('the mocked 3D component receives the same selectedSequence a leg-list click would produce', async () => {

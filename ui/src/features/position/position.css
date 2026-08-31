@@ -880,10 +880,36 @@
   max-width: 100%;
 }
 
+/* Anchors the OSM attribution (#178) to the canvas itself — the component's own bottom edge
+   is the toolbar below the canvas, so `.pos-procdiagram3d` cannot be the containing block. */
+.pos-procdiagram3d__stage {
+  position: relative;
+}
+
 .pos-procdiagram3d__canvas {
   display: block;
   width: 100%;
   aspect-ratio: 600 / 380;
+}
+
+/* OSM attribution (#178) — mandatory whenever the raster texture is shown. Same
+   floating-contrast-box treatment as .pos-procdiagram3d__break: it overlays whatever the
+   map tiles draw underneath it, in either theme. */
+.pos-procdiagram3d__attribution {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: rgba(10, 14, 20, 0.75);
+  color: #c9d1d9;
+  font-size: 9px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.pos-procdiagram3d__attribution:hover {
+  text-decoration: underline;
 }
 
 .pos-procdiagram3d__legend {
@@ -1215,7 +1241,11 @@
   left: -1px; /* compensates the 1px border-left so the strip spans exactly 480px, see below */
   right: 0;
   height: 15px;
-  background-image: radial-gradient(circle at 15px 0, var(--pos-bg) 14.5px, transparent 15.5px);
+  background-image: radial-gradient(
+    circle at 15px 0,
+    var(--pos-bg) 14.5px,
+    transparent 15.5px
+  );
   background-size: 30px 30px;
   background-repeat: repeat-x;
   filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));

@@ -212,6 +212,37 @@ function fitCamera(extents: SceneExtents, courseDeg: number): CameraPose {
 }
 
 /**
+ * Padding factor for the ground plane's XZ span — distinct from `FIT_MARGIN_FACTOR` (which
+ * pads a *radius* for the camera's bounding-sphere fit; applying that same, smaller factor
+ * directly to a span would leave the plane's edge visibly close to the outermost node from
+ * a shallow orbit angle). Moved here from `ProcedureDiagram3D.tsx` for #178, so the rendered
+ * plane and the OSM texture's bbox provably share one footprint.
+ */
+export const GROUND_MARGIN_FACTOR = 1.6;
+/** A floor so a tight or single-node layout never gets a vanishingly small plane. */
+export const MIN_GROUND_SPAN_NM = 1;
+
+/** The ground plane's XZ rect, NM, scene frame — consumed by both `GroundPlane`'s
+ *  `planeGeometry` and `groundTexture.ts`'s `footprintBBox` (#178). */
+export interface GroundPlaneFootprint {
+  readonly centerX: number;
+  readonly centerZ: number;
+  readonly widthNm: number;
+  readonly depthNm: number;
+}
+
+export function groundPlaneFootprint(extents: SceneExtents): GroundPlaneFootprint {
+  return {
+    centerX: extents.centerX,
+    centerZ: extents.centerZ,
+    widthNm:
+      Math.max(extents.maxX - extents.minX, MIN_GROUND_SPAN_NM) * GROUND_MARGIN_FACTOR,
+    depthNm:
+      Math.max(extents.maxZ - extents.minZ, MIN_GROUND_SPAN_NM) * GROUND_MARGIN_FACTOR,
+  };
+}
+
+/**
  * Nominal pavement width, metres, used only when `Runway.width_m` is not published (the field
  * is optional — not every navdata source carries it). Roughly a typical large-aircraft-capable
  * paved runway; picked for a plausible-looking quad, not derived from any spec.

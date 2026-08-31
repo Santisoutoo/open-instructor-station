@@ -3,9 +3,12 @@ import type { LayoutNode, LayoutSegment, ProcedureLayout } from '../../api/model
 import { VERTICAL_EXAGGERATION as PROJECTION_VERTICAL_EXAGGERATION } from './procedureProjection';
 import {
   DEFAULT_FOV_DEG,
+  GROUND_MARGIN_FACTOR,
+  MIN_GROUND_SPAN_NM,
   VERTICAL_EXAGGERATION,
   buildProcedureScene,
   buildRunwayQuad,
+  groundPlaneFootprint,
 } from './procedureScene';
 
 const FEET_PER_NAUTICAL_MILE = 6076.12;
@@ -225,7 +228,12 @@ describe('buildProcedureScene — curtain segments', () => {
     const l = layout();
     const scene = buildProcedureScene(l, 0);
     const seg = scene.segments[0]!;
-    expect(seg.curtain).toEqual([seg.from.position, seg.to.position, seg.to.ground, seg.from.ground]);
+    expect(seg.curtain).toEqual([
+      seg.from.position,
+      seg.to.position,
+      seg.to.ground,
+      seg.from.ground,
+    ]);
   });
 
   it('produces no NaN for a zero-length (coincident) segment', () => {
@@ -259,8 +267,18 @@ describe('buildProcedureScene — curtain segments', () => {
 });
 
 function expectQuadCloseTo(
-  actual: readonly [readonly number[], readonly number[], readonly number[], readonly number[]],
-  expected: readonly [readonly number[], readonly number[], readonly number[], readonly number[]],
+  actual: readonly [
+    readonly number[],
+    readonly number[],
+    readonly number[],
+    readonly number[],
+  ],
+  expected: readonly [
+    readonly number[],
+    readonly number[],
+    readonly number[],
+    readonly number[],
+  ],
 ): void {
   actual.forEach((corner, i) => {
     corner.forEach((component, j) => {
@@ -327,5 +345,52 @@ describe('VERTICAL_EXAGGERATION sharing', () => {
     const scene = buildProcedureScene(l, 0);
     const expected = ((7000 - 1000) / FEET_PER_NAUTICAL_MILE) * VERTICAL_EXAGGERATION;
     expect(scene.nodes[0]!.position[1]).toBeCloseTo(expected, 6);
+  });
+});
+
+describe('groundPlaneFootprint (#178)', () => {
+  it('pads the extents span by GROUND_MARGIN_FACTOR around the same centre', () => {
+    const l = layout({
+      nodes: [
+        node({ sequence: 10, ident: 'A', x_nm: -4, y_nm: -6, altitude_ft: 3000 }),
+        node({
+          sequence: 20,
+          ident: 'B',
+          x_nm: 6,
+          y_nm: 0,
+          altitude_ft: 2000,
+          is_runway: true,
+        }),
+      ],
+      airport_x_nm: 0,
+      airport_y_nm: 0,
+    });
+    const { extents } = buildProcedureScene(l, 0);
+    const footprint = groundPlaneFootprint(extents);
+
+    expect(footprint.centerX).toBe(extents.centerX);
+    expect(footprint.centerZ).toBe(extents.centerZ);
+    expect(footprint.widthNm).toBeCloseTo(
+      (extents.maxX - extents.minX) * GROUND_MARGIN_FACTOR,
+      6,
+    );
+    expect(footprint.depthNm).toBeCloseTo(
+      (extents.maxZ - extents.minZ) * GROUND_MARGIN_FACTOR,
+      6,
+    );
+  });
+
+  it('floors a single-node layout at MIN_GROUND_SPAN_NM so the plane never vanishes', () => {
+    const l = layout({
+      nodes: [node({ sequence: 10, ident: 'A', x_nm: 0, y_nm: 0, altitude_ft: 2000 })],
+      segments: [],
+      airport_x_nm: 0,
+      airport_y_nm: 0,
+    });
+    const { extents } = buildProcedureScene(l, 0);
+    const footprint = groundPlaneFootprint(extents);
+
+    expect(footprint.widthNm).toBeCloseTo(MIN_GROUND_SPAN_NM * GROUND_MARGIN_FACTOR, 6);
+    expect(footprint.depthNm).toBeCloseTo(MIN_GROUND_SPAN_NM * GROUND_MARGIN_FACTOR, 6);
   });
 });
