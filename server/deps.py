@@ -25,6 +25,7 @@ from core.navdata.provider import NavdataProvider
 from core.profiles.paths import default_profiles_root
 from core.profiles.store import ProfileStore
 from core.sim_adapter import SimAdapter
+from core.weather.user_presets import WeatherPresetStore, default_weather_presets_root
 
 __all__ = [
     "Settings",
@@ -34,11 +35,13 @@ __all__ = [
     "get_navdata",
     "get_profile_store",
     "get_settings",
+    "get_weather_preset_store",
     "load_airframe_info",
     "reset_adapter",
     "reset_camera_position_store",
     "reset_navdata",
     "reset_profile_store",
+    "reset_weather_preset_store",
 ]
 
 AdapterName = Literal["fake", "xplane"]
@@ -66,6 +69,12 @@ class Settings(BaseSettings):
     #: independent managers (camera-manager.md D8), not one directory with two
     #: tenants.
     camera_positions_root: str | None = None
+    #: Where user-saved weather presets are stored. ``None`` uses the per-OS
+    #: default (``core.weather.user_presets.default_weather_presets_root``). A
+    #: separate setting from ``profiles_root``/``camera_positions_root`` for the
+    #: same reason those are separate: independent managers, not one directory
+    #: with tenants.
+    weather_presets_root: str | None = None
     # Bound to all interfaces on purpose: using the station from a tablet on
     # the same LAN is a first-class scenario.
     host: str = "0.0.0.0"
@@ -256,8 +265,27 @@ def get_camera_position_store() -> CameraPositionStore:
     return _build_camera_position_store(get_settings())
 
 
+def _build_weather_preset_store(settings: Settings) -> WeatherPresetStore:
+    """Construct the saved-weather-preset store. Performs no I/O.
+
+    Same composition-root reasoning as :func:`_build_profile_store`.
+    """
+    root = (
+        Path(settings.weather_presets_root)
+        if settings.weather_presets_root
+        else default_weather_presets_root()
+    )
+    return WeatherPresetStore(root)
+
+
+@lru_cache(maxsize=1)
+def get_weather_preset_store() -> WeatherPresetStore:
+    """Return the process-wide saved-weather-preset store singleton."""
+    return _build_weather_preset_store(get_settings())
+
+
 def reset_adapter() -> None:
-    """Drop every cached singleton — settings, adapter, navdata, both stores, airframe.
+    """Drop every cached singleton — settings, adapter, navdata, every store, airframe.
 
     All of them together: each store and provider is built from the same
     ``Settings`` object, so a test that reconfigures one and leaves another
@@ -270,6 +298,7 @@ def reset_adapter() -> None:
     get_navdata.cache_clear()
     get_profile_store.cache_clear()
     get_camera_position_store.cache_clear()
+    get_weather_preset_store.cache_clear()
     get_settings.cache_clear()
     _airframe_info = AirframeInfo()
 
@@ -287,3 +316,8 @@ def reset_profile_store() -> None:
 def reset_camera_position_store() -> None:
     """Drop only the cached camera-position store. The ``reset_navdata()`` pattern, for tests."""
     get_camera_position_store.cache_clear()
+
+
+def reset_weather_preset_store() -> None:
+    """Drop only the cached weather-preset store. The ``reset_navdata()`` pattern, for tests."""
+    get_weather_preset_store.cache_clear()
