@@ -990,7 +990,37 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 640px;
+  max-width: 68rem;
+}
+
+/* The diagram and the leg list, side by side. `auto-fit` is what makes this collapse to one
+   column on a narrow panel without a media query — the deciding width is this grid's own,
+   which a viewport query cannot see because `ApplyRail` sits in the same row. When no layout
+   has loaded the empty track collapses and the leg list takes the full width by itself.
+   The 24rem floor is the diagram's, not the list's: the SVG scales its 600-unit viewBox to
+   the column, so a narrower one shrinks the 10px node labels below reading size — better one
+   wide column than two columns of unreadable waypoint idents. */
+.pos-sidstartab__split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+}
+
+/* Without this the diagram's own 600px width refuses to shrink and blows the track out. */
+.pos-sidstartab__split > * {
+  min-width: 0;
+}
+
+.pos-sidstartab__legs {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.pos-sidstartab__legs .pos-legs {
+  margin: 0;
+  max-height: 22rem;
 }
 
 .pos-sidstartab__kind {
