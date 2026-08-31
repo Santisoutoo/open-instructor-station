@@ -12,7 +12,7 @@
  * `preview`/`apply` response, never from a client-side re-implementation of the resolver.
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -176,7 +176,10 @@ describe('WeatherPanel', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
     });
-    expect(screen.getAllByRole('button')).toHaveLength(7);
+    // 7 preset tiles + the field editors' own buttons, which now render as soon as the
+    // current weather is known (WS-1) — "Remove"/"Add wind layer" (CURRENT has one wind
+    // layer) and "Add cloud layer" (CURRENT has none). AtmosphereForm has no buttons.
+    expect(screen.getAllByRole('button')).toHaveLength(10);
 
     // The relative preset stays disabled without a runway, with the reason stated.
     expect(screen.getByRole('button', { name: /Crosswind/ })).toBeDisabled();
@@ -316,5 +319,75 @@ describe('WeatherPanel', () => {
       'aria-pressed',
       'false',
     );
+  });
+
+  it('shows today\'s actual weather in the editors before anything is staged', async () => {
+    stubApi();
+    renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+
+    expect(screen.getByLabelText('QNH (hPa)')).toHaveValue(1016);
+    expect(screen.queryByText('Manual weather')).not.toBeInTheDocument();
+    expect(screen.queryByText(/^Staged:/)).not.toBeInTheDocument();
+    expect(calls.some((call) => call.url.includes('/weather/preview'))).toBe(false);
+  });
+
+  it('stages manually on the first edit, with no preset tapped', async () => {
+    stubApi();
+    const store = renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+
+    fireEvent.change(screen.getByLabelText('QNH (hPa)'), { target: { value: '1005' } });
+
+    expect(await screen.findByText('Manual weather')).toBeInTheDocument();
+    expect(store.getState().weather.staged).toBe(true);
+    expect(store.getState().weather.selectedPresetId).toBeNull();
+    expect(calls.some((call) => call.url.includes('/weather/preview'))).toBe(false);
+  });
+
+  it('applies a manual edit as {preset: null, setup: …}, with no /preview call', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    const store = renderPanel();
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
+    });
+
+    fireEvent.change(screen.getByLabelText('QNH (hPa)'), { target: { value: '1005' } });
+    await screen.findByText('Manual weather');
+
+    await user.click(screen.getByRole('button', { name: 'Apply weather' }));
+
+    await waitFor(() => {
+      expect(store.getState().weather.staged).toBe(false);
+    });
+    expect(calls.some((call) => call.url.includes('/weather/preview'))).toBe(false);
+    const apply = calls.find((call) => call.url.includes('/weather/apply'));
+    expect(apply?.body).toEqual({
+      preset: null,
+      airport_icao: null,
+      runway_ident: null,
+      setup: { qnh_hpa: 1005 },
+    });
+  });
+
+  it('disables Apply with a reason when a manual stage has nothing to send', async () => {
+    stubApi();
+    renderPanel({
+      weather: { selectedPresetId: null, overrides: {}, staged: true },
+    });
+    await waitFor(() => {
+      expect(screen.getByText('Manual weather')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: 'Apply weather' })).toBeDisabled();
+    expect(
+      screen.getByText('No changes yet — edit a field to apply.'),
+    ).toBeInTheDocument();
+    expect(calls.some((call) => call.url.includes('/weather/apply'))).toBe(false);
   });
 });

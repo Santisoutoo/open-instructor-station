@@ -52,3 +52,14 @@ export function mergeForDisplay(current: WeatherState, setup: WeatherSetup): Wea
     runway_contamination: setup.runway_contamination ?? current.runway_contamination,
   };
 }
+
+/**
+ * The request for manual mode: no preset, just the instructor's own overlay. WS-2: manual
+ * mode never calls `/preview`, so there is no runway/preset context to resolve — this is a
+ * straight passthrough, unlike `buildWeatherRequest`. The caller (`WeatherPanel.tsx`) is
+ * responsible for never invoking this with an empty `overrides` (that would 422 server-side,
+ * since `WeatherRequest` requires a preset, a setup, or both).
+ */
+export function buildManualWeatherRequest(overrides: WeatherSetup): WeatherRequest {
+  return { preset: null, airport_icao: null, runway_ident: null, setup: overrides };
+}

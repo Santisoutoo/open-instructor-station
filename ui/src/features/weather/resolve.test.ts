@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest';
 import type { WeatherState } from '../../api/models';
-import { buildWeatherRequest, mergeForDisplay } from './resolve';
+import { buildManualWeatherRequest, buildWeatherRequest, mergeForDisplay } from './resolve';
 
 function currentFixture(overrides: Partial<WeatherState> = {}): WeatherState {
   return {
@@ -42,6 +42,23 @@ describe('buildWeatherRequest', () => {
       runway_ident: '18R',
       setup: { qnh_hpa: 1002 },
     });
+  });
+});
+
+describe('buildManualWeatherRequest', () => {
+  it('carries only preset:null and the sparse overlay, with no runway context', () => {
+    const request = buildManualWeatherRequest({ visibility_m: 5000 });
+    expect(request).toEqual({
+      preset: null,
+      airport_icao: null,
+      runway_ident: null,
+      setup: { visibility_m: 5000 },
+    });
+  });
+
+  it('is a straight passthrough — it does not itself guard an empty overlay', () => {
+    const request = buildManualWeatherRequest({});
+    expect(request.setup).toEqual({});
   });
 });
 
