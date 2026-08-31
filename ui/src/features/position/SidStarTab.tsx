@@ -6,6 +6,12 @@
  * see the climb leg to make sense of the ones around it. Those rows render disabled with
  * the server's own `unpositionable_reason` beside them. Nothing here knows ARINC 424:
  * `is_positionable` and the reason are both computed by the navdata provider.
+ *
+ * The diagram and the leg list sit side by side (`.pos-sidstartab__split`) rather than
+ * stacked: together they were taller than the panel, so picking a leg scrolled the picture
+ * out of view — the one thing the picture exists to prevent. The split collapses back to a
+ * single column on its own when a column would be too narrow, which is a *container* width
+ * question and not a viewport one: `ApplyRail` takes its own slice of the same row.
  */
 
 import { Suspense, lazy, useRef } from 'react';
@@ -370,7 +376,7 @@ export function SidStarTab() {
           can be placed on.
         </p>
       ) : (
-        <>
+        <div className="pos-sidstartab__split">
           {layout !== undefined && (
             <div className="pos-sidstartab__diagram">
               <ProcedureViewToggle
@@ -408,15 +414,17 @@ export function SidStarTab() {
               )}
             </div>
           )}
-          <ProcedureBody
-            procedure={procedure}
-            commonTypes={commonTypes}
-            sequence={selection?.sequence ?? null}
-            onSelectLeg={(sequence) => {
-              dispatch(procedureLegSelected(sequence));
-            }}
-          />
-        </>
+          <div className="pos-sidstartab__legs">
+            <ProcedureBody
+              procedure={procedure}
+              commonTypes={commonTypes}
+              sequence={selection?.sequence ?? null}
+              onSelectLeg={(sequence) => {
+                dispatch(procedureLegSelected(sequence));
+              }}
+            />
+          </div>
+        </div>
       )}
     </div>
   );
