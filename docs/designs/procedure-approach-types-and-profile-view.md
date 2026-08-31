@@ -674,6 +674,256 @@ roughly double in size.
 
 ---
 
+#### 4.7.3 Design — #178: OSM raster ground texture for the 3D view
+
+Optional follow-up to #177 — the 3D view is complete without it (the issue's own words). One
+static raster composite of OSM tiles, fetched once per airport/procedure extent, applied as
+`GroundPlane`'s texture. No tile pipeline, no streaming, no zoom-dependent reloading. **No
+`SimAdapter`/`Capabilities` change, no `core/` change, no `server/` change, no new endpoint,
+no schema regeneration** — everything below is `ui/` only, and that is a deliberate outcome,
+not an omission: the data needed to georeference the scene already reaches the browser.
+
+**Where the compositing happens — client-side, directly from `tile.openstreetmap.org`.**
+Decided, not open. The evidence is in-repo: `useMapLibre.ts`'s `OSM_STYLE` already has *this
+browser* fetching `https://tile.openstreetmap.org/{z}/{x}/{y}.png` and uploading the tiles
+into a WebGL texture — which only works because the tile server answers with
+`Access-Control-Allow-Origin: *`, so the CORS question is settled by the running map panel,
+not by recall. Same server, same attribution string, same Referer-based identification —
+identical policy posture to what the app already does. A server-side compositor was rejected:
+it would add internet-facing `server/` code plus a Python imaging dependency (Pillow) the
+backend does not have, it breaks the natural offline story (the *client's* connectivity is
+what decides whether the texture can exist), and it forfeits the browser HTTP cache already
+warm with the very same tiles from the map panel. The one thing a proxy would buy — a
+custom User-Agent — is not required of browser apps, which OSM's tile policy identifies by
+Referer, exactly as the MapLibre map is identified today.
+
+**Georeferencing — the gap, and how it closes without a backend change.** The scene frame is
+local (NM, north-aligned, origin at the layout anchor) and `ProcedureLayout` carries no
+lat/lon — but it does carry `anchor` and the ARP's *drawn* offset `airport_x_nm`/
+`airport_y_nm`, and `useAirport()` (already in `usePositionData.ts`) carries the ARP's real
+`GeoPosition`. Read `core/procedure_layout.py` before touching this: when `anchor === 'runway'`
+the ARP offset is computed as "a short, uncompressed **true** offset" from the origin, so the
+origin's lat/lon is recoverable exactly; when `anchor === 'last_fix'` that offset is one
+further *capped* segment and the inverse is not trustworthy — **the texture is gated on
+`layout.anchor === 'runway'`** and the plain plane renders otherwise. The inverse is
+equirectangular (1 NM = 1 arcminute of latitude): `originLat = arpLat − airport_y_nm / 60`,
+`originLon = arpLon − airport_x_nm / (60 · cos(originLat))` — the same planar approximation
+the layout itself was built with (`_vector` in `core/procedure_layout.py`).
+
+One honest framing, from §4.7's own forward-looking caveat: the texture is geographically
+true **everywhere on the plane** — drawn (x, z) maps linearly to real ground. What floats
+over the *wrong* ground is any node beyond a `compressed` segment or a `positioned: false`
+nominal advance — exactly as those nodes already sit at deliberately wrong drawn positions,
+and are already visibly marked (dashed lines, break callouts). Accepted; do not clip or
+distort the imagery to chase them.
+
+**1. Pure math — new `ui/src/features/position/groundTexture.ts`** (no DOM, no network —
+fully unit-testable in jsdom):
+
+```ts
+export interface LatLon { readonly latitude: number; readonly longitude: number; } // degrees
+export interface GeoBBox { readonly west: number; readonly south: number;
+                           readonly east: number; readonly north: number; } // degrees
+export interface TileMosaic {
+  readonly zoom: number;
+  readonly minTileX: number; readonly maxTileX: number;   // inclusive integer tile range
+  readonly minTileY: number; readonly maxTileY: number;
+  /** The bbox's exact pixel rect inside the stitched grid (256 px/tile) — the crop that
+   *  makes the canvas correspond 1:1 to the ground plane's own footprint. */
+  readonly cropX: number; readonly cropY: number;
+  readonly cropWidth: number; readonly cropHeight: number;
+}
+
+/** Real-world position of drawn (0,0). Null unless layout.anchor === 'runway'. */
+export function sceneOrigin(
+  layout: Pick<ProcedureLayout, 'anchor' | 'airport_x_nm' | 'airport_y_nm'>,
+  arp: LatLon,
+): LatLon | null;
+
+/** The lat/lon rectangle under the ground plane's exact footprint (scene z = −north). */
+export function footprintBBox(
+  footprint: GroundPlaneFootprint,  // from procedureScene.ts, item 2 below
+  origin: LatLon,
+): GeoBBox;
+
+/** floor(log2(EARTH_CIRCUMFERENCE_M · cos(lat) · TARGET_TILES_ACROSS / spanM)), clamped to
+ *  [MIN_ZOOM, MAX_ZOOM], then decremented while the mosaic would exceed MAX_TILES. */
+export function pickZoom(bbox: GeoBBox): number;
+
+/** Slippy-map fractional coordinates: x = (lon+180)/360 · 2^z,
+ *  y = (1 − asinh(tan lat)/π)/2 · 2^z. */
+export function tileX(lonDeg: number, zoom: number): number;
+export function tileY(latDeg: number, zoom: number): number;
+export function mosaicFor(bbox: GeoBBox, zoom: number): TileMosaic;
+export function osmTileUrl(zoom: number, x: number, y: number): string;
+/** Primitive string, e.g. "11/1003-1007/770-773" — the cache key AND the effect key. */
+export function mosaicCacheKey(mosaic: TileMosaic): string;
+```
+
+Constants, in this module: `EARTH_CIRCUMFERENCE_M = 40075016.686`, `TILE_SIZE_PX = 256`,
+`TARGET_TILES_ACROSS = 6`, `MIN_ZOOM = 10`, `MAX_ZOOM = 17`, `MAX_TILES = 64` (politeness
+cap toward the OSM tile policy — one composite is a burst of at most 64 tile requests, once
+per airport per session, comparable to one map-panel pan). Design-time worked examples the
+tests pin down (formula-derived, hand-checkable): a 30 NM span at lat 40.5° → z = 11
+(≈ 4–5 tiles across, ≤ ~25 total); a 5 NM circuit → z = 14. Reference values for the tile
+math: at z = 11, lon 0 → x = 1024.0 and lat 0 → y = 1024.0 exactly; lon −3.56 → tile 1003,
+lat 40.5 → tile 771.
+
+Web-Mercator-vs-ENU linearity: the plane is linear in metres, the canvas in Mercator Y;
+across a ~0.5° latitude span at mid-latitudes the N–S scale drifts ~0.7% — a few pixels at
+the plane's edge. The tiles are *context*, not data (`AirportDiagram.tsx`'s own stance);
+per-row resampling is rejected.
+
+**2. Shared footprint — `procedureScene.ts` gains one pure function, and
+`ProcedureDiagram3D.tsx` loses two constants.** The texture bbox and the rendered plane must
+provably share one footprint, so `GROUND_MARGIN_FACTOR` (1.6) and `MIN_GROUND_SPAN_NM` (1)
+**move** from `ProcedureDiagram3D.tsx` into `procedureScene.ts`:
+
+```ts
+export interface GroundPlaneFootprint {
+  readonly centerX: number; readonly centerZ: number;   // NM, scene frame
+  readonly widthNm: number; readonly depthNm: number;
+}
+export function groundPlaneFootprint(extents: SceneExtents): GroundPlaneFootprint;
+```
+
+`GroundPlane` consumes it for `planeGeometry`; `footprintBBox` consumes it for the fetch.
+
+**3. The hook — new `ui/src/features/position/useGroundTexture.ts`:**
+
+```ts
+export type GroundTextureStatus = 'unavailable' | 'loading' | 'ready' | 'error';
+export type CompositeLoader = (mosaic: TileMosaic) => Promise<HTMLCanvasElement>;
+
+export function useGroundTexture(
+  origin: LatLon | null,            // null → 'unavailable', nothing is ever fetched
+  extents: SceneExtents,
+  loadComposite?: CompositeLoader,  // defaults to loadOsmComposite; the test seam
+): { readonly texture: CanvasTexture | null; readonly status: GroundTextureStatus };
+```
+
+- **The injectable seam is the whole fetch-and-stitch**, `loadOsmComposite(mosaic)`: for each
+  tile in the range, `new Image()` with **`crossOrigin = 'anonymous'`** — mandatory, an
+  un-CORS'd image taints the canvas and the WebGL texture upload then throws a
+  `SecurityError`, which is a much worse failure than a missing texture — a per-tile
+  timeout (10 s), `navigator.onLine === false` as an immediate reject (the cheap offline
+  path), `Promise.all` all-or-nothing, then one `<canvas>` sized
+  `cropWidth × cropHeight`, each tile drawn at
+  `(x·256 − mosaicOriginPx − cropX, y·256 − … − cropY)` so the canvas corresponds exactly
+  to the bbox. This function is *not executable in jsdom* (images never load;
+  `getContext('2d')` returns `null` — `usePosThemePalette`'s docstring already records
+  that), which is exactly why it is the injection point: everything above it is testable,
+  and the function itself is covered by the pure tile math plus the mandatory live check.
+- **Effects key on `mosaicCacheKey(...)` — a primitive — never on object identity.**
+  `buildProcedureScene` runs unmemoized every render, so `extents` is a fresh object each
+  time; keying on it would refire per render. (The cache would make refires harmless
+  anyway; the string key makes them not happen. Do not "fix" this with a deep-compare.)
+- **Cache**: module-level `Map<string, Promise<HTMLCanvasElement>>` keyed by
+  `mosaicCacheKey`. One in-flight promise dedupes concurrent mounts; the canvas survives
+  2D↔3D remounts and procedure switches for the whole session — "fetched once per
+  airport/procedure extent". A **rejected promise is evicted on rejection**, so a later
+  remount retries (connectivity may have returned). Unbounded across airports is accepted:
+  a session touches a handful of airports, each composite a few MB of canvas. Persisting
+  across sessions (disk/localStorage) is rejected as complexity without an ask — the
+  browser HTTP cache already keeps the underlying tiles warm.
+- The `CanvasTexture` is created per hook instance from the shared canvas (cheap), with
+  `colorSpace = SRGBColorSpace` (three r150+ does not assume it for canvas textures), and
+  disposed on unmount. `flipY` stays at its default `true`: canvas row 0 is north, and after
+  `GroundPlane`'s `rotation={[-Math.PI/2, 0, 0]}` the plane's +v edge faces scene north
+  (−z), so the default orientation is the aligned one — verified in the live check, where a
+  coastline airport makes any flip/mirror unmissable.
+
+**4. Component wiring — `ProcedureDiagram3D.tsx`.** New prop, mirroring #177's `runway`
+verbatim (including the `exactOptionalPropertyTypes` note — `?: GeoPosition | undefined`,
+threaded as `?? undefined`):
+
+```ts
+readonly airportPosition?: GeoPosition | undefined;  // ARP; from useAirport() in SidStarTab
+```
+
+`origin = airportPosition === undefined ? null : sceneOrigin(layout, airportPosition)`, the
+hook runs beside `usePosThemePalette`, and `GroundPlane` gains
+`texture?: CanvasTexture | null`: when set, `<meshBasicMaterial map={texture}
+color="#ffffff" side={DoubleSide} />` and mesh name `procdiagram3d-ground--textured` (the
+name-carries-state convention #176 set); when `null`, exactly today's neutral
+`palette.hair` plane — **that plain plane is the fallback for all of `'unavailable'`,
+`'loading'` and `'error'`**, so offline, mid-fetch and failed all render identically and
+nothing ever throws into the canvas. If the live check shows the full-brightness map
+glaring in the dark theme, a fixed dim multiplier on `color` is the implementer's visual
+call — document it next to `RUNWAY_COLOR`'s own reasoning. `RunwayMesh`'s existing
+`polygonOffset` already keeps the pavement above the (now textured) coplanar ground.
+
+**5. Attribution — required whenever the texture is shown.** In the HTML chrome (not
+`<Html>`-in-scene), rendered **only when `status === 'ready'`**, overlaid bottom-right of
+the canvas, new class in `position.css` following #177's naming:
+
+```tsx
+<a className="pos-procdiagram3d__attribution"
+   href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
+  © OpenStreetMap contributors
+</a>
+```
+
+The text matches `useMapLibre.ts`'s own attribution string character-for-character, and
+links to the copyright page as OSM's attribution guidelines ask where the medium supports
+links. When the plain plane renders, no OSM pixels are on screen and the credit is
+correctly absent.
+
+**Files** — created: `groundTexture.ts` (+ `.test.ts`), `useGroundTexture.ts`
+(+ `.test.ts`). Modified: `procedureScene.ts` (+ `.test.ts`; `groundPlaneFootprint`, the two
+moved constants), `ProcedureDiagram3D.tsx` (+ `.test.tsx`; new prop, textured `GroundPlane`,
+attribution, `GROUND_MARGIN_FACTOR`/`MIN_GROUND_SPAN_NM` **deleted** here),
+`SidStarTab.tsx` (+ `.test.tsx`; thread `airportPosition={airport?.position}` from the
+`useAirport()` it can already call), `position.css` (`.pos-procdiagram3d__attribution`).
+**Unmodified, stated so nobody adds a speculative change**: `core/`, `server/`,
+`adapters/`, everything under `tests/` (no pytest surface at all, nothing
+`@pytest.mark.sim`), `useMapLibre.ts`, `ui/src/test/threeStub.ts` (component tests mock
+`./useGroundTexture` at its module boundary — no new drei/fiber surface to stub),
+`ui/src/api/schema.d.ts` (nothing regenerates).
+
+**Test plan:**
+- `groundTexture.test.ts` (pure, reference values above): `sceneOrigin` — ARP (40.5, −3.5)
+  with `airport_x_nm = 1.2`, `airport_y_nm = 0.9` → origin (40.485, ≈ −3.52630); `null` for
+  `anchor === 'last_fix'`. Tile math — the z = 11 values above, `osmTileUrl` exact string,
+  `mosaicFor` crop offsets (fractional edge · 256), `mosaicCacheKey` stability. `pickZoom` —
+  the two worked examples, both clamps, and the `MAX_TILES` decrement. `footprintBBox` —
+  north edge = smaller scene z (z = −north), spans match `groundPlaneFootprint`'s.
+- `procedureScene.test.ts`: `groundPlaneFootprint` — margin factor applied, `MIN_GROUND_SPAN_NM`
+  floor on a single-node layout.
+- `useGroundTexture.test.ts` (injected fake `CompositeLoader`, resolving to a stub canvas
+  object): `'ready'` with a `CanvasTexture` wrapping that canvas; two mounts with the same
+  key call the loader **once** (module cache); a rejecting loader → `'error'` and the entry
+  is evicted, so a remount calls the loader again; `origin === null` → `'unavailable'` and
+  the loader is never called; unmount disposes the texture.
+- `ProcedureDiagram3D.test.tsx` (`vi.mock('./useGroundTexture')`): `'ready'` → mesh named
+  `procdiagram3d-ground--textured` and the attribution link with exact text and href;
+  `'error'`/`'unavailable'` → today's plain ground name and **no** attribution element.
+- `SidStarTab.test.tsx`: the mocked 3D component receives the loaded airport's `position`.
+- Live check (§5's cloudflare-browser pass): a coastline airport's approach (orientation
+  errors are unmissable against a shoreline), both themes, then DevTools-offline + reload →
+  plain plane, no attribution, console clean.
+
+**Out of scope** (the issue's own list, plus this design's): elevation/terrain meshes;
+streaming or zoom-dependent tile loading; satellite imagery from non-open providers; a
+texture for `anchor === 'last_fix'` layouts; cross-session composite persistence; Mercator
+resampling.
+
+**Parallelisation:** sequential after #177 (this extends `ProcedureDiagram3D.tsx`; same rule
+that ordered #176 → #177). Inside #178, once this contract is fixed, the pure-math track
+(`groundTexture.ts`, `procedureScene.ts`) and the component track (`useGroundTexture.ts`,
+`ProcedureDiagram3D.tsx`, `SidStarTab.tsx`, CSS) touch disjoint files and can proceed in
+parallel, with the tester writing both test files against the signatures above.
+
+**Risks:** OSM tile policy tolerates this one-burst usage at the map panel's own scale, but
+a classroom of tablets hammering one airport is the same multiplier the map already has —
+if that ever becomes real, a caching proxy in `server/` is the escape hatch, not a client
+change. `AirportSummary.position` and the `airport.position` the server built the layout
+from come from the same navdata row, but they travel different queries — if they ever
+diverge (a navdata refresh between calls), the texture shifts by the divergence; accepted,
+same staleness class as every other paired query in this panel.
+
+---
+
 ## 5. Verification
 
 - `ruff check . && ruff format --check . && mypy . && pytest` — core layout tests pass
