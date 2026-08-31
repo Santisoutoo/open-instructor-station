@@ -1,0 +1,21 @@
+name: "TCAS resolution advisory"
+description: >
+  Descending on approach to runway 36 at ZZZZ, 15 NM out, in clear weather,
+  with a converging aircraft on an intersecting approach that triggers a
+  TCAS resolution advisory. Unavailable until an adapter declares
+  can_spawn_traffic — the live "greyed out with a reason" demonstration.
+tags: [traffic, tcas, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: final_15nm
+
+weather:
+  preset: cavok
+
+traffic:
+  description: >
+    A converging aircraft on an intersecting approach, triggering a TCAS
+    resolution advisory.

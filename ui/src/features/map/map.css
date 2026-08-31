@@ -1,0 +1,374 @@
+/*
+ * Instructor Map panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Accent budget in this view: the armed tool buttons (follow /
+ * measure / reposition via aria-pressed), the one solid "Send to Position tab"
+ * action, and focus rings. Canvas drawings are painted by MapLibre with literal
+ * colours (WebGL cannot read custom properties) — see useMapOverlays.ts.
+ */
+
+.map-panel__body {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+/* --------------------------------------------------------- layer toggles */
+
+.map-panel__layers {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.map-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-layer-toggle:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.map-layer-toggle:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* A dot, not a badge: dim when the overlay is hidden, ok-green when showing. */
+.map-layer-toggle__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.map-layer-toggle[aria-pressed='true'] {
+  color: var(--text);
+}
+
+.map-layer-toggle[aria-pressed='true'] .map-layer-toggle__dot {
+  background: var(--ok);
+}
+
+.map-panel__note {
+  margin: 0.25rem 0 0;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------- navdata gate (left rail) */
+
+.map-navdata {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 16rem;
+  padding: 0.6rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.map-navdata__reason {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------- reference airport & procedures */
+
+.map-ref {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  max-width: 16rem;
+}
+
+.map-ref__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.map-ref__selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-weight: 600;
+}
+
+.map-ref__input {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 0.85rem;
+}
+
+.map-ref__input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.map-ref__results,
+.map-ref__list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+.map-ref__result,
+.map-ref__procedure {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-ref__result:hover,
+.map-ref__procedure:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.map-ref__result:focus-visible,
+.map-ref__procedure:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.map-ref__result-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.map-ref__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);
+}
+
+.map-ref__procedure[aria-pressed='true'] {
+  color: var(--text);
+}
+
+.map-ref__procedure[aria-pressed='true'] .map-ref__dot {
+  background: var(--ok);
+}
+
+.map-ref__transition {
+  color: var(--text-dim);
+}
+
+.map-ref__group-title {
+  margin: 0.5rem 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+/* -------------------------------------------------------------- viewport */
+
+.map-panel__viewport {
+  position: relative;
+  min-height: 420px;
+  height: clamp(420px, 62vh, 720px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--bg-raised);
+}
+
+.map-panel__viewport[data-mode='measure'] .map-panel__canvas,
+.map-panel__viewport[data-mode='reposition'] .map-panel__canvas {
+  cursor: crosshair;
+}
+
+.map-panel__canvas {
+  position: absolute;
+  inset: 0;
+}
+
+/* The single overlay chip: measure readout or the reposition hint. */
+.map-panel__chip {
+  position: absolute;
+  left: 50%;
+  bottom: 0.75rem;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 0.3rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* The rotated glyph marker element (see useAircraftMarker). */
+.map-aircraft {
+  display: grid;
+  place-items: center;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.5));
+}
+
+/* ----------------------------------------------------------- tool column */
+
+.map-panel__tools {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.map-tool {
+  display: grid;
+  place-items: center;
+  min-width: 44px;
+  min-height: 44px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.map-tool:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.map-tool:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Armed state: the accent, one of the sanctioned accent uses in this view. */
+.map-tool[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ------------------------------------------------------------ staging bar */
+
+.map-staging {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  margin-top: 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.map-staging__label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.map-staging__coords {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.map-staging__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+/* The one solid-accent action in this view. */
+.map-staging__send {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  color: var(--on-accent);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.map-staging__send:hover {
+  background: var(--accent-strong);
+  transition: background 80ms ease-out;
+}
+
+.map-staging__send:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.map-staging__send:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* Why the commit is disabled — the gate's reason, verbatim. */
+.map-staging__blocked {
+  margin: 0;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------- narrow */
+
+@media (max-width: 860px) {
+  .map-panel__body {
+    grid-template-columns: 1fr;
+  }
+
+  .map-panel__layers,
+  .map-panel__tools {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}

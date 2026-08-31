@@ -789,6 +789,13 @@ adapter anyway is caught and mapped to the same status as defence in depth.
 > One consequence is a small gain: the design's §15.5 worried that
 > `server/app.py::_CONTROL_FIELDS` and `SETUP_FIELD_CAPABILITY` would be two places mapping a
 > setup field to a capability. Only one exists, so there is nothing to converge.
+>
+> **Update (#8 closed):** #8 landed without emitting mass — `gross_weight_kg` / `fuel_kg` were
+> split off to the Fuel & Payload Manager (#16, Phase 2); see `pre-teleport-setup.md` § *Deferred,
+> with rationale*. So `to_setup()` still sets only `can_set_aircraft_state` fields and the
+> divergence above **remains latent**: nothing yet produces a `can_set_fuel_payload` field, so no
+> placement can trip the whole-call refusal. This section stops being latent when #16 makes
+> `to_setup()` emit mass, which is where the capability-filtering decision is revisited.
 
 ---
 
@@ -1031,6 +1038,14 @@ handler.
 ---
 
 ## 15. The panel
+
+> **Current panel design:** the panel's UI described in this section (§15.1–§15.4, "Shell",
+> "Structure", "State", "Visual system") has been superseded by
+> [`docs/designs/position-redesign-v3.md`](position-redesign-v3.md), a static visual replica
+> of an approved "v3" redesign. §15.5 (Gating) and §15.6 (What is not in the panel) — the
+> API/model contract — are unaffected and still accurate, and the redesigned screen is now
+> wired to them: the navdata gate, the placement union, `AircraftSetup` merging and the
+> capability gate on commit all work exactly as this section describes.
 
 ### 15.1 Shell
 
@@ -1396,7 +1411,9 @@ was not on the never-parallelise list.
 
 1. The contract test that a setup applied before a teleport survives it (§11) — the one missing
    test that could hide issue #39 on real hardware.
-2. Capability filtering, or at least a decision, before #8 lands and starts setting mass (§9.3).
+2. ~~Capability filtering, or at least a decision, before #8 lands and starts setting mass (§9.3).~~
+   **Decided:** #8 closed without emitting mass (deferred to #16), so the gap stays latent; the
+   filtering decision is revisited with #16. See §9.3's update.
 3. `heading_deg` on `HoldPlacementRequest`, so the magnetic fallback has an escape hatch (§10.3).
 4. Move the request models and the resolver into `core/placements.py` (§13, §7.6), which is also
    the cheapest route to §10's machine error codes.
@@ -1409,6 +1426,29 @@ was not on the never-parallelise list.
 pytest && ruff check . && ruff format --check . && mypy .
 cd ui && npm run lint && npm run typecheck && npm test && npm run build
 ```
+
+---
+
+## 22. Addendum — §20 follow-up 4, done (`docs/designs/scenario-generator.md` D4, D5)
+
+§7.6's regret and §20's follow-up 4 are resolved: the six `PlacementRequest` variant models moved
+out of `server/position_routes.py` into **`core/placements.py`**, verbatim, no wire-format change
+— done as part of the Scenario Generator's own foundation track (D4), because that manager's YAML
+documents need to validate a placement without importing `server/`, the exact gap §7.6 named.
+`server/position_routes.py` imports the models back and re-exports them under its own `__all__`;
+`_resolve_placement` and every other piece of resolution logic stays in `server/` — only the
+request models moved.
+
+A seventh arm was added alongside the move, **not anticipated by this design**:
+`RunwayThresholdPlacementRequest` — on the runway centreline at the threshold, facing the runway
+heading, at 0 kt. `GROUND_IAS_KT`'s own docstring already named this use ("a runway threshold for
+a takeoff brief") but nothing in this manager ever wired it to a request; two of the Scenario
+Generator's shipped exercises (a V1-cut and a rejected takeoff) need exactly this and cannot
+express it through any of the existing six arms — `CoordinatePlacementRequest` would need a
+hand-computed threshold coordinate a YAML author has no navdata access to compute. It resolves
+through `core.geodesy.coordinate_placement(runway.threshold, runway.true_bearing_deg,
+ias_kt=GROUND_IAS_KT)` and returns an empty `PlacementSchematic()`; `_resolve_placement` gained one
+`isinstance` branch for it.
 
 Then, against `OIS_ADAPTER=fake OIS_NAVDATA=in_memory` with the Vite dev server, one batched
 browser session: airport search → runway → stage a 10 NM final → check the schematic and the

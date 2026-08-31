@@ -144,6 +144,16 @@ export const CONTROL_DISPLAY: Record<ControlId, ControlDisplay> = {
     toSetup: (value) => ({ elevator_trim_ratio: value }),
     readLive: null,
   },
+  throttle: {
+    kind: 'slider',
+    label: 'Throttle',
+    min: 0,
+    max: 1,
+    step: 0.05,
+    format: PERCENT,
+    toSetup: (value) => ({ throttle_ratio: value }),
+    readLive: null,
+  },
   lights: { kind: 'lights', label: 'Exterior lights' },
 
   // ------------------------------------------------------------ direct flight state
@@ -296,7 +306,7 @@ export const CONTROL_SECTIONS: ReadonlyArray<{
 }> = [
   {
     title: 'Configuration',
-    controls: ['flaps', 'speedbrake', 'gear', 'autobrake', 'trim'],
+    controls: ['flaps', 'speedbrake', 'gear', 'autobrake', 'trim', 'throttle'],
   },
   { title: 'Flight state', controls: ['altitude', 'speed', 'vertical_speed', 'heading'] },
   {

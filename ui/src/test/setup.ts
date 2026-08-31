@@ -1,10 +1,16 @@
 import '@testing-library/jest-dom/vitest';
 import { cleanup } from '@testing-library/react';
 import { afterEach } from 'vitest';
+import { resetMaplibreStub } from './maplibreStub';
+import { resetThreeStub } from './threeStub';
 
 // Vitest runs with `globals: false`, so RTL's automatic cleanup hook is not installed.
+// The maplibre and three stubs' instance registries are cleared here too, so no test can see
+// a Map/Marker/OrbitControls instance constructed by an earlier one.
 afterEach(() => {
   cleanup();
+  resetMaplibreStub();
+  resetThreeStub();
 });
 
 /*

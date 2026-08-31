@@ -1,0 +1,15 @@
+name: "Low visibility approach — CAT I"
+description: >
+  Approach to runway 36 at ZZZZ, on short final, in CAT I minima: overcast
+  stratus at the CAT I decision height and 800 m visibility.
+tags: [weather, low-visibility, cat-i, approach]
+
+position:
+  type: runway
+  airport_icao: ZZZZ
+  runway_ident: "36"
+  placement: short_final
+
+weather:
+  preset: cat_i
+  airport_icao: ZZZZ

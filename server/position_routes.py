@@ -26,7 +26,7 @@ first bug exactly.
 from __future__ import annotations
 
 import math
-from typing import Annotated, Literal
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.concurrency import run_in_threadpool
@@ -42,9 +42,11 @@ from core.geodesy import (
     FINAL_DISTANCES_NM,
     GROUND_IAS_KT,
     METRES_PER_NAUTICAL_MILE,
+    VAT_FROM_VSO,
     ApproachCategory,
     Placement,
     RunwayPlacement,
+    category_for_vat,
     coordinate_placement,
     distance_and_bearing,
     hold_placement,
@@ -56,27 +58,43 @@ from core.geodesy import (
     waypoint_placement,
 )
 from core.models import AircraftSetup, AircraftState, GeoPosition, Runway
-from core.navdata.models import Hold, Procedure, ProcedureKind, ProcedureLeg, Waypoint
+from core.navdata.models import Hold, Procedure, ProcedureLeg, Waypoint
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
+from core.placements import (
+    CoordinatePlacementRequest,
+    HoldPlacementRequest,
+    ParkingPlacementRequest,
+    PlacementRequest,
+    ProcedureLegPlacementRequest,
+    RunwayPlacementRequest,
+    RunwayThresholdPlacementRequest,
+    WaypointPlacementRequest,
+)
 from core.sim_adapter import CapabilityNotSupported, SimAdapter
-from server.deps import get_adapter, get_navdata
+from server._shared import _not_found_or_404, _require_capability
+from server.constants import CAPABILITY_UNAVAILABLE_STATUS
+from server.deps import get_adapter, get_airframe_info, get_navdata
 
 __all__ = [
     "CAPABILITY_UNAVAILABLE_STATUS",
     "UNPOSITIONABLE_STATUS",
     "ApplyPlacementRequest",
+    "CoordinatePlacementRequest",
+    "HoldPlacementRequest",
+    "ParkingPlacementRequest",
     "PlacementPreview",
     "PlacementRequest",
     "PlacementResult",
     "PlacementSchematic",
+    "ProcedureLegPlacementRequest",
+    "RunwayPlacementRequest",
+    "RunwayThresholdPlacementRequest",
     "SchematicPoint",
     "SpeedProvenance",
+    "WaypointPlacementRequest",
+    "execute_placement",
     "router",
 ]
-
-#: Mirrors ``server.app.CAPABILITY_UNAVAILABLE_STATUS``. Duplicated rather than
-#: imported to keep the import edge one-way: ``app`` includes these routers.
-CAPABILITY_UNAVAILABLE_STATUS = 501
 
 #: A leg that carries no defensible coordinate. 422 rather than 404: the leg
 #: exists and was found, it simply cannot be a position. The UI has already
@@ -109,108 +127,6 @@ GROUND_TOLERANCE_FT = 100.0
 GROUND_REFERENCE_RADIUS_NM = 50.0
 
 router = APIRouter(prefix="/api/position", tags=["position"])
-
-
-# ---------------------------------------------------------------------------
-# The request union
-# ---------------------------------------------------------------------------
-
-
-class RunwayPlacementRequest(BaseModel):
-    """A final or a circuit leg, relative to one runway end.
-
-    **One request for both**, because ``core.geodesy.resolve_runway_placement``
-    is one function for both. Splitting finals from circuit legs here would
-    invent a taxonomy the geometry does not have.
-    """
-
-    type: Literal["runway"]
-    airport_icao: str = Field(min_length=2, max_length=7)
-    runway_ident: str = Field(min_length=1)
-    placement: RunwayPlacement
-    glideslope_deg: float | None = Field(default=None, gt=0.0, le=10.0)
-    pattern_altitude_ft: float | None = None
-    pattern_width_nm: float | None = Field(default=None, gt=0.0)
-    leg_distance_nm: float | None = Field(default=None, gt=0.0)
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-class ParkingPlacementRequest(BaseModel):
-    """A gate, stand, tie-down or hangar position.
-
-    Gates and stands are one request because ``apt.dat`` publishes one record
-    type with a ``kind`` field — see ``ParkingStand``.
-    """
-
-    type: Literal["parking"]
-    airport_icao: str = Field(min_length=2, max_length=7)
-    stand_name: str = Field(min_length=1)
-
-
-class CoordinatePlacementRequest(BaseModel):
-    """An arbitrary latitude/longitude/altitude."""
-
-    type: Literal["coordinate"]
-    position: GeoPosition
-    heading_deg: float | None = None
-    #: Resolves to stationary. A bare coordinate is as likely a parking spot as
-    #: a cruise level, so a caller putting the aircraft **airborne** must say so
-    #: or it arrives below stall speed — and the preview's notes say so too.
-    ias_kt: float | None = Field(default=None, ge=0.0)
-
-
-class WaypointPlacementRequest(BaseModel):
-    """Over a named fix, at a chosen altitude."""
-
-    type: Literal["waypoint"]
-    ident: str = Field(min_length=1)
-    region_code: str | None = None
-    terminal_airport: str | None = None
-    altitude_ft: float
-    heading_deg: float | None = None
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-class ProcedureLegPlacementRequest(BaseModel):
-    """On one leg of a published SID, STAR or approach."""
-
-    type: Literal["procedure_leg"]
-    airport_icao: str = Field(min_length=2, max_length=7)
-    kind: ProcedureKind
-    ident: str = Field(min_length=1)
-    transition: str | None = None
-    sequence: int = Field(description="The leg's own sequence number: 10, 20, 30 …")
-    #: ``None`` takes the leg's published altitude constraint.
-    altitude_ft: float | None = None
-    #: ``None`` takes the leg's published speed constraint, then the category.
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-class HoldPlacementRequest(BaseModel):
-    """In a published holding pattern, over its fix, established inbound."""
-
-    type: Literal["hold"]
-    fix_ident: str = Field(min_length=1)
-    region_code: str | None = None
-    airport_icao: str | None = None
-    #: ``None`` takes the hold's published minimum altitude.
-    altitude_ft: float | None = None
-    ias_kt: float | None = Field(default=None, ge=0.0)
-    category: ApproachCategory | None = None
-
-
-PlacementRequest = Annotated[
-    RunwayPlacementRequest
-    | ParkingPlacementRequest
-    | CoordinatePlacementRequest
-    | WaypointPlacementRequest
-    | ProcedureLegPlacementRequest
-    | HoldPlacementRequest,
-    Field(discriminator="type"),
-]
 
 
 # ---------------------------------------------------------------------------
@@ -288,13 +204,10 @@ class PlacementResult(BaseModel):
 
 
 def _runway(provider: NavdataProvider, icao: str, ident: str) -> Runway:
-    runway = provider.get_runway(icao, ident)
-    if runway is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Runway {ident.upper()} is not published at {icao.upper()}.",
-        )
-    return runway
+    return _not_found_or_404(
+        provider.get_runway(icao, ident),
+        f"Runway {ident.upper()} is not published at {icao.upper()}.",
+    )
 
 
 def _leg(
@@ -381,8 +294,24 @@ def _local_ground_elevation_ft(provider: NavdataProvider, position: GeoPosition)
     return nearby[0].elevation_ft if nearby else 0.0
 
 
-def request_category(request: PlacementRequest) -> ApproachCategory:
-    """The stated approach category, or the project's default.
+def request_category(request: PlacementRequest) -> tuple[ApproachCategory, str | None]:
+    """The approach category to resolve speeds with, and the note that discloses it.
+
+    A fallback chain, most specific source first:
+
+    1. **The category stated in the request.** The instructor's word is final.
+       No note of its own: the speed notes already name the category they used,
+       and the instructor chose it.
+    2. **Derived from the loaded airframe** (issue #82): the stall speed the
+       adapter reported at connect, through the published PANS-OPS arithmetic —
+       ``Vso → 1.3·Vso = V_AT → band``. The note states that whole chain,
+       because a derived category and a guessed one must never read the same.
+       The airframe is a cache and can be stale after a mid-session aircraft
+       swap — see :func:`server.deps.get_airframe_info` for why that is
+       accepted.
+    3. **The project's category B default**, with today's honest story
+       unchanged: the speed notes call the result a category default and tell
+       the instructor to set a speed if they know the airframe.
 
     **The wire says "not stated" with ``null``, not with "B".** Every one of these fields
     could have carried its default in the schema instead, but then a generated client would
@@ -391,7 +320,17 @@ def request_category(request: PlacementRequest) -> ApproachCategory:
     preview's notes exist to report.
     """
     stated = getattr(request, "category", None)
-    return DEFAULT_APPROACH_CATEGORY if stated is None else stated
+    if stated is not None:
+        return stated, None
+    airframe = get_airframe_info()
+    if airframe.vso_kias is not None:
+        vat_kt = VAT_FROM_VSO * airframe.vso_kias
+        category = category_for_vat(vat_kt)
+        return category, (
+            f"Category {category} — derived from the loaded airframe "
+            f"(Vso {airframe.vso_kias:g} kt, V_AT {vat_kt:.0f} kt)."
+        )
+    return DEFAULT_APPROACH_CATEGORY, None
 
 
 def _resolve(
@@ -410,154 +349,210 @@ def _resolve(
         raise HTTPException(status_code=UNPOSITIONABLE_STATUS, detail=str(exc)) from exc
 
 
-def _resolve_placement(
-    request: PlacementRequest, provider: NavdataProvider
+def _resolve_runway_placement(
+    request: RunwayPlacementRequest,
+    provider: NavdataProvider,
+    *,
+    category: ApproachCategory,
+    category_note: str | None,
 ) -> tuple[Placement, PlacementSchematic, list[str]]:
     notes: list[str] = []
-
-    category = request_category(request)
-
-    if isinstance(request, RunwayPlacementRequest):
-        runway = _runway(provider, request.airport_icao, request.runway_ident)
-        glideslope_deg, glideslope_source = _glideslope_deg(runway, request.glideslope_deg)
-        placement = resolve_runway_placement(
-            runway,
-            request.placement,
-            glideslope_deg=glideslope_deg,
-            pattern_altitude_ft=request.pattern_altitude_ft,
-            pattern_width_nm=request.pattern_width_nm or DEFAULT_PATTERN_WIDTH_NM,
-            leg_distance_nm=request.leg_distance_nm or DEFAULT_PATTERN_LEG_DISTANCE_NM,
-            ias_kt=request.ias_kt,
-            category=category,
-        )
-        distance_nm = FINAL_DISTANCES_NM.get(request.placement)  # type: ignore[arg-type]
-        if distance_nm is not None:
-            notes.append(
-                f"{placement.altitude_ft:,.0f} ft — {glideslope_deg:g}° glidepath "
-                f"({glideslope_source}) {distance_nm:g} NM from the {runway.ident} threshold at "
-                f"{runway.elevation_ft:,.0f} ft."
-            )
-        elif request.pattern_altitude_ft is None:
-            notes.append(
-                f"{placement.altitude_ft:,.0f} ft — standard circuit height above the "
-                f"{runway.ident} threshold."
-            )
-        # A final is flown at the threshold speed of the category, a circuit leg
-        # at its circling speed — which of the two is the branch
-        # ``resolve_runway_placement`` takes, not something to infer afterwards.
+    runway = _runway(provider, request.airport_icao, request.runway_ident)
+    glideslope_deg, glideslope_source = _glideslope_deg(runway, request.glideslope_deg)
+    placement = resolve_runway_placement(
+        runway,
+        request.placement,
+        glideslope_deg=glideslope_deg,
+        pattern_altitude_ft=request.pattern_altitude_ft,
+        pattern_width_nm=request.pattern_width_nm or DEFAULT_PATTERN_WIDTH_NM,
+        leg_distance_nm=request.leg_distance_nm or DEFAULT_PATTERN_LEG_DISTANCE_NM,
+        ias_kt=request.ias_kt,
+        category=category,
+        # The published ILS rides along so a final's setup tunes NAV1 and
+        # the OBS — the radios arrive with the geometry, never separately.
+        ils=runway.ils,
+    )
+    distance_nm = FINAL_DISTANCES_NM.get(request.placement)  # type: ignore[arg-type]
+    if distance_nm is not None:
         notes.append(
-            _speed_note(
-                request.ias_kt,
-                placement,
-                category,
-                provenance="threshold" if distance_nm is not None else "circling",
-            )
+            f"{placement.altitude_ft:,.0f} ft — {glideslope_deg:g}° glidepath "
+            f"({glideslope_source}) {distance_nm:g} NM from the {runway.ident} threshold at "
+            f"{runway.elevation_ft:,.0f} ft."
         )
-        schematic = _runway_schematic(runway, placement, request.placement, glideslope_deg)
-        return placement, schematic, notes
-
-    if isinstance(request, ParkingPlacementRequest):
-        stands = provider.get_parking(request.airport_icao)
-        wanted = request.stand_name.strip().casefold()
-        stand = next((s for s in stands if s.name.strip().casefold() == wanted), None)
-        if stand is None:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Stand {request.stand_name!r} is not published at "
-                f"{request.airport_icao.upper()}.",
-            )
-        placement = coordinate_placement(stand.position, stand.heading_true_deg)
+    elif request.pattern_altitude_ft is None:
         notes.append(
-            f"On the ground at {stand.name} ({stand.kind.replace('_', ' ')}), "
-            f"facing {stand.heading_true_deg:.0f}° true. 0 kt: a stand is not flown."
+            f"{placement.altitude_ft:,.0f} ft — standard circuit height above the "
+            f"{runway.ident} threshold."
         )
-        return placement, PlacementSchematic(), notes
-
-    if isinstance(request, CoordinatePlacementRequest):
-        placement = coordinate_placement(
-            request.position,
-            request.heading_deg or 0.0,
-            ias_kt=request.ias_kt if request.ias_kt is not None else GROUND_IAS_KT,
-        )
-        # The only placement type whose altitude does not imply flight: a bare
-        # coordinate is as likely a stand as a cruise level, so this is the one
-        # place an altitude has to be measured against the ground to decide
-        # whether 0 kt is defensible.
-        ground_ft = _local_ground_elevation_ft(provider, request.position)
-        notes.append(
-            _speed_note(
-                request.ias_kt,
-                placement,
-                category,
-                on_ground=request.position.altitude_ft <= ground_ft + GROUND_TOLERANCE_FT,
-            )
-        )
-        return placement, PlacementSchematic(), notes
-
-    if isinstance(request, WaypointPlacementRequest):
-        fixes = provider.get_fixes(
-            request.ident,
-            region=request.region_code,
-            terminal_airport=request.terminal_airport,
-        )
-        if not fixes:
-            raise HTTPException(
-                status_code=404,
-                detail=f"Fix {request.ident.upper()!r} is not in the navigation index.",
-            )
-        fix = fixes[0]
-        if len(fixes) > 1:
-            notes.append(
-                f"{len(fixes)} fixes are published as {fix.ident}; the one in region "
-                f"{fix.region_code or 'unknown'} was used. Give a region to disambiguate."
-            )
-        placement = waypoint_placement(
-            fix.position,
-            request.altitude_ft,
-            ident=fix.ident,
-            heading_deg=request.heading_deg,
-            ias_kt=request.ias_kt,
-            category=category,
-        )
-        if request.heading_deg is None:
-            notes.append("Heading 000° — a bare fix carries no course, and none was given.")
-        # A bare fix has no published band, so the category's circling speed is
-        # used unclamped, as a generic manoeuvring speed.
-        notes.append(_speed_note(request.ias_kt, placement, category, provenance="circling"))
-        return placement, PlacementSchematic(), notes
-
-    if isinstance(request, ProcedureLegPlacementRequest):
-        procedure, leg = _leg(provider, request)
-        if request.altitude_ft is None and leg.altitude is not None:
-            notes.append(f"Published constraint: {leg.altitude.display}.")
-        if request.ias_kt is None and leg.speed is not None:
-            notes.append(f"Published constraint: {leg.speed.display}.")
-        # The surrounding legs are what give a leg a heading: an ARINC outbound
-        # course is magnetic, and this project carries no magnetic model.
-        neighbours = _neighbouring_fixes(procedure, leg)
-        placement = procedure_leg_placement(
-            leg,
-            altitude_ft=request.altitude_ft,
-            ias_kt=request.ias_kt,
-            category=category,
-            procedure_ident=procedure.ident,
-            previous_fix=neighbours[0],
-            next_fix=neighbours[1],
-        )
-        provenance, bound_kt = _constrained_speed_provenance(
-            placement.ias_kt,
+    # A final is flown at the threshold speed of the category, a circuit leg
+    # at its circling speed — which of the two is the branch
+    # ``resolve_runway_placement`` takes, not something to infer afterwards.
+    notes.append(
+        _speed_note(
+            request.ias_kt,
+            placement,
             category,
-            min_kt=leg.speed.min_kt if leg.speed is not None else None,
-            max_kt=leg.speed.max_kt if leg.speed is not None else None,
+            provenance="threshold" if distance_nm is not None else "circling",
         )
-        notes.append(
-            _speed_note(
-                request.ias_kt, placement, category, provenance=provenance, bound_kt=bound_kt
-            )
-        )
-        notes.append(f"{leg.path_terminator} leg {leg.sequence} of {procedure.ident}.")
-        return placement, PlacementSchematic(), notes
+    )
+    # The derivation is disclosed only where the category shaped the speed:
+    # an explicit ias_kt makes the category a bystander, and crediting a
+    # bystander is the exact dishonesty these notes exist to avoid. The
+    # same guard repeats at every category-resolved speed below.
+    if request.ias_kt is None and category_note is not None:
+        notes.append(category_note)
+    schematic = _runway_schematic(runway, placement, request.placement, glideslope_deg)
+    return placement, schematic, notes
 
+
+def _resolve_runway_threshold_placement(
+    request: RunwayThresholdPlacementRequest, provider: NavdataProvider
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    runway = _runway(provider, request.airport_icao, request.runway_ident)
+    placement = coordinate_placement(
+        runway.threshold, runway.true_bearing_deg, ias_kt=GROUND_IAS_KT
+    )
+    notes = [
+        f"On the centreline at {runway.ident}'s threshold, facing "
+        f"{runway.true_bearing_deg:.0f}° true. 0 kt — lined up for a takeoff brief."
+    ]
+    return placement, PlacementSchematic(), notes
+
+
+def _resolve_parking_placement(
+    request: ParkingPlacementRequest, provider: NavdataProvider
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    stands = provider.get_parking(request.airport_icao)
+    wanted = request.stand_name.strip().casefold()
+    stand = next((s for s in stands if s.name.strip().casefold() == wanted), None)
+    if stand is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Stand {request.stand_name!r} is not published at "
+            f"{request.airport_icao.upper()}.",
+        )
+    placement = coordinate_placement(stand.position, stand.heading_true_deg)
+    notes = [
+        f"On the ground at {stand.name} ({stand.kind.replace('_', ' ')}), "
+        f"facing {stand.heading_true_deg:.0f}° true. 0 kt: a stand is not flown."
+    ]
+    return placement, PlacementSchematic(), notes
+
+
+def _resolve_coordinate_placement(
+    request: CoordinatePlacementRequest, provider: NavdataProvider, *, category: ApproachCategory
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    placement = coordinate_placement(
+        request.position,
+        request.heading_deg or 0.0,
+        ias_kt=request.ias_kt if request.ias_kt is not None else GROUND_IAS_KT,
+    )
+    # The only placement type whose altitude does not imply flight: a bare
+    # coordinate is as likely a stand as a cruise level, so this is the one
+    # place an altitude has to be measured against the ground to decide
+    # whether 0 kt is defensible.
+    ground_ft = _local_ground_elevation_ft(provider, request.position)
+    notes = [
+        _speed_note(
+            request.ias_kt,
+            placement,
+            category,
+            on_ground=request.position.altitude_ft <= ground_ft + GROUND_TOLERANCE_FT,
+        )
+    ]
+    return placement, PlacementSchematic(), notes
+
+
+def _resolve_waypoint_placement(
+    request: WaypointPlacementRequest,
+    provider: NavdataProvider,
+    *,
+    category: ApproachCategory,
+    category_note: str | None,
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    notes: list[str] = []
+    fixes = provider.get_fixes(
+        request.ident,
+        region=request.region_code,
+        terminal_airport=request.terminal_airport,
+    )
+    if not fixes:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Fix {request.ident.upper()!r} is not in the navigation index.",
+        )
+    fix = fixes[0]
+    if len(fixes) > 1:
+        notes.append(
+            f"{len(fixes)} fixes are published as {fix.ident}; the one in region "
+            f"{fix.region_code or 'unknown'} was used. Give a region to disambiguate."
+        )
+    placement = waypoint_placement(
+        fix.position,
+        request.altitude_ft,
+        ident=fix.ident,
+        heading_deg=request.heading_deg,
+        ias_kt=request.ias_kt,
+        category=category,
+    )
+    if request.heading_deg is None:
+        notes.append("Heading 000° — a bare fix carries no course, and none was given.")
+    # A bare fix has no published band, so the category's circling speed is
+    # used unclamped, as a generic manoeuvring speed.
+    notes.append(_speed_note(request.ias_kt, placement, category, provenance="circling"))
+    if request.ias_kt is None and category_note is not None:
+        notes.append(category_note)
+    return placement, PlacementSchematic(), notes
+
+
+def _resolve_procedure_leg_placement(
+    request: ProcedureLegPlacementRequest,
+    provider: NavdataProvider,
+    *,
+    category: ApproachCategory,
+    category_note: str | None,
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    notes: list[str] = []
+    procedure, leg = _leg(provider, request)
+    if request.altitude_ft is None and leg.altitude is not None:
+        notes.append(f"Published constraint: {leg.altitude.display}.")
+    if request.ias_kt is None and leg.speed is not None:
+        notes.append(f"Published constraint: {leg.speed.display}.")
+    # The surrounding legs are what give a leg a heading: an ARINC outbound
+    # course is magnetic, and this project carries no magnetic model.
+    neighbours = _neighbouring_fixes(procedure, leg)
+    placement = procedure_leg_placement(
+        leg,
+        altitude_ft=request.altitude_ft,
+        ias_kt=request.ias_kt,
+        category=category,
+        procedure_ident=procedure.ident,
+        previous_fix=neighbours[0],
+        next_fix=neighbours[1],
+    )
+    provenance, bound_kt = _constrained_speed_provenance(
+        placement.ias_kt,
+        category,
+        min_kt=leg.speed.min_kt if leg.speed is not None else None,
+        max_kt=leg.speed.max_kt if leg.speed is not None else None,
+    )
+    notes.append(
+        _speed_note(request.ias_kt, placement, category, provenance=provenance, bound_kt=bound_kt)
+    )
+    if request.ias_kt is None and category_note is not None:
+        notes.append(category_note)
+    notes.append(f"{leg.path_terminator} leg {leg.sequence} of {procedure.ident}.")
+    return placement, PlacementSchematic(), notes
+
+
+def _resolve_hold_placement(
+    request: HoldPlacementRequest,
+    provider: NavdataProvider,
+    *,
+    category: ApproachCategory,
+    category_note: str | None,
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    notes: list[str] = []
     holds = provider.get_holds(
         fix_ident=request.fix_ident,
         region=request.region_code,
@@ -590,7 +585,51 @@ def _resolve_placement(
     notes.append(
         _speed_note(request.ias_kt, placement, category, provenance=provenance, bound_kt=bound_kt)
     )
+    if request.ias_kt is None and category_note is not None:
+        notes.append(category_note)
     return placement, PlacementSchematic(), notes
+
+
+def _resolve_placement(
+    request: PlacementRequest, provider: NavdataProvider
+) -> tuple[Placement, PlacementSchematic, list[str]]:
+    """Dispatch to the one branch matching ``request``'s concrete type.
+
+    Split from one 200+ line function into one helper per placement kind
+    (each moved verbatim, sharing only ``category``/``category_note``
+    computed once here), in the same order/fallthrough as before: a hold is
+    the implicit trailing case, since ``PlacementRequest`` carries no other
+    alternative once the six named types are excluded.
+    """
+    category, category_note = request_category(request)
+
+    if isinstance(request, RunwayPlacementRequest):
+        return _resolve_runway_placement(
+            request, provider, category=category, category_note=category_note
+        )
+
+    if isinstance(request, RunwayThresholdPlacementRequest):
+        return _resolve_runway_threshold_placement(request, provider)
+
+    if isinstance(request, ParkingPlacementRequest):
+        return _resolve_parking_placement(request, provider)
+
+    if isinstance(request, CoordinatePlacementRequest):
+        return _resolve_coordinate_placement(request, provider, category=category)
+
+    if isinstance(request, WaypointPlacementRequest):
+        return _resolve_waypoint_placement(
+            request, provider, category=category, category_note=category_note
+        )
+
+    if isinstance(request, ProcedureLegPlacementRequest):
+        return _resolve_procedure_leg_placement(
+            request, provider, category=category, category_note=category_note
+        )
+
+    return _resolve_hold_placement(
+        request, provider, category=category, category_note=category_note
+    )
 
 
 def _neighbouring_fixes(
@@ -725,6 +764,49 @@ def _speed_note(
     )
 
 
+def _profile_notes(placement: Placement, setup: AircraftSetup) -> tuple[str, ...]:
+    """Disclose the configuration the placement's profile pre-filled.
+
+    Read off the **emitted setup**, never off the table that produced it, so
+    the note cannot disagree with what will be applied. The numbers are the
+    airframe-generic hand-off constants of ``core.geodesy`` (see
+    ``FINAL_THROTTLE``), stated verbatim precisely because they are generic:
+    the instructor is the one who knows the airframe, and every one of them is
+    overridable from the staging bar, whose edits win the merge.
+    """
+    gear = "gear down" if setup.gear_down else "gear up"
+    flaps = "flaps up" if not setup.flaps_ratio else f"flaps {setup.flaps_ratio:.0%}"
+    if placement.profile == "final":
+        descent = ""
+        if setup.vertical_speed_fpm is not None and placement.glideslope_deg is not None:
+            descent = (
+                f", descending {-setup.vertical_speed_fpm:,.0f} fpm on the "
+                f"{placement.glideslope_deg:.1f}° slope"
+            )
+        notes: tuple[str, ...] = (
+            f"Configured for a final: {gear}, {flaps}, throttle {setup.throttle_ratio:.0%}, "
+            f"trim {setup.elevator_trim_ratio:+.2f}{descent}.",
+        )
+        if placement.ils is not None and setup.nav1_freq_khz is not None:
+            notes += (
+                f"NAV1 {setup.nav1_freq_khz / 1000.0:.2f} / OBS {setup.obs1_deg:.0f}° — "
+                f"the published ILS for {placement.ils.runway_ident}.",
+            )
+        return notes
+    if placement.profile == "circuit":
+        return (
+            f"Configured for the {placement.pattern_leg} leg: {gear}, {flaps}, "
+            f"throttle {setup.throttle_ratio:.0%}.",
+        )
+    if placement.profile == "airborne":
+        return (
+            f"Configured for level flight: {gear}, {flaps}, throttle {setup.throttle_ratio:.0%}.",
+        )
+    # On the ground everything idles, and roll and vertical speed are left to
+    # the terrain — which is why neither is named here.
+    return (f"Configured for the ground: {gear}, {flaps}, throttle idle.",)
+
+
 def _glideslope_deg(runway: Runway, requested_deg: float | None) -> tuple[float, str]:
     """The glidepath angle to place on, and where it came from.
 
@@ -798,16 +880,6 @@ def _runway_schematic(
 # ---------------------------------------------------------------------------
 
 
-def _require_capability(adapter: SimAdapter, flag: str, what: str) -> None:
-    """Refuse up front when the adapter has not declared what this needs."""
-    if not bool(getattr(adapter.capabilities, flag, False)):
-        raise HTTPException(
-            status_code=CAPABILITY_UNAVAILABLE_STATUS,
-            detail=f"Unavailable on this adapter — the {adapter.name!r} adapter does not "
-            f"declare {flag}, so it cannot {what}.",
-        )
-
-
 def _merge_setup(base: AircraftSetup, override: AircraftSetup | None) -> AircraftSetup:
     """The instructor's edits on top of the geometry's, field by field.
 
@@ -876,6 +948,12 @@ def _placed_as_edited(placement: Placement, setup: AircraftSetup) -> Placement:
         heading_deg=heading_deg,
         ias_kt=placement.ias_kt,
         label=placement.label,
+        # The profile and what feeds it survive the edit: moving a final up or
+        # down its glidepath does not stop it being a final on that ILS.
+        profile=placement.profile,
+        ils=placement.ils,
+        glideslope_deg=placement.glideslope_deg,
+        pattern_leg=placement.pattern_leg,
     )
 
 
@@ -896,31 +974,30 @@ def preview_placement(request: PlacementRequest) -> PlacementPreview:
     it never awaits the simulator, and that is the point.
     """
     placement, schematic, notes = _resolve(request, get_navdata())
+    setup = placement.to_setup()
     return PlacementPreview(
         request=request,
         placement=placement,
-        setup=placement.to_setup(),
+        setup=setup,
         schematic=schematic,
-        notes=tuple(notes),
+        notes=(*notes, *_profile_notes(placement, setup)),
     )
 
 
-@router.post("/apply", response_model=PlacementResult)
-async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
-    """Place the aircraft. Setup first, then the teleport — see the module docstring."""
-    adapter = get_adapter()
-    _require_capability(adapter, "can_set_position", "reposition the aircraft")
+async def _resolve_placement_and_setup(
+    request: ApplyPlacementRequest, navdata: NavdataProvider
+) -> tuple[Placement, AircraftSetup]:
+    """Resolve the placement and merge in the staging bar's edits.
 
-    # Off the event loop, on purpose. This route has to be ``async def`` because
-    # the adapter calls below are awaited, but resolving the placement is the
-    # same blocking navdata work ``preview`` does — SQLite reads and, for a
-    # procedure, a lazy CIFP parse. Run inline it would stall the loop that also
-    # serves ``/ws/state``, so the telemetry feed the instructor is watching
-    # freezes during the one operation where the aircraft is moving. Do not
-    # "optimise" this hop away.
-    placement, _schematic, _notes = await run_in_threadpool(
-        _resolve, request.placement, get_navdata()
-    )
+    Off the event loop, on purpose. The caller (``execute_placement``) has to
+    be ``async def`` because the adapter calls that follow are awaited, but
+    resolving the placement is the same blocking navdata work ``preview``
+    does — SQLite reads and, for a procedure, a lazy CIFP parse. Run inline it
+    would stall the loop that also serves ``/ws/state``, so the telemetry feed
+    the instructor is watching freezes during the one operation where the
+    aircraft is moving. Do not "optimise" this hop away.
+    """
+    placement, _schematic, _notes = await run_in_threadpool(_resolve, request.placement, navdata)
     setup = _merge_setup(placement.to_setup(), request.setup)
     # An edited altitude or heading has to move the PLACEMENT, because
     # set_position writes both and runs last — an edit left in the setup alone is
@@ -928,7 +1005,16 @@ async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
     # took. See _placed_as_edited. This is also what makes the returned
     # ``placement`` and ``applied`` describe the aircraft rather than the request.
     placement = _placed_as_edited(placement, setup)
+    return placement, setup
 
+
+async def _write_placement(adapter: SimAdapter, placement: Placement, setup: AircraftSetup) -> None:
+    """The two ordered adapter calls: setup first, then the teleport (#37, #39).
+
+    Gates ``can_set_aircraft_state`` immediately before them, exactly where
+    the original single function checked it — a placement whose setup has
+    nothing to write (a pure position/heading change) never needs it.
+    """
     if setup.model_dump(exclude_none=True):
         _require_capability(
             adapter, "can_set_aircraft_state", "set the speed and altitude a placement needs"
@@ -942,13 +1028,54 @@ async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
         # releases the flight model when it finishes, the aircraft decelerates
         # while it settles, and an adapter left to read the speed for itself
         # would carry the decayed value onto the new heading. Measured at LEMD:
-        # 120 kt commanded, 83 kt on arrival.
-        await adapter.set_position(placement.position, placement.heading_deg, ias_kt=setup.ias_kt)
+        # 120 kt commanded, 83 kt on arrival. The descent rate is the same
+        # lesson on the vertical axis (#39): the teleport writes the whole
+        # velocity vector, so anything not re-delivered here arrives level.
+        await adapter.set_position(
+            placement.position,
+            placement.heading_deg,
+            ias_kt=setup.ias_kt,
+            vertical_speed_fpm=setup.vertical_speed_fpm,
+        )
     except CapabilityNotSupported as exc:  # defence in depth; gated above
         raise HTTPException(status_code=CAPABILITY_UNAVAILABLE_STATUS, detail=str(exc)) from exc
+
+
+async def execute_placement(
+    request: ApplyPlacementRequest,
+    *,
+    adapter: SimAdapter,
+    navdata: NavdataProvider,
+) -> PlacementResult:
+    """Place the aircraft. Setup first, then the teleport — see the module docstring.
+
+    Factored out of ``POST /api/position/apply`` so the Scenario Generator's
+    engine reuses this exact state-before-teleport sequencing (#37, #39)
+    instead of re-deriving it — a plain function taking its adapter and
+    navdata explicitly, rather than reaching for the request-scoped
+    dependencies itself, is what makes it callable from a background task
+    with no HTTP request behind it.
+
+    Three phases, in the same order as before the split: capability gating
+    (``can_set_position``, immediately below), setup resolution and the
+    "placed-as-edited" correction (:func:`_resolve_placement_and_setup`), and
+    the two ordered adapter calls (:func:`_write_placement`, which also gates
+    ``can_set_aircraft_state`` exactly where the original checked it).
+    """
+    _require_capability(adapter, "can_set_position", "reposition the aircraft")
+
+    placement, setup = await _resolve_placement_and_setup(request, navdata)
+
+    await _write_placement(adapter, placement, setup)
 
     return PlacementResult(
         placement=placement,
         applied=setup,
         state=await adapter.get_aircraft_state(),
     )
+
+
+@router.post("/apply", response_model=PlacementResult)
+async def apply_placement(request: ApplyPlacementRequest) -> PlacementResult:
+    """Place the aircraft. Setup first, then the teleport — see the module docstring."""
+    return await execute_placement(request, adapter=get_adapter(), navdata=get_navdata())

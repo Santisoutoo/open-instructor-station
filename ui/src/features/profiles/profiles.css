@@ -1,0 +1,227 @@
+/*
+ * Profiles panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Tablet-first: rows are 44px+ touch targets, Apply is the
+ * largest control on each row (design §7.3).
+ */
+
+.profiles-panel__toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+
+.profiles-panel__toolbar button {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.profiles-panel__file-input {
+  display: none;
+}
+
+/* ---------------------------------------------------------------- save form */
+
+.profiles-form {
+  display: grid;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+  padding: 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.profiles-form__fields {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.profiles-form__fields label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+.profiles-form__checkbox {
+  display: flex !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.profiles-form__failures {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.5rem 0.75rem;
+}
+
+.profiles-form__failure-list {
+  list-style: none;
+  margin: 0 0 0.5rem;
+  padding: 0;
+  display: grid;
+  gap: 0.25rem;
+}
+
+.profiles-form__failure-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.profiles-form__failure-builder {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.profiles-form__reason {
+  font-size: 0.8rem;
+  color: var(--warn);
+}
+
+.profiles-form button[type='submit'] {
+  min-height: 44px;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--bg);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.profiles-form button[type='submit']:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* -------------------------------------------------------------------- list */
+
+.profile-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.profile-row {
+  display: grid;
+  gap: 0.5rem;
+  padding: 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.profile-row__summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.profile-row__name {
+  font-weight: 700;
+}
+
+.profile-row__airport {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.profile-row__description {
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+
+.profile-row__meta {
+  margin-left: auto;
+  font-size: 0.72rem;
+  color: var(--text-dim);
+}
+
+.profile-row__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.profile-row__actions > * {
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* The single most common action in this panel — the largest button on the row. */
+.profile-row__apply {
+  flex: 2;
+  background: var(--accent);
+  border: none;
+  color: var(--bg);
+  font-weight: 700;
+}
+
+.profile-row__export {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text);
+}
+
+.profile-row__delete {
+  flex: 1;
+  background: transparent;
+  border: 1px solid var(--danger);
+  color: var(--danger);
+}
+
+/* --------------------------------------------------------------- apply banner */
+
+.profiles-banner {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+
+.profiles-banner--ok {
+  border-color: var(--ok, var(--border));
+}
+
+.profiles-banner--degraded {
+  border-color: var(--warn);
+}
+
+.profiles-banner__lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.15rem;
+  font-size: 0.78rem;
+}
+
+.profiles-banner__line--ok {
+  color: var(--text);
+}
+
+.profiles-banner__line--warn {
+  color: var(--warn);
+}

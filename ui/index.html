@@ -6,9 +6,29 @@
       name="viewport"
       content="width=device-width, initial-scale=1.0, viewport-fit=cover"
     />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#0d1117" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#16140f" />
     <title>Open Instructor Station</title>
+    <script>
+      // Resolve the theme before the app (or its CSS) loads, so the first paint is
+      // already in the right theme — no dark-to-light flash. Kept inline and tiny on
+      // purpose; the React side (uiSync) takes over once the store exists.
+      (function () {
+        var stored = null;
+        try {
+          stored = localStorage.getItem('ois-theme');
+        } catch (e) {
+          /* storage may be unavailable (private mode); fall through to the OS hint */
+        }
+        var theme =
+          stored === 'light' || stored === 'dark'
+            ? stored
+            : window.matchMedia('(prefers-color-scheme: light)').matches
+              ? 'light'
+              : 'dark';
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

@@ -35,11 +35,15 @@ __all__ = [
     "Airport",
     "AirportSummary",
     "AltitudeConstraint",
+    "AltitudeSource",
     "ApproachType",
     "Fix",
     "FixRef",
     "Hold",
     "IndexProgress",
+    "LayoutNode",
+    "LayoutScale",
+    "LayoutSegment",
     "Navaid",
     "NavaidKind",
     "NavdataState",
@@ -50,6 +54,7 @@ __all__ = [
     "PathTerminator",
     "Procedure",
     "ProcedureKind",
+    "ProcedureLayout",
     "ProcedureLeg",
     "ProcedureSummary",
     "SpeedConstraint",
@@ -541,6 +546,108 @@ class Procedure(BaseModel):
     runway_idents: tuple[str, ...] = ()
     approach_type: ApproachType | None = None
     legs: tuple[ProcedureLeg, ...] = ()
+
+
+# ---------------------------------------------------------------------------
+# Layout — a procedure drawn to scale, from the airport
+# ---------------------------------------------------------------------------
+
+#: Whether a segment's drawn length equals its real one, or was capped to keep the rest of
+#: the picture legible. Never "clipped" — a compressed segment is still drawn, just shorter,
+#: and always flagged so the UI can mark it rather than silently misrepresent distance.
+LayoutScale = Literal["to_scale", "compressed"]
+
+#: Where a node's altitude came from. ``"interpolated"``/``"unknown"`` let the UI hollow the
+#: dot rather than plot a slope :mod:`core.procedure_layout` invented.
+AltitudeSource = Literal["published", "runway", "interpolated", "unknown"]
+
+
+class LayoutNode(BaseModel):
+    """One leg's position in the to-scale picture — not necessarily its true one.
+
+    A fix-less leg (:attr:`positioned` False) has no defensible coordinate, so it is
+    advanced a nominal distance along course instead; it is still returned, for the same
+    reason :class:`ProcedureLeg` returns unpositionable legs — an instructor reading the
+    picture needs to see the climb leg, they simply cannot click it.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    sequence: int = Field(description="The source leg's own sequence number.")
+    ident: str = Field(
+        description=(
+            "The resolved fix's ident, else the raw ARINC key of an unresolved one "
+            "(ProcedureLeg.fix_ref) so it still reads as a name, else the path terminator."
+        )
+    )
+    x_nm: float = Field(description="East of the airport reference point, drawn frame.")
+    y_nm: float = Field(description="North of the airport reference point, drawn frame.")
+    altitude_ft: float
+    altitude_source: AltitudeSource
+    positioned: bool = Field(
+        description="False for a leg with no fix — x_nm/y_nm are a nominal advance, not real."
+    )
+    is_positionable: bool = Field(description="Whether the leg is clickable in the diagram.")
+    is_missed_approach: bool = Field(default=False)
+    is_runway: bool = Field(default=False, description="True for the single runway-threshold node.")
+
+
+class LayoutSegment(BaseModel):
+    """One drawn edge between two consecutive :class:`LayoutNode`."""
+
+    model_config = ConfigDict(frozen=True)
+
+    from_sequence: int
+    to_sequence: int
+    true_length_nm: float = Field(ge=0.0)
+    drawn_length_nm: float = Field(ge=0.0, description="Never exceeds true_length_nm.")
+    scale: LayoutScale
+    bearing_deg: float = Field(
+        ge=0.0, le=360.0, description="True bearing from the first node to the second."
+    )
+
+
+class ProcedureLayout(BaseModel):
+    """A procedure's legs laid out to scale, anchored at the airport.
+
+    Distances between nodes and altitude changes are proportional to their real values —
+    the point is to see how long the enroute segments are next to how short and steep the
+    final is. A segment too long relative to the rest is drawn capped, never silently: see
+    :data:`LayoutScale`. See ``core/procedure_layout.py`` for how ``anchor`` is chosen.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    airport_icao: str = Field(min_length=2, max_length=7)
+    kind: ProcedureKind
+    ident: str
+    transition: str | None = None
+    approach_type: ApproachType | None = None
+    anchor: Literal["runway", "last_fix"] = Field(
+        description=(
+            "What sits at the drawn origin (0, 0): the runway-threshold node, when the "
+            "procedure's own legs (or a supplied Runway) resolve one, else the last "
+            "positioned fix. The airport reference point is never the origin itself — see "
+            "airport_x_nm/airport_y_nm."
+        )
+    )
+    airport_x_nm: float = Field(
+        description=(
+            "The airport reference point's own drawn position. A short, uncompressed true "
+            "offset from the runway node when anchor is 'runway'; one further capped segment "
+            "beyond the last node, exactly like any other, when anchor is 'last_fix'."
+        )
+    )
+    airport_y_nm: float
+    airport_elevation_ft: float
+    nodes: tuple[LayoutNode, ...]
+    segments: tuple[LayoutSegment, ...]
+    total_true_length_nm: float = Field(ge=0.0)
+    compressed_segment_count: int = Field(ge=0)
+    long_factor: float = Field(
+        default=3.0, description="A segment past long_factor x the median compresses."
+    )
+    nominal_leg_nm: float = Field(default=2.0, description="Drawn advance for a leg with no fix.")
 
 
 # ---------------------------------------------------------------------------

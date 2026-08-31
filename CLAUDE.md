@@ -137,6 +137,8 @@ per-task decision.
 | `implementer` | Build the design on a `feature/*` branch. Leaves a PR ready; never merges. |
 | `tester` | Write and run unit + contract tests against `FakeSimAdapter`. Never green-washes. |
 | `sim-validator` | Automated live validation, unattended: starts X-Plane if it is not up, runs `pytest -m sim` + an E2E smoke (read datarefs → teleport → restore), shuts down and reports. Never runs in CI. |
+| `reviewer-python` | Report-only review of a PR/diff's Python (`core/`, `adapters/`, `server/`, `tests/`, `bridge/`): correctness, project rules, overengineering. Never edits, never merges. |
+| `reviewer-typescript` | Report-only review of a PR/diff's frontend (`ui/`): correctness, project rules, overengineering. Never edits, never merges. |
 
 ---
 
@@ -145,6 +147,23 @@ per-task decision.
 | Skill | Use for |
 |---|---|
 | `sim-lifecycle` | Driving the X-Plane 12 **process**: launch at an airport, wait for a real flight, place the aircraft, quit, restore the user's preferences. Developer tooling — `spikes/sim_lifecycle.py`, never imported by the app, never in CI. Rule 1 forbids *the application* launching a simulator; it does not forbid the test harness. **Only shut down a simulator you started.** |
+
+---
+
+## MCP tooling (developer-only)
+
+**`xplane-datarefs`** ([Santisoutoo/xplane-dataref-mcp](https://github.com/Santisoutoo/xplane-dataref-mcp),
+PyPI, launched via `uvx` from the repo's `.mcp.json`) — searches ~10,000 datarefs and ~3,000
+commands and reads live values over the same X-Plane Web API (:8086) the adapter uses.
+
+- **Use it for:** dataref discovery when building an adapter mapping (the Phase 2
+  Weather/Failures work is mostly this), live debugging against a running sim, and verifying a
+  dataref hypothesis *before* writing adapter code or a spike.
+- **Limits:** dataref access is **read-only** — writes are still validated with spikes and
+  `pytest -m sim`. Needs a live simulator, and the Docker Desktop gotcha applies (~4.1 s per
+  request without it). `execute_command` mutates the sim and is deliberately not pre-approved.
+- Same status as `sim-lifecycle`: developer tooling only — **never part of the application,
+  never in CI**. The app reaches the Web API exclusively through `adapters/xplane/`.
 
 ---
 
@@ -226,6 +245,32 @@ per-task decision.
 - **ARINC 424 path terminators:** only legs carrying a resolvable fix (`IF`, `TF`, `CF`, `DF`,
   `AF`, `RF`) are positionable. Legs like `CA`/`VA`/`FM`/`VM` are trajectory-dependent — show
   them, do not offer them as positions.
+- **A capability flag that gates its own validation is a deadlock.** A `-m sim` suite that
+  skips while its flag is `False` can never be the run that flips the flag to `True`. Pushback
+  and camera hit exactly this in Phase 3: the honest resolution is to flip the flag when the
+  code earns it structurally (pushback reuses the already-validated `set_position` procedure
+  wholesale and adds zero new dataref surface; camera probes every candidate command at connect
+  and degrades any that fails to resolve), state in the code that the flip asserts the code is
+  right rather than that it has been flown, and let `pytest -m sim` settle it. What is *not*
+  acceptable is a suite that silently passes vacuously — a live test whose assertions collapse
+  when a flag is off must say so in its docstring, and must fail loudly (not skip) when the
+  thing it exists to prove turns out false.
+
+- **Geodesic hops do not hold their latitude — flat-trig inverses are off by far more than
+  spherical excess.** Measured while building `core/camera/geometry.py`: the naive inverse of
+  two geodesic offsets is wrong by `distance² / R × tan(latitude)` — **145 mm worst case over a
+  ±500 m envelope across latitudes 0–75°**, five orders of magnitude past the micrometres a
+  spherical-excess estimate predicts. Two re-projection refinement passes bring it to 12 nm.
+  The measurement lives in that module's docstring and is pinned by a millimetre-tolerance
+  round-trip test; any future "simplification" that drops the refinement will fail it.
+
+- **`ui/src/api/schema.d.ts` drifts silently — regenerate it in any PR that touches a route.**
+  `dev` shipped a generated client that was missing `GET /api/geodesy/measure` entirely, months
+  after the server started serving it, and nothing failed: typecheck can only see the types it
+  was handed. The schema is a generated artefact — when branches conflict on it, regenerate from
+  the composed server (`create_app().openapi()` needs no running process) instead of hand-merging,
+  and treat a hand edit as a rule-7 violation.
+
 - **MSFS will always be a feature subset**: weather injection is locked down by Asobo, failures
   via SimConnect are limited, and study-level aircraft use internal failure systems. L:var access
   goes through the MobiFlight WASM module (optional add-on, same pattern as `bridge/`).

@@ -1,0 +1,14 @@
+name: "Standalone fixture scenario"
+description: >
+  A standalone fixture used only to prove that scenario discovery is a
+  directory scan, not a hardcoded registry. Lives in a directory containing
+  only this one file.
+tags: [fixture]
+
+position:
+  type: coordinate
+  position:
+    latitude: 40.4
+    longitude: -3.5
+    altitude_ft: 2000.0
+  ias_kt: 90.0

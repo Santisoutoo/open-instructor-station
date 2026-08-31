@@ -1,302 +1,298 @@
 /**
- * The Position panel as a whole.
+ * The Position screen against a stubbed API.
  *
- * Two things only this level can check.
- *
- * **The navdata gate fails closed.** There is no point offering an airport search over an
- * index that does not exist, so until the status says `ready` the panel body is replaced by
- * a status card — and "the status could not be read" has to count as not ready, or a server
- * that is merely slow reads as a working index and the instructor searches an empty void.
- * `gate.test.ts` proves the decision; this proves the panel obeys it.
- *
- * **Issue #39 end to end.** The panel's own answer to "will this aeroplane arrive below
- * stall speed" is the server's note, rendered in the staging bar. The last test walks the
- * whole path — coordinate tab, an airborne point, no speed — and asserts the warning
- * actually reaches the screen rather than being computed and dropped.
+ * `fetch` is stubbed rather than the RTK Query hooks mocked, for the reason `testApi.ts`
+ * gives: the request the screen actually sends is the thing worth asserting, and mocking a
+ * hook would hide a screen that asks the wrong endpoint.
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { Capabilities, NavdataStatus, PlacementPreview } from '../../api/models';
-import { type AppStore, type RootState, setupStore } from '../../store';
+import { setupStore, type RootState } from '../../store';
 import { PositionPanel } from './PositionPanel';
-import { type ApiCall, type Answer, callsTo, positionState, stubApi } from './testApi';
+import { initialPositionDesignState } from './positionDesignSlice';
+import { callsTo, stubApi, type ApiCall } from './testApi';
+import { ICAO, positionRoutes } from './testFixtures';
 
-const CAPABLE: Capabilities = {
-  can_set_position: true,
-  can_set_aircraft_state: true,
-  can_set_weather: false,
-  can_inject_failures: false,
-  can_spawn_traffic: false,
-  can_control_autopilot: false,
-  can_set_fuel_payload: false,
-  can_control_camera: false,
-  can_pushback: false,
-};
-
-function status(overrides: Partial<NavdataStatus> = {}): NavdataStatus {
-  return { state: 'ready', provider: 'in_memory', ...overrides };
-}
-
-/**
- * A bare coordinate 4,000 ft up with no speed — the shape of issue #39.
- *
- * The note is the server's own wording. The warning is keyed on the *resolved* speed, so it
- * fires whether the caller asked for 0 kt or said nothing at all.
- */
-const STALLED_PREVIEW: PlacementPreview = {
-  request: {
-    type: 'coordinate',
-    position: { latitude: 40.4936, longitude: -3.5668, altitude_ft: 4000 },
-    heading_deg: 0,
-    ias_kt: 0,
-  },
-  placement: {
-    position: { latitude: 40.4936, longitude: -3.5668, altitude_ft: 4000 },
-    heading_deg: 0,
-    ias_kt: 0,
-    label: '40.4936, -3.5668 at 4,000 ft',
-  },
-  setup: { altitude_ft: 4000, heading_deg: 0, ias_kt: 0 },
-  schematic: { points: [] },
-  notes: [
-    '0 kt was requested at a non-zero altitude — the aircraft will be below stall speed. ' +
-      'Set a speed unless this point is on the ground.',
-  ],
-};
-
-/** Routes for a panel whose index is ready and whose adapter can reposition. */
-function readyRoutes(extra: Record<string, Answer> = {}): Record<string, Answer> {
-  return {
-    'navdata/status': { body: status({ airac_cycle: '2607' }) },
-    'navdata/index': { body: status({ state: 'building' }) },
-    ...extra,
-    '/runways': { body: [] },
-    '/parking': { body: [] },
-    '/procedures': { body: [] },
-    capabilities: { body: CAPABLE },
-    'position/preview': { body: STALLED_PREVIEW },
-  };
-}
-
-function renderPanel(
-  routes: Record<string, Answer>,
-  preloaded: Partial<RootState> = positionState(),
-): { store: AppStore; calls: ApiCall[] } {
-  const { calls } = stubApi(routes);
-  const store = setupStore(preloaded);
-  render(
-    <Provider store={store}>
-      <PositionPanel />
-    </Provider>,
-  );
-  return { store, calls };
-}
+// The airport diagram is a MapLibre map now; jsdom has no WebGL (see test/maplibreStub).
+vi.mock('maplibre-gl', () => import('../../test/maplibreStub'));
 
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const LOADED: Partial<RootState> = {
+  positionDesign: { ...initialPositionDesignState, icaoInput: ICAO, loadedIcao: ICAO },
+};
+
+function renderPanel(preloadedState: Partial<RootState> = LOADED) {
+  const store = setupStore(preloadedState);
+  render(
+    <Provider store={store}>
+      <PositionPanel />
+    </Provider>,
+  );
+  return store;
+}
+
 describe('the navdata gate', () => {
-  it('offers nothing at all until the index status has been read', () => {
-    renderPanel(readyRoutes());
-
-    // First paint, before the query resolves. Failing open here would mean an airport
-    // search against an index that may not exist.
-    expect(screen.getByText(/reading the navigation data status/i)).toBeInTheDocument();
-    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
-    expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
-  });
-
-  it('stays closed, without a build button, when the status itself cannot be read', async () => {
-    renderPanel({ 'navdata/status': { status: 500, detail: 'boom' } });
-
-    expect(
-      await screen.findByText(/navigation data status could not be read/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /build index/i }),
-    ).not.toBeInTheDocument();
-    expect(screen.queryByRole('searchbox')).not.toBeInTheDocument();
-  });
-
-  it('offers to build an index that has never been built', async () => {
-    const user = userEvent.setup();
-    const { calls } = renderPanel(
-      readyRoutes({
+  it('replaces the body with a build offer while the index is missing', async () => {
+    stubApi(
+      positionRoutes({
         'navdata/status': {
-          body: status({ state: 'unavailable', reason: 'No index has been built yet.' }),
+          body: {
+            state: 'unavailable',
+            provider: 'xplane_native',
+            reason: 'No index yet.',
+          },
         },
       }),
     );
+    renderPanel();
 
-    expect(await screen.findByText(/No index has been built yet/)).toBeInTheDocument();
-    await user.click(screen.getByRole('button', { name: /build index/i }));
-
-    await waitFor(() => {
-      expect(callsTo(calls, 'navdata/index')).toHaveLength(1);
-    });
-    expect(callsTo(calls, 'navdata/index')[0]?.method).toBe('POST');
-  });
-
-  it('does not offer to re-run a build that failed', async () => {
-    // It would fail the same way until the underlying problem is fixed.
-    renderPanel({
-      'navdata/status': {
-        body: status({ state: 'error', reason: 'apt.dat is unreadable.' }),
-      },
-    });
-
-    expect(await screen.findByText('apt.dat is unreadable.')).toBeInTheDocument();
+    expect(await screen.findByText('No index yet.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Build index' })).toBeInTheDocument();
     expect(
-      screen.queryByRole('button', { name: /build index/i }),
+      screen.queryByRole('tablist', { name: 'Placement mode' }),
     ).not.toBeInTheDocument();
   });
 
-  it('shows build progress as a real progress bar', async () => {
-    renderPanel({
-      'navdata/status': {
-        body: status({
-          state: 'building',
-          progress: {
-            stage: 'airports',
-            stage_index: 1,
-            stage_count: 6,
-            fraction: 0.25,
-            detail: 'apt.dat — 3.1 M / 12.4 M lines',
+  it('offers no build button when the index errored — the same failure would repeat', async () => {
+    stubApi(
+      positionRoutes({
+        'navdata/status': {
+          body: {
+            state: 'error',
+            provider: 'xplane_native',
+            reason: 'apt.dat unreadable.',
           },
-        }),
-      },
-    });
-
-    const bar = await screen.findByRole('progressbar');
-    expect(bar).toHaveAttribute('aria-valuenow', '25');
-    expect(screen.getByText('apt.dat — 3.1 M / 12.4 M lines')).toBeInTheDocument();
-    expect(
-      screen.queryByRole('button', { name: /build index/i }),
-    ).not.toBeInTheDocument();
-  });
-
-  it('opens the panel and badges the cycle once the index is ready', async () => {
-    renderPanel(readyRoutes());
-
-    expect(await screen.findByRole('searchbox')).toBeInTheDocument();
-    expect(screen.getByText('AIRAC 2607')).toBeInTheDocument();
-    expect(screen.getByText(/Search for an airport to begin/i)).toBeInTheDocument();
-  });
-});
-
-describe('the panel body', () => {
-  it('shows the placement tabs only once an airport is chosen', async () => {
-    renderPanel(readyRoutes(), positionState({ selectedIcao: 'ZZZZ' }));
-
-    const tabs = await screen.findByRole('tablist', { name: /placement type/i });
-    for (const label of [
-      'Pattern & final',
-      'Procedures',
-      'Gates & stands',
-      'Coordinate & fix',
-    ]) {
-      expect(within(tabs).getByRole('tab', { name: label })).toBeInTheDocument();
-    }
-  });
-
-  it('asks for a runway end before offering a final or a circuit leg', async () => {
-    // "10 NM final" means nothing until it is known which way the aeroplane is pointing.
-    renderPanel(readyRoutes(), positionState({ selectedIcao: 'ZZZZ' }));
-
-    expect(await screen.findByText(/Pick a runway end above/i)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: '10 NM' })).not.toBeInTheDocument();
-  });
-
-  it('shows the pattern grid once an end is chosen', async () => {
-    renderPanel(
-      readyRoutes(),
-      positionState({ selectedIcao: 'ZZZZ', selectedRunwayIdent: '32L' }),
+        },
+      }),
     );
+    renderPanel();
 
-    expect(await screen.findByRole('button', { name: '10 NM' })).toBeInTheDocument();
+    expect(await screen.findByText('apt.dat unreadable.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Build index' })).not.toBeInTheDocument();
   });
 
-  it('switches tabs and marks the selected one', async () => {
-    const user = userEvent.setup();
-    const { store } = renderPanel(readyRoutes(), positionState({ selectedIcao: 'ZZZZ' }));
-
-    await user.click(await screen.findByRole('tab', { name: /gates & stands/i }));
-
-    expect(store.getState().position.activeTab).toBe('parking');
-    expect(screen.getByRole('tab', { name: /gates & stands/i })).toHaveAttribute(
-      'aria-selected',
-      'true',
-    );
-    expect(screen.getByRole('tab', { name: /pattern & final/i })).toHaveAttribute(
-      'aria-selected',
-      'false',
-    );
-  });
-
-  it('always shows the staging bar, saying that nothing has moved', async () => {
-    renderPanel(readyRoutes());
+  it('asks for an airport before showing a screen full of nothing', async () => {
+    stubApi(positionRoutes());
+    renderPanel({ positionDesign: initialPositionDesignState });
 
     expect(
-      await screen.findByText(/Nothing moves until you press Place aircraft/i),
+      await screen.findByText(/Type an ICAO code and press Load/),
     ).toBeInTheDocument();
   });
 });
 
-describe('an airborne placement with no speed (issue #39)', () => {
-  it("puts the server's stall-speed warning in front of the instructor", async () => {
-    // The whole path: coordinate tab, 4,000 ft, speed left blank. The geometry is perfect
-    // and the aeroplane still ends up in the terrain, so the warning is the only thing
-    // standing between the instructor and a wrecked lesson.
-    const user = userEvent.setup();
-    const { calls } = renderPanel(
-      readyRoutes(),
-      positionState({ selectedIcao: 'ZZZZ', activeTab: 'coordinate' }),
-    );
+describe('the loaded airport', () => {
+  it('renders one runway tab per navdata runway end, with its own wind', async () => {
+    stubApi(positionRoutes());
+    renderPanel();
 
-    const submit = await screen.findByRole('button', { name: /stage coordinate/i });
-    // Scoped to the form, because the waypoint form beside it labels a field identically.
-    const coordinate = within(submit.closest('form') as HTMLElement);
-    await user.type(coordinate.getByLabelText(/latitude/i), '40.4936');
-    await user.type(coordinate.getByLabelText(/longitude/i), '-3.5668');
-    await user.type(coordinate.getByLabelText(/altitude/i), '4000');
-    await user.click(submit);
-
-    // Scoped to the staging area: the coordinate form warns about the same thing on its own,
-    // and an unscoped query matches whichever of the two happens to render first.
-    const staged = within(await screen.findByRole('region', { name: /staged placement/i }));
-    expect(await staged.findByText(/below stall speed/i)).toBeInTheDocument();
-    // Still nothing has moved: the warning arrives from `preview`, not from `apply`.
-    expect(callsTo(calls, 'position/apply')).toEqual([]);
-    expect(callsTo(calls, 'position/preview')).toHaveLength(1);
+    expect(await screen.findByRole('tab', { name: '04R' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: '22L' })).toBeInTheDocument();
+    // 240°/12 kt: a tailwind on 04R and a headwind on 22L.
+    expect(await screen.findByText('11 kt tail')).toBeInTheDocument();
+    expect(screen.getByText('11 kt head')).toBeInTheDocument();
   });
-});
 
-describe('polling', () => {
-  it('re-reads the status while an index build is running', async () => {
-    const { calls } = renderPanel({
-      'navdata/status': { body: status({ state: 'building' }) },
+  it('renders the 4 placement tabs with exactly one selected', async () => {
+    stubApi(positionRoutes());
+    renderPanel();
+
+    await screen.findByRole('tab', { name: '04R' });
+    const tabs = screen.getAllByRole('tab', {
+      name: /Approach training|SID & STAR|Airwork|Custom location/,
     });
-    await screen.findByText(/Building the navigation index/i);
-
-    await new Promise((resolve) => setTimeout(resolve, 1400));
-
-    expect(callsTo(calls, 'navdata/status').length).toBeGreaterThan(1);
+    expect(tabs).toHaveLength(4);
+    const selected = tabs.filter((tab) => tab.getAttribute('aria-selected') === 'true');
+    expect(selected).toHaveLength(1);
+    expect(selected[0]).toHaveTextContent('Approach training');
   });
 
-  it('stops re-reading it once the index is ready', async () => {
-    // `BUILD_POLL_MS` is documented as "how often to re-read the status while an index
-    // build is running". A panel left open on a ready index must not sit there asking a
-    // simulator-facing server the same question once a second for the rest of the lesson.
-    const { calls } = renderPanel(readyRoutes());
-    await screen.findByRole('searchbox');
-    const settled = callsTo(calls, 'navdata/status').length;
+  it('shows the SERVER’s resolved altitude and heading, not a locally derived one', async () => {
+    stubApi(positionRoutes());
+    renderPanel();
 
-    await new Promise((resolve) => setTimeout(resolve, 1400));
+    // 968 ft and 040°T come from the preview fixture, not from any arithmetic here.
+    expect(await screen.findByText('968 ft MSL')).toBeInTheDocument();
+    expect(screen.getAllByText('040°T').length).toBeGreaterThan(0);
+    expect(screen.getByText('LFMN 04R 3 NM final')).toBeInTheDocument();
+  });
 
-    expect(callsTo(calls, 'navdata/status')).toHaveLength(settled);
+  it('renders the preview’s provenance notes verbatim', async () => {
+    stubApi(positionRoutes());
+    renderPanel();
+
+    expect(
+      await screen.findByText(
+        'Altitude from a 3.0° glidepath, 3.0 NM from the threshold.',
+      ),
+    ).toBeInTheDocument();
   });
 });
+
+describe('the Map hand-off', () => {
+  /** Exactly what `map/MapStagingBar` dispatches: a coordinate, no airport, 0 ft, 000°. */
+  const HANDED_OVER = {
+    latitude: 40.46,
+    longitude: -3.57,
+    altitudeFt: 0,
+    headingDeg: 0,
+  };
+
+  function handoffState(loadedIcao: string): Partial<RootState> {
+    return {
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: loadedIcao,
+        loadedIcao,
+        activeTab: 'custom',
+        custom: {
+          origin: 'coordinates',
+          latitude: HANDED_OVER.latitude,
+          longitude: HANDED_OVER.longitude,
+          altitudeFt: HANDED_OVER.altitudeFt,
+          headingDeg: HANDED_OVER.headingDeg,
+        },
+      },
+    };
+  }
+
+  it('shows and can commit the handed-over point with no airport loaded', async () => {
+    // The map gives a coordinate, which is a whole CoordinatePlacementRequest. Answering
+    // "Type an ICAO code and press Load" is the same as losing it.
+    const { calls } = stubApi(positionRoutes());
+    renderPanel(handoffState(''));
+
+    expect(
+      await screen.findByText(/A coordinate handed over from another screen/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Type an ICAO code/)).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(bodiesOf(calls, 'position/preview')).toContainEqual({
+        type: 'coordinate',
+        position: { latitude: 40.46, longitude: -3.57, altitude_ft: 0 },
+        heading_deg: 0,
+      });
+    });
+    const button = await screen.findByRole('button', { name: /Set position/ });
+    await waitFor(() => {
+      expect(button).not.toBeDisabled();
+    });
+  });
+
+  it('survives the screen’s own staging mirror instead of being overwritten by it', async () => {
+    // The bottom bar mirrors whatever the screen resolves onto `position.staged`. Adopting
+    // the hand-off into the Custom tab is what makes those two the same placement.
+    stubApi(positionRoutes());
+    const store = renderPanel(handoffState(ICAO));
+
+    await waitFor(() => {
+      expect(store.getState().position.staged).toEqual({
+        type: 'coordinate',
+        position: { latitude: 40.46, longitude: -3.57, altitude_ft: 0 },
+        heading_deg: 0,
+      });
+    });
+  });
+});
+
+describe('a coordinate that does not resolve', () => {
+  it('stages nothing at 0°N 0°E while the airport lookup has not answered', async () => {
+    // The Custom tab falls back to the loaded airport's own position. When the search
+    // errors there is no fallback, and filling the hole with a zero would put the aircraft
+    // in the Gulf of Guinea on one click.
+    const { calls } = stubApi(
+      positionRoutes({
+        'navdata/airports': { status: 503, detail: 'Index unavailable.' },
+      }),
+    );
+    const store = renderPanel({
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: ICAO,
+        loadedIcao: ICAO,
+        activeTab: 'custom',
+      },
+    });
+
+    expect(await screen.findByText(/Nothing to place yet/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Set position/ })).toBeDisabled();
+    expect(store.getState().position.staged).toBeNull();
+    for (const body of bodiesOf(calls, 'position/preview')) {
+      expect(body).not.toEqual(
+        expect.objectContaining({
+          position: expect.objectContaining({ latitude: 0, longitude: 0 }) as unknown,
+        }),
+      );
+    }
+  });
+});
+
+describe('choosing a start position', () => {
+  it('previews the placement the selected marker means', async () => {
+    const { calls } = stubApi(positionRoutes());
+    renderPanel();
+    await screen.findByRole('tab', { name: '04R' });
+
+    await userEvent.click(screen.getByRole('button', { name: 'Downwind left' }));
+
+    await waitFor(() => {
+      expect(bodiesOf(calls, 'position/preview')).toContainEqual({
+        type: 'runway',
+        airport_icao: ICAO,
+        runway_ident: '04R',
+        placement: 'left_downwind',
+        pattern_width_nm: 4,
+      });
+    });
+    expect(screen.getByRole('heading', { name: 'Downwind left' })).toBeInTheDocument();
+  });
+
+  it('sends the final the distance selector names, not the dot that was clicked', async () => {
+    const { calls } = stubApi(positionRoutes());
+    renderPanel();
+    await screen.findByRole('tab', { name: '04R' });
+
+    await userEvent.click(screen.getByRole('radio', { name: '10 NM' }));
+
+    await waitFor(() => {
+      expect(bodiesOf(calls, 'position/preview')).toContainEqual({
+        type: 'runway',
+        airport_icao: ICAO,
+        runway_ident: '04R',
+        placement: 'final_10nm',
+      });
+    });
+    expect(screen.getByRole('heading', { name: '10 NM final' })).toBeInTheDocument();
+  });
+
+  it('picking a stand clears the runway tab selection and places on the stand', async () => {
+    const { calls } = stubApi(positionRoutes());
+    const store = renderPanel();
+    await screen.findByRole('tab', { name: '04R' });
+    expect(store.getState().positionDesign.selectedRunway).toBe('04R');
+
+    await userEvent.click(screen.getByRole('button', { name: /^Start at/ }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Stand A1' }));
+
+    expect(store.getState().positionDesign.selectedStand).toBe('A1');
+    expect(store.getState().positionDesign.selectedRunway).toBeNull();
+    await waitFor(() => {
+      expect(bodiesOf(calls, 'position/preview')).toContainEqual({
+        type: 'parking',
+        airport_icao: ICAO,
+        stand_name: 'A1',
+      });
+    });
+  });
+});
+
+function bodiesOf(calls: readonly ApiCall[], fragment: string): unknown[] {
+  return callsTo(calls, fragment).map((call) => call.body);
+}

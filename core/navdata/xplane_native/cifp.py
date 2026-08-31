@@ -34,6 +34,7 @@ from pathlib import Path
 from threading import Lock, local
 from typing import Final, Literal, cast
 
+from core.atmosphere import METRES_PER_FOOT
 from core.models import GeoPosition
 from core.navdata.cifp_source import CifpAirport, CifpRunway, FixResolver
 from core.navdata.models import (
@@ -160,7 +161,6 @@ _AT_OR_BELOW_DESCRIPTORS: Final[frozenset[str]] = frozenset({"-"})
 _BETWEEN_DESCRIPTORS: Final[frozenset[str]] = frozenset({"B"})
 _AT_OR_ABOVE_ALTITUDE_2_DESCRIPTORS: Final[frozenset[str]] = frozenset({"C"})
 
-_METRES_PER_FOOT: Final = 0.3048
 _TENTHS: Final = 10.0
 _HUNDREDTHS: Final = 100.0
 _THOUSANDTHS: Final = 1000.0
@@ -265,14 +265,48 @@ def parse_cifp(
     """
     airport_icao = normalize_icao(icao)
 
+    runways, deferred, skipped = _split_cifp_records(text)
+
+    # With no resolver, runway references stay unresolved like every other kind
+    # of fix: "nothing resolves while the index builds" reads uniformly, rather
+    # than runway legs alone lighting up as positionable mid-build.
+    resolver = (
+        _resolves_nothing
+        if resolve_fix is None
+        else _resolving_own_runways_first(resolve_fix, airport_icao, runways)
+    )
+
+    runway_idents = [runway.ident for runway in runways]
+    procedures, procedure_skipped = _build_procedures(
+        deferred, airport_icao, resolver, runway_idents
+    )
+
+    return CifpAirport(
+        icao=airport_icao,
+        runways=tuple(runways),
+        procedures=procedures,
+        skipped_record_count=skipped + procedure_skipped,
+    )
+
+
+def _split_cifp_records(
+    text: str,
+) -> tuple[list[CifpRunway], list[tuple[ProcedureKind, list[str], str]], int]:
+    """First pass over the file: parse every ``RWY:`` record and defer the rest.
+
+    Real files publish their RWY: records AFTER the procedures, and the legs
+    need them — a same-airport runway reference is resolved from these
+    records — so every RWY: record must be in hand before the first leg is
+    read.
+
+    Returns:
+        The parsed runways, the deferred ``(kind, fields, line)`` procedure
+        records in file order, and how many RWY: records were unreadable.
+    """
     runways: list[CifpRunway] = []
     deferred: list[tuple[ProcedureKind, list[str], str]] = []
     skipped = 0
 
-    # First pass: runways only. Real files publish their RWY: records AFTER the
-    # procedures, and the legs need them — a same-airport runway reference is
-    # resolved from these records — so every RWY: record must be in hand before
-    # the first leg is read.
     for raw_line in text.splitlines():
         line = raw_line.strip()
         if not line:
@@ -296,15 +330,21 @@ def parse_cifp(
         if kind is not None:
             deferred.append((kind, fields, line))
 
-    # With no resolver, runway references stay unresolved like every other kind
-    # of fix: "nothing resolves while the index builds" reads uniformly, rather
-    # than runway legs alone lighting up as positionable mid-build.
-    resolver = (
-        _resolves_nothing
-        if resolve_fix is None
-        else _resolving_own_runways_first(resolve_fix, airport_icao, runways)
-    )
+    return runways, deferred, skipped
 
+
+def _build_procedures(
+    deferred: list[tuple[ProcedureKind, list[str], str]],
+    airport_icao: str,
+    resolver: FixResolver,
+    runway_idents: Sequence[str],
+) -> tuple[tuple[Procedure, ...], int]:
+    """Second pass: turn the deferred records into built procedures.
+
+    Returns:
+        The built procedures, and how many deferred records were unreadable.
+    """
+    skipped = 0
     builders: OrderedDict[tuple[ProcedureKind, str, str], _ProcedureBuilder] = OrderedDict()
     for kind, fields, line in deferred:
         parsed = _parse_procedure_record(kind, fields, line, airport_icao, resolver)
@@ -321,15 +361,8 @@ def parse_cifp(
             builders[key] = builder
         builder.legs.append(leg)
 
-    runway_idents = [runway.ident for runway in runways]
     procedures = tuple(builder.build(airport_icao, runway_idents) for builder in builders.values())
-
-    return CifpAirport(
-        icao=airport_icao,
-        runways=tuple(runways),
-        procedures=procedures,
-        skipped_record_count=skipped,
-    )
+    return procedures, skipped
 
 
 def _resolving_own_runways_first(
@@ -421,11 +454,30 @@ def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
     if anchor is None:
         return None
 
-    latitude = decode_latitude(_after_semicolon(fields[anchor]))
-    longitude = decode_longitude(_at(fields, anchor + _RWY_LONGITUDE_OFFSET))
-    if latitude is None or longitude is None:  # pragma: no cover - the anchor guarantees both
+    threshold_latlon = _decode_runway_threshold(fields, anchor)
+    if threshold_latlon is None:  # pragma: no cover - the anchor guarantees both
         return None
 
+    return _build_runway(fields, ident, anchor, threshold_latlon)
+
+
+def _decode_runway_threshold(fields: Sequence[str], anchor: int) -> tuple[float, float] | None:
+    """Latitude/longitude at the record's coordinate anchor, or ``None`` if either fails."""
+    latitude = decode_latitude(_after_semicolon(fields[anchor]))
+    longitude = decode_longitude(_at(fields, anchor + _RWY_LONGITUDE_OFFSET))
+    if latitude is None or longitude is None:
+        return None
+    return latitude, longitude
+
+
+def _build_runway(
+    fields: Sequence[str],
+    ident: str,
+    anchor: int,
+    threshold_latlon: tuple[float, float],
+) -> CifpRunway:
+    """Assemble the runway from the anchor and the fields around it."""
+    latitude, longitude = threshold_latlon
     elevation_ft = _parse_float(_at(fields, anchor + _RWY_ELEVATION_OFFSET))
     displaced_ft = _parse_float(_at(fields, anchor + _RWY_DISPLACED_THRESHOLD_OFFSET))
     crossing_height_ft = _parse_float(_before_semicolon(fields[anchor]))
@@ -441,7 +493,7 @@ def _parse_runway_record(fields: Sequence[str]) -> CifpRunway | None:
         # The source publishes the displacement in FEET and the model carries it
         # in metres — the unit change is the whole reason this line exists.
         displaced_threshold_m=(
-            None if displaced_ft is None or displaced_ft < 0 else displaced_ft * _METRES_PER_FOOT
+            None if displaced_ft is None or displaced_ft < 0 else displaced_ft * METRES_PER_FOOT
         ),
         threshold_crossing_height_ft=(
             None if crossing_height_ft is None or crossing_height_ft < 0 else crossing_height_ft
@@ -532,6 +584,29 @@ def _parse_procedure_record(
     resolver: FixResolver,
 ) -> tuple[tuple[ProcedureKind, str, str], str, ProcedureLeg] | None:
     """Decode one procedure record into its grouping key, route type and leg."""
+    identity = _procedure_record_identity(fields)
+    if identity is None:
+        return None
+    sequence, procedure_ident, terminator = identity
+
+    fix_ref, fix, navaid, is_positionable = _resolve_procedure_fixes(
+        fields, airport_icao, resolver, terminator
+    )
+
+    leg = _build_procedure_leg(
+        fields, raw, sequence, terminator, is_positionable, fix_ref, fix, navaid
+    )
+    if leg is None:
+        return None
+
+    key = (kind, procedure_ident, fields[_F_TRANSITION].strip().upper())
+    return key, fields[_F_ROUTE_TYPE], leg
+
+
+def _procedure_record_identity(
+    fields: Sequence[str],
+) -> tuple[int, str, PathTerminator] | None:
+    """The record's sequence number, procedure ident and path terminator, validated."""
     if len(fields) < _MIN_PROCEDURE_FIELDS:
         return None
 
@@ -540,8 +615,16 @@ def _parse_procedure_record(
     terminator_text = fields[_F_PATH_TERMINATOR].strip().upper()
     if sequence is None or not procedure_ident or terminator_text not in _ALL_TERMINATORS:
         return None
-    terminator = cast("PathTerminator", terminator_text)
+    return sequence, procedure_ident, cast("PathTerminator", terminator_text)
 
+
+def _resolve_procedure_fixes(
+    fields: Sequence[str],
+    airport_icao: str,
+    resolver: FixResolver,
+    terminator: PathTerminator,
+) -> tuple[FixRef | None, Waypoint | None, Waypoint | None, bool]:
+    """The leg's fix and recommended navaid, resolved, and whether the leg is positionable."""
     fix_ref = _build_fix_ref(fields, _F_FIX, airport_icao)
     fix = resolver(fix_ref) if fix_ref is not None else None
     navaid_ref = _build_fix_ref(fields, _F_NAVAID, airport_icao)
@@ -550,12 +633,25 @@ def _parse_procedure_record(
     # BOTH conditions. A CA leg has no defensible coordinate at all; an IF leg
     # whose fix is missing from the index has one that could not be looked up.
     is_positionable = terminator in POSITIONABLE_TERMINATORS and fix is not None
+    return fix_ref, fix, navaid, is_positionable
 
+
+def _build_procedure_leg(
+    fields: Sequence[str],
+    raw: str,
+    sequence: int,
+    terminator: PathTerminator,
+    is_positionable: bool,
+    fix_ref: FixRef | None,
+    fix: Waypoint | None,
+    navaid: Waypoint | None,
+) -> ProcedureLeg | None:
+    """Build the leg from its remaining fields, or ``None`` on failed model validation."""
     distance_nm, time_min = _parse_distance_or_time(fields[_F_ROUTE_DISTANCE])
     code = fields[_F_DESCRIPTION_CODE].ljust(4)
 
     try:
-        leg = ProcedureLeg(
+        return ProcedureLeg(
             sequence=sequence,
             path_terminator=terminator,
             is_positionable=is_positionable,
@@ -595,9 +691,6 @@ def _parse_procedure_record(
         # fails model validation is malformed, and one bad leg must never cost
         # the instructor the other thirty.
         return None
-
-    key = (kind, procedure_ident, fields[_F_TRANSITION].strip().upper())
-    return key, fields[_F_ROUTE_TYPE], leg
 
 
 def _unpositionable_reason(terminator: str, fix_ref: FixRef | None) -> str:
@@ -896,24 +989,14 @@ class XPNativeCifpSource:
         cycle recursed until the stack blew. See the comment at the guard for
         why the ``None`` cannot contaminate any non-nested answer.
         """
-        airport_icao = normalize_icao(icao)
-        path = cifp_file(self._root, airport_icao)
-        if path is None:
-            # A missing file is a normal outcome, not an error: every airport
-            # has runways, only about half have published procedures.
+        resolved = self._resolve_cifp_path(icao)
+        if resolved is None:
             return None
+        airport_icao, path, key = resolved
 
-        try:
-            mtime_ns = path.stat().st_mtime_ns
-        except OSError:
-            return None
-
-        key = (airport_icao, str(path), mtime_ns)
-        with self._lock:
-            cached = self._cache.get(key)
-            if cached is not None:
-                self._cache.move_to_end(key)
-                return cached
+        cached = self._cached(key)
+        if cached is not None:
+            return cached
 
         if airport_icao in self._parsing.icaos:
             # Re-entered from inside this airport's own parse: resolving one of
@@ -941,12 +1024,40 @@ class XPNativeCifpSource:
             # "no procedures" for the life of the thread.
             self._parsing.icaos.discard(airport_icao)
 
+        self._remember(key, airport)
+        return airport
+
+    def _resolve_cifp_path(self, icao: str) -> tuple[str, Path, tuple[str, str, int]] | None:
+        """The normalised ICAO, its CIFP file and cache key, or ``None`` with no file."""
+        airport_icao = normalize_icao(icao)
+        path = cifp_file(self._root, airport_icao)
+        if path is None:
+            # A missing file is a normal outcome, not an error: every airport
+            # has runways, only about half have published procedures.
+            return None
+
+        try:
+            mtime_ns = path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+        return airport_icao, path, (airport_icao, str(path), mtime_ns)
+
+    def _cached(self, key: tuple[str, str, int]) -> CifpAirport | None:
+        """The cached parse for ``key``, refreshing its recency, or ``None``."""
+        with self._lock:
+            cached = self._cache.get(key)
+            if cached is not None:
+                self._cache.move_to_end(key)
+            return cached
+
+    def _remember(self, key: tuple[str, str, int], airport: CifpAirport) -> None:
+        """Cache ``airport`` under ``key``, evicting the least recently used entry."""
         with self._lock:
             self._cache[key] = airport
             self._cache.move_to_end(key)
             while len(self._cache) > self._max_entries:
                 self._cache.popitem(last=False)
-        return airport
 
     def invalidate(self) -> None:
         """Drop every cached parse. Called when the navdata cache key changes."""

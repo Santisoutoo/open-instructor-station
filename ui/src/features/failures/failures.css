@@ -1,0 +1,565 @@
+/*
+ * Failures panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Red and amber here are the semantic --danger / --warn status
+ * colours; the accent's one placement in this view is the editor's Arm button.
+ */
+
+/* The adapter's caveat sentence (design §5.4/§7.1), once, under the title. */
+.failures-caveat {
+  margin: -0.25rem 0 0.75rem;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------ strip */
+
+.failures-strip {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.failures-strip__head {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.failures-strip__title {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+/* The single largest control on the strip — clearing must never need hunting. */
+.failures-clear-all {
+  min-height: 48px;
+  margin-left: auto;
+  padding: 0 1.5rem;
+  background: transparent;
+  border: 1px solid var(--danger);
+  border-radius: 8px;
+  color: var(--danger);
+  font-size: 1rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.failures-clear-all:not(:disabled):hover {
+  background: var(--danger);
+  color: var(--bg);
+  transition:
+    background-color 80ms ease-out,
+    color 80ms ease-out;
+}
+
+.failures-clear-all:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.failures-clear-all:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ chips */
+
+.failures-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.failures-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  padding: 0 0.2rem 0 0.75rem;
+  background: var(--bg-panel);
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.85rem;
+}
+
+.failures-chip__dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.failures-chip__label {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.failures-chip--active {
+  border-color: var(--danger);
+}
+
+.failures-chip--active .failures-chip__dot {
+  background: var(--danger);
+}
+
+.failures-chip--active .failures-chip__label {
+  color: var(--danger);
+}
+
+.failures-chip--armed {
+  border-color: var(--warn);
+}
+
+.failures-chip--armed .failures-chip__dot {
+  background: var(--warn);
+}
+
+.failures-chip__phrase {
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.failures-chip__live {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.failures-chip__clear {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.failures-chip__clear:hover {
+  color: var(--text);
+  transition: color 80ms ease-out;
+}
+
+.failures-chip__clear:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -4px;
+}
+
+/* The scheduler's `last_error`: injection fired but failed, and is retrying. */
+.failures-chip__error {
+  color: var(--danger);
+  font-size: 0.78rem;
+  white-space: nowrap;
+}
+
+/* ----------------------------------------------------------------- search */
+
+.failures-search {
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 1rem;
+  padding: 0 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.failures-search:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------- accordion */
+
+.failures-groups {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.failures-group__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.failures-group__header:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.failures-group__header[aria-expanded='true'] {
+  border-color: var(--text-dim);
+}
+
+.failures-group__header:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.failures-group__count {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+
+/* Search mode: static headings instead of toggles — every match stays visible. */
+.failures-group__title {
+  margin: 0;
+  padding: 0 0.25rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------- rows */
+
+.failures-rows {
+  display: grid;
+  gap: 0.25rem;
+  margin: 0.25rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.failures-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.25rem 0.75rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.failures-row__main {
+  flex: 1;
+  min-width: 200px;
+}
+
+.failures-row__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.failures-row__note {
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.failures-row__description {
+  margin: 0;
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+/* Why an unsupported entry is disabled — rendered inline, per row (§2.1). */
+.failures-row__reason {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--danger);
+}
+
+.failures-row[aria-disabled='true'] {
+  opacity: 0.6;
+}
+
+/* Engine-index picker: 1..2 shown by default, expandable up to eight (design §7.1). */
+.failures-row__engines {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.failures-row__engine {
+  min-width: 36px;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.failures-row__engine[aria-pressed='true'] {
+  background: var(--bg-panel);
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.failures-row__engine--more {
+  font-family: inherit;
+  font-weight: 500;
+}
+
+.failures-row__engine:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.failures-row__engine:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.failures-row__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+}
+
+.failures-row__status-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.failures-row__status--active {
+  color: var(--danger);
+}
+
+.failures-row__status--active .failures-row__status-dot {
+  background: var(--danger);
+}
+
+.failures-row__status--armed {
+  color: var(--warn);
+}
+
+.failures-row__status--armed .failures-row__status-dot {
+  background: var(--warn);
+}
+
+.failures-row__action {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.failures-row__action:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.failures-row__action:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.failures-row__action:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------- editor */
+
+.failures-editor {
+  display: grid;
+  gap: 0.5rem;
+  width: 100%;
+  margin-top: 0.25rem;
+  padding: 0.75rem;
+  background: var(--bg-raised);
+  border-radius: 8px;
+}
+
+.failures-editor__types {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.failures-editor__type {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.failures-editor__type:hover {
+  color: var(--text);
+  transition: color 80ms ease-out;
+}
+
+.failures-editor__type[aria-pressed='true'] {
+  background: var(--bg-panel);
+  border-color: var(--text-dim);
+  color: var(--text);
+}
+
+.failures-editor__type:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.failures-editor__fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.75rem;
+}
+
+.failures-editor__field {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.failures-editor__field-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.failures-editor__input,
+.failures-editor__select {
+  min-height: 44px;
+  width: 9rem;
+  padding: 0 0.6rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.failures-editor__input {
+  font-family: var(--font-mono);
+}
+
+.failures-editor__input:focus-visible,
+.failures-editor__select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* The live reading beside the threshold: mono, aligned to the input's baseline. */
+.failures-editor__now {
+  padding-bottom: 0.7rem;
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+  white-space: nowrap;
+}
+
+.failures-editor__actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* The one solid accent primary in the panel. */
+.failures-editor__arm {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--on-accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.failures-editor__arm:not(:disabled):hover {
+  background: var(--accent-strong);
+  transition: background-color 80ms ease-out;
+}
+
+.failures-editor__arm:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.failures-editor__arm:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.failures-editor__cancel {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.failures-editor__cancel:hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.failures-editor__cancel:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ------------------------------------------------------------------ misc */
+
+.failures-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-style: italic;
+}

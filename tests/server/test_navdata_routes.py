@@ -163,6 +163,68 @@ class TestParkingAndProcedures:
         assert response.status_code == 404
 
 
+class TestProcedureLayout:
+    """``GET .../procedures/{kind}/{ident}/layout`` — ``core.procedure_layout`` wired up."""
+
+    def test_the_shape(self, client: TestClient) -> None:
+        with client:
+            response = client.get("/api/navdata/airports/ZZZZ/procedures/sid/TEST1A/layout")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ident"] == "TEST1A"
+        assert body["kind"] == "sid"
+        assert len(body["nodes"]) == 3
+        assert len(body["segments"]) == 2
+        assert body["nodes"][0]["is_positionable"] is False  # the CA leg, unchanged from #159
+
+    def test_an_unknown_procedure_is_404(self, client: TestClient) -> None:
+        with client:
+            response = client.get("/api/navdata/airports/ZZZZ/procedures/sid/NOPE1A/layout")
+        assert response.status_code == 404
+
+    def test_an_unknown_transition_is_404(self, client: TestClient) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/airports/ZZZZ/procedures/sid/TEST1A/layout",
+                params={"transition": "NOPE"},
+            )
+        assert response.status_code == 404
+
+    def test_a_sid_with_no_runway_leg_falls_back_to_last_fix_without_one(
+        self, client: TestClient
+    ) -> None:
+        """TEST1A's own legs never touch a runway fix (see conftest.py) — this is exactly the
+        gap the design left open for a SID (#168 part 2)."""
+        with client:
+            response = client.get("/api/navdata/airports/ZZZZ/procedures/sid/TEST1A/layout")
+        assert response.status_code == 200
+        assert response.json()["anchor"] == "last_fix"
+
+    def test_a_supplied_runway_ident_anchors_the_sid_at_the_threshold(
+        self, client: TestClient
+    ) -> None:
+        with client:
+            response = client.get(
+                "/api/navdata/airports/ZZZZ/procedures/sid/TEST1A/layout",
+                params={"runway_ident": "36"},
+            )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["anchor"] == "runway"
+        assert not any(node["is_runway"] for node in body["nodes"])
+
+    def test_an_unknown_runway_ident_is_ignored_rather_than_a_404(self, client: TestClient) -> None:
+        """The runway is a hint for one specific case (a SID with no runway leg of its own),
+        never something the whole request should fail over."""
+        with client:
+            response = client.get(
+                "/api/navdata/airports/ZZZZ/procedures/sid/TEST1A/layout",
+                params={"runway_ident": "99"},
+            )
+        assert response.status_code == 200
+        assert response.json()["anchor"] == "last_fix"
+
+
 class TestNavaids:
     """``GET /api/navdata/navaids`` — two query forms on one path (design §12)."""
 

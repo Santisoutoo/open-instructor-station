@@ -1,0 +1,448 @@
+/*
+ * Fuel & Payload panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Accent placements: the staged tile's border, the one solid-accent
+ * Apply button, the CG dot and the violation text. Everything else is neutral.
+ */
+
+.fuel-payload-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.fuel-payload-panel h2 {
+  margin-bottom: 0;
+}
+
+.fuel-payload-panel__blocked {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------ tiles */
+
+.fuel-payload-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 0.5rem;
+}
+
+.fuel-payload-tile {
+  display: grid;
+  gap: 0.3rem;
+  min-height: 44px;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.fuel-payload-tile:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.fuel-payload-tile--staged,
+.fuel-payload-tile--staged:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.fuel-payload-tile:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.fuel-payload-tile:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+.fuel-payload-tile__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.fuel-payload-tile__desc {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--text-dim);
+}
+
+.fuel-payload-tile__reason {
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--warn);
+}
+
+/* ---------------------------------------------------------------- editors */
+
+.fuel-payload-editors {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 0.75rem;
+  align-items: start;
+}
+
+.fuel-payload-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  min-width: 0;
+  margin: 0;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.fuel-payload-group__title {
+  padding: 0;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--text-dim);
+}
+
+.fuel-payload-group__empty {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-dim);
+}
+
+.fuel-payload-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.fuel-payload-row + .fuel-payload-row {
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--border);
+}
+
+.fuel-payload-row__label {
+  min-width: 84px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.fuel-payload-row__bar {
+  position: relative;
+  flex: 1;
+  min-width: 70px;
+  height: 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.fuel-payload-row__bar span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.fuel-payload-row__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.fuel-payload-row__field-label {
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-dim);
+}
+
+.fuel-payload-row__input {
+  width: 90px;
+  min-height: 44px;
+  padding: 0 0.5rem;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.fuel-payload-row__input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.fuel-payload-row__pct {
+  min-width: 3.2em;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-dim);
+  text-align: right;
+}
+
+/* ---------------------------------------------------------------- chips */
+
+.fuel-payload-chiprow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.fuel-payload-chip {
+  min-height: 44px;
+  padding: 0 0.6rem;
+  color: var(--text-dim);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.78rem;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.fuel-payload-chip:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.fuel-payload-chip[aria-pressed='true'] {
+  color: var(--text);
+  border-color: var(--text);
+  font-weight: 700;
+}
+
+.fuel-payload-chip:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------- mass & balance readout */
+
+.mb-readout {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem 1.5rem;
+  align-items: center;
+  padding: 0.7rem 0.8rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.mb-readout--unknown {
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.mb-readout__unknown {
+  margin: 0;
+  color: var(--warn);
+  font-size: 0.85rem;
+}
+
+.mb-readout__numbers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin: 0;
+}
+
+.mb-readout__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.mb-readout__item dt {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.mb-readout__item dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 1rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.mb-readout__pct {
+  font-size: 0.8rem;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.mb-readout__violation {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--danger);
+}
+
+.mb-graphic {
+  width: 220px;
+  height: 150px;
+  flex-shrink: 0;
+}
+
+.mb-graphic__envelope {
+  fill: color-mix(in srgb, var(--accent) 18%, transparent);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.mb-graphic__dot {
+  fill: var(--ok);
+  stroke: var(--bg-panel);
+  stroke-width: 1.5;
+}
+
+.mb-graphic__dot--violated {
+  fill: var(--danger);
+}
+
+/* ------------------------------------------------------------ staging bar */
+
+.fuel-payload-staging {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.6rem 0.9rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.fuel-payload-staging__values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.fuel-payload-staging__item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.fuel-payload-staging__key {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+}
+
+.fuel-payload-staging__value {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.fuel-payload-staging__notes {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.fuel-payload-staging__override {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 44px;
+  font-size: 0.85rem;
+  color: var(--warn);
+}
+
+.fuel-payload-staging__blocked {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.fuel-payload-staging__flash {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--ok);
+}
+
+.fuel-payload-staging__actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.fuel-payload-staging__commit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.fuel-payload-staging__dismiss {
+  min-height: 44px;
+  padding: 0 0.9rem;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.fuel-payload-staging__dismiss:not(:disabled):hover {
+  border-color: var(--text-dim);
+  transition: border-color 80ms ease-out;
+}
+
+.fuel-payload-staging__dismiss:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.fuel-payload-staging__apply {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--accent);
+  border: none;
+  border-radius: 8px;
+  color: var(--on-accent);
+  font-size: 0.9rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.fuel-payload-staging__apply:not(:disabled):hover {
+  background: var(--accent-strong);
+  transition: background-color 80ms ease-out;
+}
+
+.fuel-payload-staging__apply:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.fuel-payload-staging__apply:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

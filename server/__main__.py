@@ -10,7 +10,6 @@ without being asked.
 from __future__ import annotations
 
 import logging
-import os
 import socket
 import sys
 import threading
@@ -109,11 +108,20 @@ def _open_browser_when_ready(host: str, port: int) -> None:
 
 
 def _should_open_browser() -> bool:
-    """Packaged runs open a browser. ``OIS_OPEN_BROWSER`` overrides either way."""
-    raw = os.environ.get("OIS_OPEN_BROWSER")
-    if raw is None:
+    """Packaged runs open a browser. ``OIS_OPEN_BROWSER`` overrides either way.
+
+    Reads through ``Settings`` (via ``get_settings()``) like every other
+    ``OIS_*`` variable now — the string parsing itself lives in
+    ``Settings._parse_open_browser``, not here. Kept as a zero-argument
+    function reading the process-wide singleton, rather than taking a
+    ``Settings`` explicitly, so a test setting ``OIS_OPEN_BROWSER`` via
+    ``monkeypatch`` and re-reading through the (test-cleared) ``get_settings``
+    cache sees its own value, exactly as before.
+    """
+    settings = get_settings()
+    if settings.open_browser is None:
         return _is_frozen()
-    return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return settings.open_browser
 
 
 def _log_reachable_urls(settings: Settings) -> None:

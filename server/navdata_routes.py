@@ -49,12 +49,16 @@ from core.navdata.models import (
     ParkingStand,
     Procedure,
     ProcedureKind,
+    ProcedureLayout,
     ProcedureSummary,
 )
 from core.navdata.provider import NavdataProvider, NavdataUnavailable
+from core.procedure_layout import procedure_layout
+from server._shared import _not_found_or_404
 from server.deps import get_navdata
 
 __all__ = [
+    "AMBIGUOUS_QUERY_STATUS",
     "BUILDING_RETRY_AFTER_S",
     "NAVDATA_UNAVAILABLE_STATUS",
     "UNAVAILABLE_RETRY_AFTER_S",
@@ -70,6 +74,12 @@ logger = logging.getLogger(__name__)
 #: unlike a 501 it is expected to become answerable once the index is built.
 NAVDATA_UNAVAILABLE_STATUS = 503
 
+#: A "two query forms, one path" endpoint (``get_navaids``, ``get_fixes``)
+#: given both an ``ident`` and a ``lat``/``lon``, or neither. The request is
+#: well-formed, but the server has no precedence rule to invent between the
+#: two forms, so it refuses rather than silently picking one.
+AMBIGUOUS_QUERY_STATUS = 422
+
 #: ``Retry-After`` while the index is *building*, seconds. Short, because the
 #: thing the client is waiting for is finishing on its own.
 BUILDING_RETRY_AFTER_S = 5
@@ -78,6 +88,24 @@ BUILDING_RETRY_AFTER_S = 5
 #: Long, because a human has to act — point the station at an install, or fix a
 #: broken one — and hammering the endpoint will not make that happen sooner.
 UNAVAILABLE_RETRY_AFTER_S = 60
+
+#: The search radius, repeated verbatim across every "near a point" query.
+#: File-local (not ``server/constants.py``): FastAPI-idiomatic ``Annotated``
+#: query aliases are tied to the parameter's validation, not a bare value, and
+#: no other route module searches by radius. The default (50.0) is given at
+#: each call site rather than inside ``Query()`` so it stays an ordinary
+#: Python default — required parameters can keep following it.
+RadiusNm = Annotated[float, Query(gt=0.0, le=1000.0)]
+
+#: The result cap, repeated verbatim alongside ``RadiusNm``.
+ResultLimit = Annotated[int, Query(ge=1, le=200)]
+
+#: The optional latitude/longitude pair of the "ident, or near a point" query
+#: forms (``get_navaids``, ``get_fixes``) — byte-identical at both sites,
+#: unlike ``airports_near``'s *required* ``lat``/``lon``, which stay spelled
+#: out.
+OptionalLatitude = Annotated[float | None, Query(ge=-90.0, le=90.0)]
+OptionalLongitude = Annotated[float | None, Query(ge=-180.0, le=180.0)]
 
 router = APIRouter(prefix="/api/navdata", tags=["navdata"])
 
@@ -96,9 +124,7 @@ def _provider() -> NavdataProvider:
 
 def _found[T](value: T | None, what: str) -> T:
     """Return ``value``, or raise 404 naming what was missing."""
-    if value is None:
-        raise HTTPException(status_code=404, detail=f"{what} is not in the navigation index.")
-    return value
+    return _not_found_or_404(value, f"{what} is not in the navigation index.")
 
 
 @router.get("/status", response_model=NavdataStatus)
@@ -166,8 +192,8 @@ def search_airports(
 def airports_near(
     lat: float = Query(ge=-90.0, le=90.0),
     lon: float = Query(ge=-180.0, le=180.0),
-    radius_nm: float = Query(default=50.0, gt=0.0, le=1000.0),
-    limit: int = Query(default=50, ge=1, le=200),
+    radius_nm: RadiusNm = 50.0,
+    limit: ResultLimit = 50,
 ) -> list[AirportSummary]:
     """Airports within ``radius_nm`` of a point, nearest first."""
     centre = GeoPosition(latitude=lat, longitude=lon)
@@ -230,15 +256,42 @@ def get_procedure(
     )
 
 
+@router.get(
+    "/airports/{icao}/procedures/{kind}/{ident}/layout",
+    response_model=ProcedureLayout,
+)
+def get_procedure_layout(
+    icao: str,
+    kind: ProcedureKind,
+    ident: str,
+    transition: str | None = None,
+    runway_ident: str | None = None,
+) -> ProcedureLayout:
+    """The procedure laid out to scale, anchored at the airport.
+
+    ``runway_ident`` only matters for a SID: its own legs never touch a runway
+    fix (a departure climbs away from one, it does not carry it as a leg), so
+    there is nothing in the procedure itself to anchor on. An approach or a
+    STAR resolves its own anchor from its legs and ignores the parameter.
+    """
+    procedure = _found(
+        _provider().get_procedure(icao, kind, ident, transition),
+        f"Procedure {ident.upper()!r} at {icao.upper()}",
+    )
+    airport = _found(_provider().get_airport(icao), f"Airport {icao.upper()!r}")
+    runway = _provider().get_runway(icao, runway_ident) if runway_ident else None
+    return procedure_layout(procedure, airport, runway=runway)
+
+
 @router.get("/navaids", response_model=list[Navaid])
 def get_navaids(
     ident: str | None = Query(default=None, min_length=1, description="VOR/NDB/DME identifier."),
     region: str | None = Query(default=None, description="ICAO region code, e.g. 'LE'."),
-    lat: float | None = Query(default=None, ge=-90.0, le=90.0),
-    lon: float | None = Query(default=None, ge=-180.0, le=180.0),
-    radius_nm: float = Query(default=50.0, gt=0.0, le=1000.0),
+    lat: OptionalLatitude = None,
+    lon: OptionalLongitude = None,
+    radius_nm: RadiusNm = 50.0,
     kinds: Annotated[list[NavaidKind] | None, Query()] = None,
-    limit: int = Query(default=50, ge=1, le=200),
+    limit: ResultLimit = 50,
 ) -> list[Navaid]:
     """Navaids by identifier, or every navaid near a point.
 
@@ -258,7 +311,7 @@ def get_navaids(
         centre = GeoPosition(latitude=lat, longitude=lon)
         return _provider().navaids_near(centre, radius_nm, kinds=kinds, limit=limit)
     raise HTTPException(
-        status_code=422,
+        status_code=AMBIGUOUS_QUERY_STATUS,
         detail=(
             "Give either 'ident' (with an optional 'region') or 'lat' and 'lon' "
             "(with an optional 'radius_nm'), but not both and not neither."
@@ -273,10 +326,10 @@ def get_fixes(
     terminal_airport: str | None = Query(
         default=None, description="Scope to one airport's terminal fixes."
     ),
-    lat: float | None = Query(default=None, ge=-90.0, le=90.0),
-    lon: float | None = Query(default=None, ge=-180.0, le=180.0),
-    radius_nm: float = Query(default=50.0, gt=0.0, le=1000.0),
-    limit: int = Query(default=50, ge=1, le=200),
+    lat: OptionalLatitude = None,
+    lon: OptionalLongitude = None,
+    radius_nm: RadiusNm = 50.0,
+    limit: ResultLimit = 50,
 ) -> list[Fix]:
     """Fixes by identifier, or every fix near a point.
 
@@ -296,7 +349,7 @@ def get_fixes(
         centre = GeoPosition(latitude=lat, longitude=lon)
         return _provider().fixes_near(centre, radius_nm, limit=limit)
     raise HTTPException(
-        status_code=422,
+        status_code=AMBIGUOUS_QUERY_STATUS,
         detail=(
             "Give either 'ident' (with an optional 'region') or 'lat' and 'lon' "
             "(with an optional 'radius_nm'), but not both and not neither."

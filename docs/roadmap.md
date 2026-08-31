@@ -14,9 +14,9 @@ overrides them.
 | Phase | Theme | Managers delivered | Status |
 |---|---|---|---|
 | **0** | Foundation | — (skeleton + contract + CI) | **Complete** |
-| **1** | Position Manager + Aircraft Control | 1, 6, radios of 7 | **In progress** |
-| **2** | Weather + Failures → Scenario Generator | 3, 4, 9 → 2, 14 | Planned |
-| **3** | Instructor Map + AI Traffic | 5, 13, 8, 10 | Planned |
+| **1** | Position Manager + Aircraft Control | 1, 6, radios of 7 | **Complete** |
+| **2** | Weather + Failures → Scenario Generator | 3, 4, 9 → 2, 14 | **Complete** |
+| **3** | Instructor Map + AI Traffic | 5, 13, 8, 10 | **Code complete — live validation pending** |
 | **4** | Analysis and sessions | 11, 12, full 7 | Planned |
 | **5** | Multi-sim and distribution | MSFS adapter, packaging | Planned |
 
@@ -70,7 +70,7 @@ Phase 1 can therefore commit to the Position Manager knowing exactly how the air
 
 ---
 
-## Phase 1 — Position Manager + Aircraft Control
+## Phase 1 — Position Manager + Aircraft Control *(complete)*
 
 **Managers: 1 (Position Manager), 6 (Aircraft Control), the radio-tuning slice of 7.**
 
@@ -104,22 +104,34 @@ STAR, on an approach, in a holding.
 
 **Automatic pre-teleport setup.** The complete state configuration from the feature spec:
 altitude, IAS, vertical speed, heading, pitch, roll, weight, fuel, flaps, spoilers, gear,
-autobrake, lights, NAV frequencies, ILS frequency and OBS course.
+autobrake, lights, NAV frequencies, ILS frequency and OBS course. **#8 closes here with mass
+(weight/fuel) split off to the Fuel & Payload Manager (#16, Phase 2)** — mass does not gate a
+stabilised placement, so a placement stays flyable without it.
 
 **Aircraft Control panel** — live read over the WebSocket, writes over REST.
 
 ### Exit criteria
 
-1. **From a tablet, the instructor places the aircraft on a 10 NM ILS final with a coherent
-   aircraft state in under 5 seconds.**
-2. The navdata cache rebuilds automatically when `cycle_info.txt` reports a new AIRAC cycle.
-3. Contract suite extended for every capability added (`can_set_position`, aircraft-state
-   writes) and green against the Fake.
-4. No navdata file of any kind is present in the repository.
+1. ✅ **From a tablet, the instructor places the aircraft on a 10 NM ILS final with a coherent
+   aircraft state in under 5 seconds.** Measured on the live run of 2026-08-10
+   (`reports/sim-validation-2026-08-10-1321.md`), driven over HTTP as a tablet would drive it:
+   **3.329 s min / 3.749 s mean / 4.068 s max over four runs** at LEMD 32L. The report's own
+   caveat stands: that is localhost with warm scenery on a 9.5 NM hop, leaving ~0.9 s of margin —
+   merging `apply_setup`'s and `set_position`'s freezes (its F2) is the identified way to buy
+   back ~1 s.
+2. ✅ AIRAC-keyed cache invalidation, with `Custom Data/` precedence over
+   `Resources/default data/` — `tests/core/navdata/test_sources.py`.
+3. ✅ Contract suite extended and green against the Fake (`can_set_position`, aircraft-state
+   writes, and the read-back assertions the 2026-08-10 run added on both adapters).
+4. ✅ No navdata file in the repository, enforced by a test rather than by convention —
+   `tests/core/navdata/test_no_navdata_committed.py`.
+
+The Position screen was later rebuilt to the v3 design and re-wired (PR #143); `positionSlice`
+remains the shared server-intent contract the Map and Profiles read.
 
 ---
 
-## Phase 2 — Weather + Failures → Scenario Generator
+## Phase 2 — Weather + Failures → Scenario Generator *(complete)*
 
 **Managers: 3 (Weather), 4 (Failures), 9 (Fuel & Payload) → then 2 (Scenario Generator),
 14 (Training Profiles).**
@@ -146,17 +158,20 @@ comes second.
 
 ### Exit criteria
 
-1. All **12 scenarios** run end to end against `FakeSimAdapter` in CI, and against a live
-   X-Plane under `-m sim`.
-2. **A new scenario can be added by writing a YAML file only** — demonstrated by a test that
-   loads a scenario file not referenced anywhere in the code.
-3. Weather written while X-Plane is in real-weather mode still applies (manual mode forced and
-   verified).
-4. Scenarios requiring an undeclared capability are reported as unavailable, never attempted.
+1. ✅ The shipped catalogue — now **14 scenarios** — runs end to end against `FakeSimAdapter`
+   in CI and against a live X-Plane under `-m sim` (`tests/sim/test_live_scenarios.py`,
+   PR #110).
+2. ✅ A new scenario is a YAML file only — `tests/core/scenarios/test_loader.py` loads a
+   scenario file referenced nowhere in the code.
+3. ✅ Manual weather mode is forced and pinned against a live X-Plane (commit `89a4005`), and
+   `can_set_weather` / `can_inject_failures` / `can_set_fuel_payload` each flipped only after
+   their live validation (PR #109).
+4. ✅ Scenario preflight reports missing capabilities as unavailable, never attempts them —
+   `tests/core/scenarios/test_preflight.py`.
 
 ---
 
-## Phase 3 — Instructor Map + AI Traffic
+## Phase 3 — Instructor Map + AI Traffic *(code complete — live validation pending)*
 
 **Managers: 5 (Instructor Map), 13 (AI Traffic), 8 (Pushback), 10 (Camera).**
 
@@ -174,14 +189,31 @@ comes second.
 
 ### Exit criteria
 
-1. The map shows live aircraft movement and correct runway/procedure geometry for an airport
-   loaded from the user's own navdata.
-2. Dragging the aircraft on the map repositions it with full automatic setup.
-3. With the bridge **not installed**, the application starts, every non-traffic feature works,
-   and traffic controls are disabled with a stated reason — verified by a test running against an
-   adapter declaring `can_spawn_traffic = False`.
-4. With the bridge installed, a TCAS RA scenario and a runway incursion scenario run in a live
-   X-Plane.
+1. ✅ The map draws runway, navaid, fix and procedure geometry from the user's own navdata,
+   viewport-driven and gated on `NavdataStatus`, with the live aircraft over `WS /ws/state`
+   (PR #140).
+2. ✅ Drag and click both stage a coordinate and commit through the identical
+   `POST /api/position/apply` the Position panel uses — one write path, per the design's D5
+   (PR #140; the hand-off into the rebuilt Position screen is PR #143's
+   `coordinateHandoffReceived`).
+3. ✅ Traffic controls render **disabled with the stated reason** — never hidden — against an
+   adapter declaring `can_spawn_traffic = False`, and reads stay ungated: `GET /status` and
+   `WS /ws/traffic` degrade to an empty list (PR #144; the panel originally *hid* its controls
+   and the test pinning that was replaced by a strictly stronger one).
+4. ❌ **Not met.** The TCAS RA and runway-incursion runs need a live X-Plane with the
+   `bridge/PI_OISBridge.py` plugin installed. `tests/sim/test_live_traffic.py` is written and
+   has never been executed; `can_spawn_traffic` is resolved per-connection from the bridge
+   probe and has never been observed `True` against a real simulator.
+
+**The capability flags, stated honestly.** `can_pushback` and `can_control_camera` are `True` on
+the X-Plane adapter as of `feature/xplane-pushback-camera` — as **claims that the code is right,
+not that it has been flown**. Pushback earns it structurally: its only write path is the
+already-live-validated `set_position` procedure, and it adds zero new dataref surface. The camera
+earns it conditionally: every named-view command is a connect-time-probed candidate (none asserted
+as fact, `adapters/xplane/camera_commands.py`), a view whose command does not resolve ships
+disabled with its candidate named in the reason, and custom offsets ship
+`custom_positions_supported=False` until the D7 spike runs. `pytest -m sim` is what settles all
+three flags, and it has not been run for any of them.
 
 ---
 
