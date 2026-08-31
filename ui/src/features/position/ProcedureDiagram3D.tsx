@@ -1,37 +1,45 @@
 /**
  * The selected procedure, drawn to scale in a navigable 3D scene. Same props contract as the
- * 2D `ProcedureDiagram` — see that file's docstring for the semantics this view mirrors
- * (hollow altitude markers, dashed unpositioned/missed-approach segments, compressed-segment
- * true-length callouts). Geometry comes from `buildProcedureScene` (#175); this file only
- * turns that pure scene description into r3f/drei primitives and wires selection.
+ * 2D `ProcedureDiagram` plus an additive `runway` prop (#177) — see that file's docstring for
+ * the semantics this view mirrors (hollow altitude markers, dashed unpositioned/missed-approach
+ * segments, compressed-segment true-length callouts). Geometry comes from `buildProcedureScene`
+ * (#175); this file turns that pure scene description into r3f/drei primitives and wires
+ * selection.
  *
- * **Deliberately out of scope here** (left as clean attachment points for #177, which extends
- * this file — see its own issue and docs/designs/procedure-approach-types-and-profile-view.md
- * §4.7.1): the runway quad, a ground plane, node ident/altitude billboard labels, curtain fill
- * (the quads already exist per segment on `SceneSegment.curtain`, unused here — only the top
- * edge, `curtain[0]`/`curtain[1]`, is drawn as a line), reading `--pos-*` theme tokens into
- * scene materials, and a camera-reset control. `ProcedureSceneContent` is the single child
- * `#177` adds siblings to; the per-segment `.map` in it is the loop `#177` extends with
- * curtain meshes; `controlsRef` is the `OrbitControls` ref `#177` will need to lift out for a
- * reset button.
- *
- * Colors are hard-coded rather than read from CSS custom properties: a WebGL material cannot
- * consult a CSS variable, and wiring the two together (`usePosThemePalette`) is #177's job.
+ * **#177 visual polish, on top of #176's shipped skeleton** (`ProcedureSceneContent`,
+ * `SegmentLine`, `ProcedureNode3D`, `CompressedCallout`, `controlsRef`):
+ * - `RunwayMesh` / `GroundPlane`: siblings of `ProcedureSceneContent` inside `<Canvas>`, not
+ *   nested inside it.
+ * - `CurtainFill`: a filled mesh added into `ProcedureSceneContent`'s existing per-segment
+ *   `.map`, alongside `SegmentLine` (extends that loop rather than adding a second one).
+ * - `NodeLabel`: a `<Billboard>`-wrapped `<Html>` per node, extending the `<Html>` pattern
+ *   `CompressedCallout` already established.
+ * - `usePosThemePalette`: replaces the hard-coded `PATH_COLOR`/`COMPRESSED_COLOR` for the path
+ *   line, the node markers and the compressed-segment color. `SELECTED_COLOR`, the runway's
+ *   pavement gray and the curtain's blue stay fixed constants — see their own comments for why
+ *   the theming hook does not reach them.
+ * - `controlsRef` (lifted out by #176 for exactly this) now drives a camera-reset button.
  *
  * No lights are added: every material here is `meshBasicMaterial`, which ignores lighting by
- * design — the simplest way to keep node/path colors legible from any orbit angle without a
- * lighting rig that has nothing else to do in this view yet.
+ * design — the simplest way to keep colors legible from any orbit angle (including from below
+ * the horizon, which the issue asks for explicitly) without a lighting rig that has nothing
+ * else to do in this view yet.
  */
 
-import { useRef, useState, type ComponentRef } from 'react';
+import { useMemo, useRef, useState, type ComponentRef } from 'react';
 import { Canvas, type ThreeEvent } from '@react-three/fiber';
-import { Html, Line, OrbitControls } from '@react-three/drei';
-import type { LayoutNode } from '../../api/models';
+import { Billboard, Html, Line, OrbitControls } from '@react-three/drei';
+import { DoubleSide, Vector3 } from 'three';
+import type { LayoutNode, Runway } from '../../api/models';
+import { usePosThemePalette, type PosThemePalette } from './usePosThemePalette';
 import {
+  NOMINAL_RUNWAY_WIDTH_M,
   VERTICAL_EXAGGERATION,
   buildProcedureScene,
+  buildRunwayQuad,
   type ProcedureLayout,
   type ProcedureScene,
+  type SceneExtents,
   type SceneNode,
   type SceneSegment,
   type Vec3,
@@ -51,9 +59,38 @@ function isGuessedAltitude(node: LayoutNode): boolean {
   return node.altitude_source === 'interpolated' || node.altitude_source === 'unknown';
 }
 
-const PATH_COLOR = '#3ecf7a';
-const COMPRESSED_COLOR = '#e0a83c';
+/**
+ * The selection highlight stays a fixed color rather than following `usePosThemePalette`: once
+ * the path line and node markers are themed to `--pos-accent` (below), mapping "selected" to
+ * that same token would make a selected node blend into every unselected one instead of
+ * standing out from them.
+ */
 const SELECTED_COLOR = '#ffd166';
+
+/**
+ * The runway pavement's color is fixed rather than themed: `usePosThemePalette` only wires up
+ * the three tokens `position.css` already uses for this view (`--pos-hair`/`--pos-accent`/
+ * `--pos-caution`), none of which reads as "pavement" — `--pos-hair` colors the ground plane
+ * itself, so reusing it here would make the runway disappear into the ground in both themes.
+ */
+const RUNWAY_COLOR = '#6b7280';
+
+/**
+ * The curtain's own blue, independent of `--pos-accent`. An earlier draft of this design read
+ * "accent for path/curtain/selected," on the assumption `--pos-accent` was blue — it measures
+ * as `oklch(0.72 0.16 145)` (hue 145 = green, the exact `#3ecf7a` #176 already used for the
+ * path line), not blue. The issue's own text asks for a "translucent blue altitude curtain"
+ * with "a distinct edge line on the flight path itself" — mapping the curtain to the
+ * (green) accent token would both miss "blue" and erase that distinctness from the path line
+ * it is supposed to sit apart from. A fixed blue constant satisfies both; see this file's own
+ * design doc section (§4.7.2, item 4) for the "a fixed blue constant is fine" fallback this
+ * takes.
+ */
+const CURTAIN_COLOR = '#3b82f6';
+const CURTAIN_OPACITY = 0.28;
+/** Applied instead of `CURTAIN_OPACITY` for a `segmentIsDashed` segment — opacity-based
+ *  de-emphasis, layered on top of #176's dashed *line*, not a replacement for it. */
+const CURTAIN_OPACITY_DIMMED = 0.12;
 
 /** Node marker radius, as a fraction of the scene's own fit radius — so it stays legible at
  *  any procedure's scale instead of looking huge on a tight circuit and tiny on a long STAR. */
@@ -64,8 +101,25 @@ const HIT_RADIUS_FACTOR = 3;
 const DASH_SIZE_NM = 0.15;
 const GAP_SIZE_NM = 0.1;
 
+/**
+ * Padding factor for the ground plane's XZ span — distinct from `procedureScene.ts`'s own
+ * `FIT_MARGIN_FACTOR` (which pads a *radius* for the camera's bounding-sphere fit; applying
+ * that same, smaller factor directly to a span would leave the plane's edge visibly close to
+ * the outermost node from a shallow orbit angle). A floor keeps a tight or single-node layout
+ * from getting a vanishingly small plane.
+ */
+const GROUND_MARGIN_FACTOR = 1.6;
+const MIN_GROUND_SPAN_NM = 1;
+
 function midpoint(a: Vec3, b: Vec3): Vec3 {
   return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2];
+}
+
+/** Expands a planar quad (wound `(0,1,2)/(0,2,3)`, per `SceneSegment.curtain`'s own docstring)
+ *  into 6 unindexed vertices for a `<bufferGeometry>` `position` attribute. */
+function quadToTriangleVertices(quad: readonly [Vec3, Vec3, Vec3, Vec3]): Float32Array {
+  const [a, b, c, d] = quad;
+  return new Float32Array([...a, ...b, ...c, ...a, ...c, ...d]);
 }
 
 /**
@@ -75,7 +129,15 @@ function midpoint(a: Vec3, b: Vec3): Vec3 {
  * through). The enclosing `<group>`'s `name` carries the same dashed/compressed state as a
  * plain string, so a test can read it off a real (unstubbed) element instead.
  */
-function SegmentLine({ sceneSegment }: { readonly sceneSegment: SceneSegment }) {
+function SegmentLine({
+  sceneSegment,
+  pathColor,
+  compressedColor,
+}: {
+  readonly sceneSegment: SceneSegment;
+  readonly pathColor: string;
+  readonly compressedColor: string;
+}) {
   const { segment, from, to, curtain } = sceneSegment;
   const dashed = segmentIsDashed(from, to);
   const compressed = segment.scale === 'compressed';
@@ -91,12 +153,46 @@ function SegmentLine({ sceneSegment }: { readonly sceneSegment: SceneSegment }) 
     <group name={name}>
       <Line
         points={[curtain[0], curtain[1]]}
-        color={compressed ? COMPRESSED_COLOR : PATH_COLOR}
+        color={compressed ? compressedColor : pathColor}
         lineWidth={2}
         dashed={dashed}
         {...(dashed ? { dashSize: DASH_SIZE_NM, gapSize: GAP_SIZE_NM } : {})}
       />
     </group>
+  );
+}
+
+/**
+ * The translucent wall between the flight path and its ground footprint (#177) — the full
+ * 4-vertex `SceneSegment.curtain` quad, not just the top edge `SegmentLine` already draws.
+ * `depthWrite={false}` avoids a translucent quad occluding the quads behind it depending on
+ * draw order; `side={DoubleSide}` keeps it visible from an orbit below the horizon (#176
+ * removed the polar-angle clamp specifically so that works).
+ */
+function CurtainFill({ sceneSegment }: { readonly sceneSegment: SceneSegment }) {
+  const { curtain, from, to } = sceneSegment;
+  const dashed = segmentIsDashed(from, to);
+  const positions = useMemo(() => quadToTriangleVertices(curtain), [curtain]);
+  const name = [
+    `procdiagram3d-curtain-${String(from.node.sequence)}-${String(to.node.sequence)}`,
+    dashed ? 'dimmed' : null,
+  ]
+    .filter((part) => part !== null)
+    .join('--');
+
+  return (
+    <mesh name={name}>
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <meshBasicMaterial
+        color={CURTAIN_COLOR}
+        transparent
+        opacity={dashed ? CURTAIN_OPACITY_DIMMED : CURTAIN_OPACITY}
+        side={DoubleSide}
+        depthWrite={false}
+      />
+    </mesh>
   );
 }
 
@@ -111,11 +207,31 @@ function CompressedCallout({ sceneSegment }: { readonly sceneSegment: SceneSegme
   );
 }
 
+/** Ident + rounded altitude, billboarded at the node's own position (#177). Purely textual —
+ *  the hollow/solid altitude-source distinction already lives on the node marker below, and 2D
+ *  itself doesn't style its text labels hollow either, only the dot. */
+function NodeLabel({ sceneNode }: { readonly sceneNode: SceneNode }) {
+  const { node, position } = sceneNode;
+  return (
+    <Billboard position={position}>
+      <Html center pointerEvents="none">
+        <div className="pos-procdiagram3d__label">
+          <span className="pos-procdiagram3d__label-ident">{node.ident}</span>
+          <span className="pos-procdiagram3d__label-altitude">
+            {String(Math.round(node.altitude_ft))} ft
+          </span>
+        </div>
+      </Html>
+    </Billboard>
+  );
+}
+
 function ProcedureNode3D({
   sceneNode,
   radiusNm,
   selected,
   hovered,
+  pathColor,
   onSelect,
   onHoverChange,
 }: {
@@ -124,6 +240,7 @@ function ProcedureNode3D({
   readonly radiusNm: number;
   readonly selected: boolean;
   readonly hovered: boolean;
+  readonly pathColor: string;
   readonly onSelect: (sequence: number) => void;
   readonly onHoverChange: (sequence: number | null) => void;
 }) {
@@ -132,7 +249,7 @@ function ProcedureNode3D({
   const baseRadius = radiusNm * NODE_RADIUS_FRACTION;
   const visualRadius = baseRadius * (selected ? 1.4 : hovered ? 1.15 : 1);
   const hitRadius = baseRadius * HIT_RADIUS_FACTOR;
-  const color = selected ? SELECTED_COLOR : PATH_COLOR;
+  const color = selected ? SELECTED_COLOR : pathColor;
   // Same reasoning as SegmentLine's name: `wireframe`/`color` live on `meshBasicMaterial`,
   // whose exact DOM-attribute rendering for object/boolean props on an unstubbed custom
   // element is an implementation detail of the stub environment, not a contract worth
@@ -182,19 +299,82 @@ function ProcedureNode3D({
 }
 
 /**
- * The scene's own content, as the single child `#177` adds siblings to (a ground plane, a
- * runway quad, billboard labels) inside the same `<Canvas>`.
+ * A flat, neutral mesh sized from `scene.extents`' XZ footprint (#177) — no texture (#178's
+ * job, explicitly out of scope here). `side={DoubleSide}` so it still reads from an orbit below
+ * the horizon.
+ */
+function GroundPlane({ extents, color }: { readonly extents: SceneExtents; readonly color: string }) {
+  const width = Math.max(extents.maxX - extents.minX, MIN_GROUND_SPAN_NM) * GROUND_MARGIN_FACTOR;
+  const depth = Math.max(extents.maxZ - extents.minZ, MIN_GROUND_SPAN_NM) * GROUND_MARGIN_FACTOR;
+
+  return (
+    <mesh
+      name="procdiagram3d-ground"
+      position={[extents.centerX, 0, extents.centerZ]}
+      rotation={[-Math.PI / 2, 0, 0]}
+    >
+      <planeGeometry args={[width, depth]} />
+      <meshBasicMaterial color={color} side={DoubleSide} />
+    </mesh>
+  );
+}
+
+/**
+ * The runway pavement, at its true position and orientation (#177). Only rendered when both a
+ * `Runway` record and an `is_runway` layout node exist — a STAR anchored on `last_fix` has
+ * neither. `polygonOffset` keeps the coplanar-at-y=0 pavement from z-fighting/shimmering
+ * against `GroundPlane` during an orbit, without lifting `buildRunwayQuad`'s own geometry (its
+ * tests assert the exact anchor height).
+ */
+function RunwayMesh({
+  runwayNode,
+  runway,
+}: {
+  readonly runwayNode: SceneNode;
+  readonly runway: Runway;
+}) {
+  const positions = useMemo(() => {
+    const quad = buildRunwayQuad(
+      runwayNode.position,
+      runway.true_bearing_deg,
+      runway.length_m,
+      runway.width_m ?? NOMINAL_RUNWAY_WIDTH_M,
+    );
+    return quadToTriangleVertices(quad);
+  }, [runwayNode.position, runway.true_bearing_deg, runway.length_m, runway.width_m]);
+
+  return (
+    <mesh name="procdiagram3d-runway">
+      <bufferGeometry>
+        <bufferAttribute attach="attributes-position" args={[positions, 3]} />
+      </bufferGeometry>
+      <meshBasicMaterial
+        color={RUNWAY_COLOR}
+        side={DoubleSide}
+        polygonOffset
+        polygonOffsetFactor={-4}
+        polygonOffsetUnits={-4}
+      />
+    </mesh>
+  );
+}
+
+/**
+ * The scene's own content — segments, nodes, callouts. `RunwayMesh`/`GroundPlane` are added as
+ * *siblings* of this component inside `<Canvas>` (#177), not nested inside it.
  */
 function ProcedureSceneContent({
   scene,
   selectedSequence,
   hoveredSequence,
+  palette,
   onHoverChange,
   onSelectLeg,
 }: {
   readonly scene: ProcedureScene;
   readonly selectedSequence: number | null;
   readonly hoveredSequence: number | null;
+  readonly palette: PosThemePalette;
   readonly onHoverChange: (sequence: number | null) => void;
   readonly onSelectLeg: (sequence: number) => void;
 }) {
@@ -204,22 +384,32 @@ function ProcedureSceneContent({
 
   return (
     <group name="procdiagram3d-scene">
-      {scene.segments.map((sceneSegment) => (
-        <SegmentLine
-          key={`${String(sceneSegment.segment.from_sequence)}-${String(sceneSegment.segment.to_sequence)}`}
-          sceneSegment={sceneSegment}
-        />
-      ))}
+      {scene.segments.map((sceneSegment) => {
+        const key = `${String(sceneSegment.segment.from_sequence)}-${String(sceneSegment.segment.to_sequence)}`;
+        return (
+          <group key={key}>
+            <SegmentLine
+              sceneSegment={sceneSegment}
+              pathColor={palette.accent}
+              compressedColor={palette.caution}
+            />
+            <CurtainFill sceneSegment={sceneSegment} />
+          </group>
+        );
+      })}
       {scene.nodes.map((sceneNode) => (
-        <ProcedureNode3D
-          key={sceneNode.node.sequence}
-          sceneNode={sceneNode}
-          radiusNm={scene.extents.radiusNm}
-          selected={sceneNode.node.sequence === selectedSequence}
-          hovered={sceneNode.node.sequence === hoveredSequence}
-          onSelect={onSelectLeg}
-          onHoverChange={onHoverChange}
-        />
+        <group key={`node-${String(sceneNode.node.sequence)}`}>
+          <ProcedureNode3D
+            sceneNode={sceneNode}
+            radiusNm={scene.extents.radiusNm}
+            selected={sceneNode.node.sequence === selectedSequence}
+            hovered={sceneNode.node.sequence === hoveredSequence}
+            pathColor={palette.accent}
+            onSelect={onSelectLeg}
+            onHoverChange={onHoverChange}
+          />
+          <NodeLabel sceneNode={sceneNode} />
+        </group>
       ))}
       {compressedSegments.map((sceneSegment) => (
         <CompressedCallout
@@ -236,6 +426,7 @@ export function ProcedureDiagram3D({
   courseDeg,
   selectedSequence,
   onSelectLeg,
+  runway,
 }: {
   readonly layout: ProcedureLayout;
   /** The orienting course — the runway's, when one is known; 0 (north-up) otherwise. Only
@@ -243,22 +434,49 @@ export function ProcedureDiagram3D({
   readonly courseDeg: number;
   readonly selectedSequence: number | null;
   readonly onSelectLeg: (sequence: number) => void;
+  /** Purely additive (#177) — already fetched in `SidStarTab.tsx` via `useSelectedRunway()`
+   *  as `Runway | null`, passed through as `?? undefined`. `| undefined` (not just `?:`) is
+   *  needed under this project's `exactOptionalPropertyTypes`, which otherwise forbids an
+   *  explicit `undefined` on an optional prop. The runway quad only renders when this AND an
+   *  `is_runway` layout node both exist. */
+  readonly runway?: Runway | undefined;
 }) {
   const [hoveredSequence, setHoveredSequence] = useState<number | null>(null);
   const scene = buildProcedureScene(layout, courseDeg);
-  // Lifted out for #177's camera-reset button; unused for anything else in this view.
+  // Lifted out by #176 for this button.
   const controlsRef = useRef<ComponentRef<typeof OrbitControls>>(null);
+  // Theme tokens (`--pos-hair`/`--pos-accent`/`--pos-caution`) only exist on this element's own
+  // subtree (see usePosThemePalette's docstring for why document.documentElement can't be used).
+  const containerRef = useRef<HTMLDivElement>(null);
+  const palette = usePosThemePalette(containerRef);
+
+  const runwayNode = scene.nodes.find((sceneNode) => sceneNode.node.is_runway);
+
+  function resetCamera(): void {
+    const controls = controlsRef.current;
+    if (controls === null) {
+      return;
+    }
+    controls.target.copy(new Vector3(...scene.cameraPose.target));
+    controls.object.position.copy(new Vector3(...scene.cameraPose.position));
+    controls.update();
+  }
 
   return (
-    <div className="pos-procdiagram3d">
+    <div className="pos-procdiagram3d" ref={containerRef}>
       <Canvas
         className="pos-procdiagram3d__canvas"
         camera={{ position: scene.cameraPose.position, fov: scene.cameraPose.fov }}
       >
+        <GroundPlane extents={scene.extents} color={palette.hair} />
+        {runway !== undefined && runwayNode !== undefined && (
+          <RunwayMesh runwayNode={runwayNode} runway={runway} />
+        )}
         <ProcedureSceneContent
           scene={scene}
           selectedSequence={selectedSequence}
           hoveredSequence={hoveredSequence}
+          palette={palette}
           onHoverChange={setHoveredSequence}
           onSelectLeg={onSelectLeg}
         />
@@ -266,9 +484,18 @@ export function ProcedureDiagram3D({
             must work, per the issue. */}
         <OrbitControls ref={controlsRef} makeDefault enableDamping target={scene.cameraPose.target} />
       </Canvas>
-      <p className="pos-procdiagram3d__legend">
-        vertical ×{String(VERTICAL_EXAGGERATION)} · not to scale
-      </p>
+      <div className="pos-procdiagram3d__toolbar">
+        <button
+          type="button"
+          className="pos-procdiagram3d__reset-camera"
+          onClick={resetCamera}
+        >
+          Reset camera
+        </button>
+        <p className="pos-procdiagram3d__legend">
+          vertical ×{String(VERTICAL_EXAGGERATION)} · not to scale
+        </p>
+      </div>
     </div>
   );
 }

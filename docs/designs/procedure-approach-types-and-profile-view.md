@@ -540,6 +540,138 @@ this component existing). Inside #176 itself, the component+stub track and the
 selector+slice+mount-site track touch disjoint files and can proceed in parallel once this
 contract is fixed.
 
+#### 4.7.2 Design — #177: runway, ground plane, labels, curtain, theming, camera reset
+
+#176 shipped (PR #189, `ProcedureDiagram3D.tsx`): `ProcedureSceneContent` as the single child of
+`<Canvas>`, rendering `SegmentLine` (top-edge `curtain[0]`/`curtain[1]` line, dashed/colored per
+segment), `ProcedureNode3D` (visual marker + separate hit-sphere), `CompressedCallout` (drei
+`<Html>`), a plain-HTML legend, and an `OrbitControls` `controlsRef` **already lifted out and
+named exactly for this purpose** (`useRef<ComponentRef<typeof OrbitControls>>(null)`, comment:
+*"Lifted out for #177's camera-reset button"*). Colors are hard-coded constants
+(`PATH_COLOR`, `COMPRESSED_COLOR`, `SELECTED_COLOR`) — no theming yet. `courseDeg` is the only
+prop threading orientation; `layout`/`selectedSequence`/`onSelectLeg` round out the contract.
+This section is grounded in that real, merged code — not the pre-implementation sketch in
+§4.7.1 — read `ProcedureDiagram3D.tsx` directly before starting; it is short and the attachment
+points are commented in place.
+
+**New prop — purely additive, no existing signature changes:**
+
+```ts
+readonly runway?: Runway;   // from '../../api/models' — already fetched in SidStarTab.tsx
+                            // via useSelectedRunway() as `runway`, just needs threading through
+```
+
+`Runway` (from `ui/src/api/schema.d.ts`, generated — never hand-write this shape): fields used
+here are `true_bearing_deg: number`, `length_m: number`, `width_m?: number | null`. Render the
+quad only when **both** `runway` is defined and the layout has an `is_runway: true` node
+(`LayoutNode.is_runway`) — a STAR anchored `last_fix` has neither.
+
+**1. Runway quad — new pure geometry in `procedureScene.ts`:**
+
+```ts
+export function buildRunwayQuad(
+  runwayNodePosition: Vec3,
+  bearingDeg: number,
+  lengthM: number,
+  widthM: number,
+): readonly [Vec3, Vec3, Vec3, Vec3] {
+```
+
+- bearing → direction `(sin θ, 0, -cos θ)` — the same north-aligned x/z convention
+  `buildProcedureScene`/`fitCamera` already use; do **not** reuse `procedureProjection.ts`'s
+  `rotate()`, which has a deliberate SVG y-negation that would silently invert this.
+- metres → NM via `÷ 1852` (not `FEET_PER_NAUTICAL_MILE` — that constant converts feet, the
+  runway record is metres).
+- anchor at the scene position of the `is_runway` node — found via
+  `scene.nodes.find((n) => n.node.is_runway)?.position`, done once in `ProcedureDiagram3D`, not
+  inside this pure function (keeps `buildRunwayQuad` a plain geometry function, consistent with
+  every other export in this module).
+- `widthM` has no guaranteed source (`Runway.width_m` is optional) — pick and document a fixed
+  nominal fallback in NM (e.g. `30 / 1852`, roughly a 30 m default pavement width) when absent.
+- Unit-test in `procedureScene.test.ts`: a known bearing/length/width produces the four expected
+  corners; verify against a cardinal bearing (0°/90°) by hand for a sanity-checkable case.
+
+Render as a flat `<mesh>` with a two-triangle `BufferGeometry` from the quad's four vertices
+(`(0,1,2)/(0,2,3)` winding, same convention `SceneSegment.curtain` documents), a neutral
+`meshBasicMaterial`, as a sibling of `ProcedureSceneContent` inside `<Canvas>` — not nested
+inside it, matching the design's own attachment-point note ("#177 adds `<RunwayMesh>`,
+`<GroundPlane>` ... as *siblings*").
+
+**2. Ground plane:** a single flat mesh sized from `scene.extents` (`minX`/`maxX`/`minZ`/`maxZ`),
+padded by `FIT_MARGIN_FACTOR` (already exported from `procedureScene.ts`) or a dedicated,
+slightly larger margin — implementer's call, document the choice. Neutral `meshBasicMaterial`
+color (theming below), no texture (#178's job, explicitly out of scope).
+
+**3. Node ident/altitude labels:** drei `<Billboard>` wrapping `<Html>` (the `<Html>` pattern
+`CompressedCallout` already establishes — extend it, don't reinvent), positioned at each
+`SceneNode.position`, two-line content `node.ident` / `${Math.round(node.altitude_ft)} ft`
+(mirrors 2D's ident+altitude text pair). Hollow/solid altitude-source styling parity already
+exists on the node **marker** (`ProcedureNode3D`'s `wireframe={hollow}`, from #176) — the new
+label is a separate visual layer, not a re-implementation of that distinction; don't duplicate
+`isGuessedAltitude` in a third place, either import it into a shared spot or keep the label
+purely textual (ident + altitude number) and let the marker alone carry the hollow/solid cue,
+as 2D itself does (2D's text labels aren't styled hollow either — only the dot is).
+
+**4. Curtain fill:** `SceneSegment.curtain` is a full 4-vertex quad (`from.position`,
+`to.position`, `to.ground`, `from.ground`) but #176 only draws its top edge
+(`curtain[0]`/`curtain[1]`) as `SegmentLine`. Add a translucent filled mesh per segment using
+all four vertices (`(0,1,2)/(0,2,3)` triangulation, per the type's own docstring), as a sibling
+mesh alongside each `SegmentLine` in `ProcedureSceneContent`'s existing per-segment `.map` (the
+named attachment point — extend that loop, don't add a second one). Reuse #176's own
+`segmentIsDashed(from, to)` predicate (already defined in `ProcedureDiagram3D.tsx` — import it
+if extracted, or keep the duplication local to this file, implementer's call) to lower the
+curtain's opacity for unpositioned/missed-approach segments — this is a distinct, opacity-based
+de-emphasis layered on top of #176's already-shipped dashed *line*, not a replacement for it.
+Accent color: translucent blue (`rgba` or `meshBasicMaterial` with `transparent`/`opacity`),
+matching the issue's "translucent blue altitude curtain" ask — a fixed blue constant is fine
+even before the theming hook lands; theming (below) is what makes it follow light/dark, not
+what makes it blue in the first place.
+
+**5. Theming — `usePosThemePalette()`:** confirmed **zero** existing `getComputedStyle` usage
+anywhere in `ui/src` — this is new ground, same as originally scoped. Read
+`getComputedStyle(document.documentElement).getPropertyValue('--pos-hair' | '--pos-accent' |
+'--pos-caution')` on mount (`position.css`: `--pos-hair` for the ground/hairline,
+`--pos-accent` for path/curtain/selected, `--pos-caution` for the compressed-segment marker —
+already used by `.pos-procdiagram__*` and now by #176's `PATH_COLOR`/`COMPRESSED_COLOR`/
+`SELECTED_COLOR`, which this hook should come to replace). `oklch()` values need conversion to
+a format `meshBasicMaterial`'s `color` prop accepts — either render into an offscreen canvas
+`2d` context and read back `getImageData` (a real, if unusual, conversion path — no new
+dependency), or use `THREE.Color`'s own constructor, which as of three r150+ accepts a CSS
+color string directly including `oklch()` in browsers that support it (verify against the
+`three` version actually pinned in `package.json`; fall back to the canvas trick if not).
+React to a live theme toggle: `position.css` switches on `document.documentElement`'s
+`data-theme` attribute, so re-read the tokens via a `MutationObserver` on that attribute,
+scoped to the hook's own lifetime (cleaned up on unmount).
+
+**6. Camera reset:** a button, class `pos-procdiagram3d__reset-camera`, calling into
+`controlsRef.current` — #176's own `controlsRef` is already exactly what this needs, currently
+unused for anything else. Drive it imperatively: `controlsRef.current.target.copy(new
+THREE.Vector3(...scene.cameraPose.target))`, `camera.position.copy(...)` (via
+`controlsRef.current.object`, drei's ref exposes the camera there), `controlsRef.current
+.update()` — not a remount (remounting the whole `<Canvas>` would also discard everything else
+mid-orbit, which the issue doesn't ask for; the mode-toggle remount in #176 is a different,
+deliberate case for a different reason).
+
+**7. HTML chrome:** every new DOM-visible class follows `pos-procdiagram3d__*`, added to
+`position.css` immediately after the existing block (`.pos-procdiagram3d__break`, line ~898 on
+this branch) — `.pos-procdiagram3d__reset-camera`, `.pos-procdiagram3d__label` (for the
+ident/altitude `<Html>` labels), reusing `--pos-*` tokens directly for any HTML-rendered chrome
+(not the theming hook — that's only for materials CSS can't reach).
+
+**Test stub extension.** `ui/src/test/threeStub.ts` needs a `Billboard` stub (mirrors `Html`'s:
+render children through the passthrough) and an instance registry for `OrbitControls` so a test
+can assert the camera-reset button actually called `target.copy`/`update` on the *same* ref
+instance the component holds — mirror `maplibreStub.ts`'s `Map.created` array pattern for this;
+add a `resetThreeStub()` and register it in `ui/src/test/setup.ts`'s shared `afterEach`, since
+this registry (unlike #176's stateless stub) needs clearing between tests.
+
+**Files** — modified: `procedureScene.ts` (+`.test.ts`, `buildRunwayQuad`), `ProcedureDiagram3D.tsx`
+(+`.test.tsx`, all six additions above), `SidStarTab.tsx` (thread `runway={runway}` through — the
+value already exists there), `position.css`, `ui/src/test/threeStub.ts` (+`setup.ts`). No new
+files required unless the implementer chooses to split `RunwayMesh`/`GroundPlane`/`NodeLabel`
+into their own modules for readability — reasonable given `ProcedureDiagram3D.tsx` is about to
+roughly double in size.
+
 ---
 
 ## 5. Verification

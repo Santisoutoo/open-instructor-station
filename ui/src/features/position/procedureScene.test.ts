@@ -5,6 +5,7 @@ import {
   DEFAULT_FOV_DEG,
   VERTICAL_EXAGGERATION,
   buildProcedureScene,
+  buildRunwayQuad,
 } from './procedureScene';
 
 const FEET_PER_NAUTICAL_MILE = 6076.12;
@@ -254,6 +255,61 @@ describe('buildProcedureScene — curtain segments', () => {
     }).not.toThrow();
     const scene = buildProcedureScene(l, 0);
     expect(scene.segments).toHaveLength(0);
+  });
+});
+
+function expectQuadCloseTo(
+  actual: readonly [readonly number[], readonly number[], readonly number[], readonly number[]],
+  expected: readonly [readonly number[], readonly number[], readonly number[], readonly number[]],
+): void {
+  actual.forEach((corner, i) => {
+    corner.forEach((component, j) => {
+      expect(component).toBeCloseTo(expected[i]![j]!, 6);
+    });
+  });
+}
+
+describe('buildRunwayQuad', () => {
+  it('bearing 0 (north): extends -z (north) from the threshold, width along x (east-west)', () => {
+    // 1 NM long, 2 NM wide (halfWidth 1 NM) — round numbers for hand-verified corners.
+    const quad = buildRunwayQuad([0, 0, 0], 0, 1852, 3704);
+    expectQuadCloseTo(quad, [
+      [1, 0, 0],
+      [1, 0, -1],
+      [-1, 0, -1],
+      [-1, 0, 0],
+    ]);
+  });
+
+  it('bearing 90 (east): extends +x (east) from the threshold, width along z (north-south)', () => {
+    const quad = buildRunwayQuad([0, 0, 0], 90, 1852, 3704);
+    expectQuadCloseTo(quad, [
+      [0, 0, 1],
+      [1, 0, 1],
+      [1, 0, -1],
+      [0, 0, -1],
+    ]);
+  });
+
+  it('anchors at the given node position, not the origin', () => {
+    const quad = buildRunwayQuad([5, 1.2, -3], 0, 1852, 3704);
+    for (const corner of quad) {
+      expect(corner[1]).toBe(1.2);
+    }
+    // Threshold-end corners (index 0, 3) sit at the anchor's x/z; far-end corners (1, 2) are
+    // 1 NM north of it (bearing 0).
+    expect(quad[0]![0]).toBeCloseTo(6, 6);
+    expect(quad[0]![2]).toBeCloseTo(-3, 6);
+    expect(quad[1]![2]).toBeCloseTo(-4, 6);
+  });
+
+  it('produces no NaN for a zero-width quad', () => {
+    const quad = buildRunwayQuad([0, 0, 0], 45, 1852, 0);
+    for (const corner of quad) {
+      for (const component of corner) {
+        expect(Number.isNaN(component)).toBe(false);
+      }
+    }
   });
 });
 

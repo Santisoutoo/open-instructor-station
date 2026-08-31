@@ -393,6 +393,7 @@ export function SidStarTab() {
                     onSelectLeg={(sequence) => {
                       dispatch(procedureLegSelected(sequence));
                     }}
+                    runway={runway ?? undefined}
                   />
                 </Suspense>
               )}

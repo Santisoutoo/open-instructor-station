@@ -33,8 +33,12 @@ const FEET_PER_NAUTICAL_MILE = 6076.12;
 /** A point in scene space: NM units, y-up. x = east, z = south (so -y_nm/north is negative z). */
 export type Vec3 = readonly [number, number, number];
 
-/** How much the ground-plane/camera fit pads past the tightest bounding sphere. */
-const FIT_MARGIN_FACTOR = 1.15;
+/**
+ * How much the camera fit — and, since #177, the ground plane — pads past the tightest
+ * bounding sphere/footprint. Exported for #177's ground-plane sizing; it was not actually
+ * exported before this (a gap between this file and its own design doc).
+ */
+export const FIT_MARGIN_FACTOR = 1.15;
 
 /** A floor so a single-node or empty layout never yields a zero-radius, degenerate fit. */
 const MIN_RADIUS_NM = 0.5;
@@ -205,4 +209,55 @@ function fitCamera(extents: SceneExtents, courseDeg: number): CameraPose {
   const position: Vec3 = [target[0] + offsetX, target[1] + height, target[2] + offsetZ];
 
   return { position, target, fov: DEFAULT_FOV_DEG };
+}
+
+/**
+ * Nominal pavement width, metres, used only when `Runway.width_m` is not published (the field
+ * is optional — not every navdata source carries it). Roughly a typical large-aircraft-capable
+ * paved runway; picked for a plausible-looking quad, not derived from any spec.
+ */
+export const NOMINAL_RUNWAY_WIDTH_M = 30;
+
+/**
+ * The runway pavement as a flat, north-aligned quad, for #177's runway mesh.
+ *
+ * `runwayNodePosition` is the scene position of the `is_runway` layout node — the displaced
+ * threshold an approach is flown to, per `Runway.threshold`'s own docstring — and the quad
+ * extends from there along `bearingDeg` for `lengthM`, i.e. threshold end first, far end last.
+ * `bearingDeg` uses this module's own north-aligned direction convention, `(sin θ, 0, -cos θ)`
+ * for the forward direction (see this file's own header and `fitCamera`'s camera-offset
+ * comment) — **not** `procedureProjection.ts`'s `rotate()`, whose deliberate SVG y-negation
+ * would silently invert the quad were it reused here.
+ *
+ * Corners wind the same way `SceneSegment.curtain` documents its own quad: consistent for a
+ * `(0,1,2)/(0,2,3)` triangulation. All inputs are metres except `bearingDeg`; the returned
+ * quad is in NM, this module's own unit.
+ */
+export function buildRunwayQuad(
+  runwayNodePosition: Vec3,
+  bearingDeg: number,
+  lengthM: number,
+  widthM: number,
+): readonly [Vec3, Vec3, Vec3, Vec3] {
+  const lengthNm = lengthM / 1852;
+  const halfWidthNm = widthM / 1852 / 2;
+  const bearingRad = (bearingDeg * Math.PI) / 180;
+
+  // Forward direction along the centreline, this module's convention (north = -z).
+  const forwardX = Math.sin(bearingRad);
+  const forwardZ = -Math.cos(bearingRad);
+  // Its right-hand perpendicular, for the pavement's two long edges.
+  const rightX = Math.cos(bearingRad);
+  const rightZ = Math.sin(bearingRad);
+
+  const [nearX, y, nearZ] = runwayNodePosition;
+  const farX = nearX + forwardX * lengthNm;
+  const farZ = nearZ + forwardZ * lengthNm;
+
+  const near1: Vec3 = [nearX + rightX * halfWidthNm, y, nearZ + rightZ * halfWidthNm];
+  const far1: Vec3 = [farX + rightX * halfWidthNm, y, farZ + rightZ * halfWidthNm];
+  const far2: Vec3 = [farX - rightX * halfWidthNm, y, farZ - rightZ * halfWidthNm];
+  const near2: Vec3 = [nearX - rightX * halfWidthNm, y, nearZ - rightZ * halfWidthNm];
+
+  return [near1, far1, far2, near2];
 }
