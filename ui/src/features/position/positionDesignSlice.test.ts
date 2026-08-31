@@ -5,6 +5,7 @@ import reducer, {
   configChanged,
   coordinateHandoffReceived,
   designTabSelected,
+  diagramModeSelected,
   finalPlacementSelected,
   initialPositionDesignState,
   markerSelected,
@@ -203,5 +204,37 @@ describe('situationReset', () => {
       icaoInput: 'LFMN',
       loadedIcao: 'LFMN',
     });
+  });
+
+  it('preserves diagramMode — a view preference, not part of the situation', () => {
+    // The regression this guards: a naive `{ ...initialPositionDesignState, icaoInput, loadedIcao }`
+    // rewrite would silently drop back to '2d', violating the issue's own requirement that the
+    // 2D/3D choice survives a reset.
+    let state = reducer(undefined, airportLoaded('LFMN'));
+    state = reducer(state, diagramModeSelected('3d'));
+    expect(state.diagramMode).toBe('3d');
+
+    const reset = reducer(state, situationReset());
+    expect(reset.diagramMode).toBe('3d');
+  });
+});
+
+describe('diagramModeSelected', () => {
+  it('sets the field', () => {
+    expect(reducer(undefined, diagramModeSelected('3d')).diagramMode).toBe('3d');
+    const back = reducer(reducer(undefined, diagramModeSelected('3d')), diagramModeSelected('2d'));
+    expect(back.diagramMode).toBe('2d');
+  });
+
+  it('is not touched by airportLoaded / clearAirportScopedState — it is a view preference', () => {
+    let state = reducer(undefined, diagramModeSelected('3d'));
+    state = reducer(state, airportLoaded('LFMN'));
+    expect(state.diagramMode).toBe('3d');
+
+    // A second, different airport still runs clearAirportScopedState.
+    state = reducer(state, startRunwaySelected('22L'));
+    state = reducer(state, airportLoaded('LEMD'));
+    expect(state.diagramMode).toBe('3d');
+    expect(state.selectedRunway).toBeNull();
   });
 });
