@@ -11,6 +11,7 @@ import reducer, {
   overrideSet,
   presetStaged,
   stagingCleared,
+  weatherSource,
 } from './weatherSlice';
 
 function stagedState() {
@@ -31,6 +32,24 @@ describe('presetStaged', () => {
     state = reducer(state, presetStaged('cavok'));
     expect(state.selectedPresetId).toBe('cavok');
     expect(state.overrides).toEqual({});
+  });
+});
+
+describe('weatherSource', () => {
+  it('is null when nothing is staged', () => {
+    expect(weatherSource(initialWeatherUiState)).toBeNull();
+  });
+
+  it('is "preset" once a preset is staged', () => {
+    expect(weatherSource(stagedState())).toBe('preset');
+  });
+
+  it('is "manual" when staged without a preset', () => {
+    const state = reducer(
+      initialWeatherUiState,
+      overrideSet({ field: 'qnh_hpa', value: 1005 }),
+    );
+    expect(weatherSource(state)).toBe('manual');
   });
 });
 
@@ -60,6 +79,22 @@ describe('overrideSet', () => {
       runway_contamination: 'wet',
       precipitation_ratio: 0.4,
     });
+  });
+
+  it('stages manually on the first edit, with no preset selected', () => {
+    const state = reducer(
+      initialWeatherUiState,
+      overrideSet({ field: 'qnh_hpa', value: 1005 }),
+    );
+    expect(state.staged).toBe(true);
+    expect(state.selectedPresetId).toBeNull();
+    expect(state.overrides).toEqual({ qnh_hpa: 1005 });
+  });
+
+  it('leaves a preset staged when an override lands on top of it', () => {
+    let state = stagedState();
+    state = reducer(state, overrideSet({ field: 'qnh_hpa', value: 1005 }));
+    expect(state.selectedPresetId).toBe('storm');
   });
 });
 

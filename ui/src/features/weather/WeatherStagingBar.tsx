@@ -19,10 +19,13 @@ import {
 import type { WeatherState } from '../../api/models';
 
 interface WeatherStagingBarProps {
-  presetLabel: string;
+  /** Absent in manual mode — nothing was staged from a preset. */
+  presetLabel?: string;
   /** The resolved staged weather — exactly what Apply will commit. */
   resolved: WeatherState;
   applying: boolean;
+  /** Non-null disables Apply and is shown inline as the reason why. `null` otherwise. */
+  disabledReason: string | null;
   /** Rendered inline when the apply mutation failed. `null` otherwise. */
   errorText: string | null;
   onApply: () => void;
@@ -33,6 +36,7 @@ export function WeatherStagingBar({
   presetLabel,
   resolved,
   applying,
+  disabledReason,
   errorText,
   onApply,
   onDismiss,
@@ -50,10 +54,11 @@ export function WeatherStagingBar({
     { label: 'precip', value: formatPrecipitation(resolved.precipitation_ratio) },
     { label: 'surface', value: formatContamination(resolved.runway_contamination) },
   ];
+  const label = presetLabel === undefined ? 'Manual weather' : `Staged: ${presetLabel}`;
 
   return (
     <section className="weather-staging" aria-label="Staged weather">
-      <p className="weather-staging__label">Staged: {presetLabel}</p>
+      <p className="weather-staging__label">{label}</p>
       <dl className="weather-staging__values">
         {values.map((entry) => (
           <div className="weather-staging__item" key={entry.label}>
@@ -63,6 +68,7 @@ export function WeatherStagingBar({
         ))}
       </dl>
       {errorText !== null && <p className="panel__error">{errorText}</p>}
+      {disabledReason !== null && <p className="panel__empty">{disabledReason}</p>}
       <div className="weather-staging__actions">
         <button
           type="button"
@@ -75,7 +81,7 @@ export function WeatherStagingBar({
         <button
           type="button"
           className="weather-staging__apply"
-          disabled={applying}
+          disabled={applying || disabledReason !== null}
           onClick={onApply}
         >
           {applying ? 'Applying…' : 'Apply weather'}

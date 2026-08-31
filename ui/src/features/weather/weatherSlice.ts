@@ -31,6 +31,14 @@ export const initialWeatherUiState: WeatherUiState = {
   staged: false,
 };
 
+export type WeatherSource = 'preset' | 'manual';
+
+/** `null` when nothing is staged; `'preset'` or `'manual'` otherwise. */
+export function weatherSource(ui: WeatherUiState): WeatherSource | null {
+  if (!ui.staged) return null;
+  return ui.selectedPresetId === null ? 'manual' : 'preset';
+}
+
 const weatherSlice = createSlice({
   name: 'weather',
   initialState: initialWeatherUiState,
@@ -46,6 +54,9 @@ const weatherSlice = createSlice({
       state,
       action: PayloadAction<{ field: keyof WeatherSetup; value: unknown }>,
     ) {
+      if (!state.staged) {
+        state.staged = true;
+      }
       const { field, value } = action.payload;
       if (value === null || value === undefined) {
         delete state.overrides[field];
