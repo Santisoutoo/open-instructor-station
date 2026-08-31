@@ -1,0 +1,188 @@
+/*
+ * Atmosphere profile — a vertical MSL scale with cloud bands and wind barbs, drag-editable.
+ * Own file, not weather.css: this component is delivered unmounted (#183) and imports its
+ * own stylesheet so mounting it later (#185) is a one-line addition, not a weather.css merge.
+ *
+ * Uses the app-wide tokens from index.css (--text/--bg/--accent/...), the same ones
+ * weather.css uses — NOT position.css's `.pos-*` tokens, which only exist inside `.pos` and
+ * are unreachable here. The touch-target and percentage-positioning conventions below follow
+ * position.css's CircuitDiagram/ProcedureDiagram precedent; the colours follow weather.css's.
+ */
+
+.atmo {
+  position: relative;
+  width: 400px;
+  max-width: 100%;
+}
+
+.atmo__svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* --------------------------------------------------------------- scale */
+
+.atmo__scale line {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.atmo__scale text {
+  fill: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.atmo__agl {
+  fill: var(--text-dim);
+  opacity: 0.7;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+.atmo__terrain {
+  fill: var(--warn);
+  opacity: 0.18;
+}
+
+/* --------------------------------------------------------------- clouds */
+
+.atmo__cloud-band {
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.atmo__cloud-band--cirrus {
+  fill: var(--text-dim);
+}
+
+.atmo__cloud-band--stratus {
+  fill: var(--text-dim);
+}
+
+.atmo__cloud-band--cumulus {
+  fill: var(--text);
+}
+
+.atmo__cloud-band--cumulonimbus {
+  fill: var(--warn);
+}
+
+/* Coverage-group modifiers: mostly a hook for tests, with a subtle stroke cue — a broken
+   layer (FEW/SCT) reads as a lighter boundary than an overcast one. */
+.atmo__cloud-band--few,
+.atmo__cloud-band--sct {
+  stroke-dasharray: 3 2;
+}
+
+.atmo__cloud-band--bkn,
+.atmo__cloud-band--ovc {
+  stroke-dasharray: none;
+}
+
+.atmo__cloud-band--skc {
+  stroke: none;
+}
+
+.atmo__cloud-band--selected {
+  stroke: var(--focus);
+  stroke-width: 2;
+}
+
+.atmo__cloud-glyph {
+  fill: var(--bg);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+/* ----------------------------------------------------------------- wind */
+
+.atmo__wind .atmo__barb {
+  stroke: var(--text-dim);
+  fill: var(--text-dim);
+  stroke-width: 1.5;
+}
+
+.atmo__barb-calm {
+  fill: none;
+  stroke: var(--text-dim);
+  stroke-width: 1.5;
+}
+
+.atmo__wind-label {
+  fill: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------- interactive overlay */
+
+/* Drag handles: percentage-positioned by the component (left/top inline styles), fixed-pixel
+   touch target here — CircuitDiagram/ProcedureDiagram's rule, so the handle never shrinks
+   below 44px even when the SVG scales down on a tablet.
+   touch-action: none is load-bearing — without it, a drag gesture scrolls the page instead of
+   moving the handle. */
+.atmo__handle {
+  position: absolute;
+  height: 44px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  touch-action: none;
+  cursor: ns-resize;
+}
+
+/* Extends upward from its anchor (a cloud layer's top edge). */
+.atmo__handle--tops {
+  transform: translateY(-100%);
+}
+
+/* Extends downward from its anchor (a cloud layer's base edge). Asymmetric with --tops so the
+   two never overlap, even at the minimum allowed cloud thickness. */
+.atmo__handle--base {
+  /* no transform: grows down from the anchor */
+}
+
+.atmo__handle--wind {
+  width: 44px;
+  height: 44px;
+  margin: -22px 0 0 -22px;
+  border-radius: 50%;
+  cursor: grab;
+}
+
+/* Tap-to-select target — always present, even in readOnly, unlike the drag handles above. */
+.atmo__select {
+  position: absolute;
+  height: 44px;
+  transform: translateY(-50%);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  cursor: pointer;
+}
+
+.atmo__handle:focus-visible,
+.atmo__select:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.atmo-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
