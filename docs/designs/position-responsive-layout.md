@@ -3,6 +3,20 @@
 **Issues:** [#202] (tab content does not scale with the viewport — dead space against the apply rail), [#203] (fixed 480 px apply rail; width left as a design decision).
 **Scope:** `ui/` only. Verified against `origin/dev` @ `91aa9cc`; all file:line references below are to that commit.
 
+**Amendment (post-live-verification, same day):** live-tested on 2026-09-01 and found correct
+per this document (diagram capped at 48rem, leg list absorbing surplus — see the memory record
+`issues-202-203-position-responsive-layout` for the verification data). The user then asked for
+the opposite distribution: the diagram (the "representation") should be the one that grows into
+the surplus width, and the leg list should stay compact, with the two blocks centered on each
+other's cross axis. §3, §4.1 and §6's SID & STAR rows below are superseded by this: the split's
+`grid-template-columns` swaps which track is `1fr` — `minmax(24rem, 1fr) minmax(20rem, 32rem)`
+(diagram flexible, leg list capped at 32rem instead of the diagram capping at 48rem) — and
+`align-items` changes from `start` to `center`. The underlying grid mechanics (CSS Grid
+maximizes every non-flexible track before handing surplus to a flexible one — see the code
+comment on `.pos-sidstartab__split`) are unchanged; only which track carries `1fr` and which
+carries the fixed cap flipped. The 24rem legibility floor on the diagram and the container-query
+breakpoint (52rem) are unchanged.
+
 ## 1. Scope
 
 Make the Position manager's four tab bodies (SID & STAR, Approach Training, Airwork, Custom Location) and the apply rail grow **and** shrink with the viewport, so there is no dead gap between the tab content and the rail on wide screens, and no cramping on a 1280×800 tablet (a first-class scenario per `CLAUDE.md`).

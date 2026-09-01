@@ -1001,23 +1001,27 @@
    container-query support) the split stacks to one column via the default template; the
    `--legs-only` modifier (SidStarTab.tsx) reproduces the old empty-track collapse when no
    layout has loaded, forcing the full-width single column regardless of container size.
-   The 24rem floor is the diagram's, not the list's: the SVG scales its 600-unit viewBox to
-   the column, so a narrower one shrinks the 10px node labels below reading size — better one
-   wide column than two columns of unreadable waypoint idents. The 48rem cap bounds the same
-   problem from the other direction: past 48rem (768px) the labels render at 10 * 768/600 ≈
-   12.8px, comically large beyond that — surplus width past the cap goes to the leg list
-   instead, which tolerates it (fixed-start columns, left-aligned text). */
+   The diagram is the primary visualization, so it is the flexible (`1fr`) track: CSS Grid's
+   track-sizing algorithm maximizes every non-flexible track (the leg list, up to its 32rem cap)
+   before handing any remaining space to a flexible one, so the diagram is what grows into the
+   surplus. The 24rem floor on the diagram is about legibility, unchanged: the SVG scales its
+   600-unit viewBox to the column, and a narrower one shrinks the 10px node labels below reading
+   size — better one wide column than two columns of unreadable waypoint idents. The leg list is
+   a data table, not a visualization — it does not need to grow past a comfortable reading width,
+   so it caps at 32rem instead of absorbing surplus itself. `align-items: center` keeps the two
+   blocks centered on each other's cross axis when their heights differ (e.g. a short leg list
+   next to a taller 3D canvas). */
 .pos-sidstartab__split {
   display: grid;
   grid-template-columns: minmax(min(24rem, 100%), 1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: center;
 }
 
 @container pos-main (min-width: 52rem) {
   .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) {
-    /* Diagram column capped at 48rem; the leg list absorbs all surplus. */
-    grid-template-columns: minmax(24rem, 48rem) minmax(24rem, 1fr);
+    /* The diagram (1fr) absorbs all surplus width; the leg list caps at a compact 32rem. */
+    grid-template-columns: minmax(24rem, 1fr) minmax(20rem, 32rem);
   }
 }
 
