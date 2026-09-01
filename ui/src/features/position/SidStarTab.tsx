@@ -376,7 +376,13 @@ export function SidStarTab() {
           can be placed on.
         </p>
       ) : (
-        <div className="pos-sidstartab__split">
+        <div
+          className={
+            layout !== undefined
+              ? 'pos-sidstartab__split'
+              : 'pos-sidstartab__split pos-sidstartab__split--legs-only'
+          }
+        >
           {layout !== undefined && (
             <div className="pos-sidstartab__diagram">
               <ProcedureViewToggle
@@ -385,33 +391,35 @@ export function SidStarTab() {
                   dispatch(diagramModeSelected(mode));
                 }}
               />
-              {diagramMode === '2d' ? (
-                <ProcedureDiagram
-                  layout={layout}
-                  courseDeg={courseDeg}
-                  selectedSequence={selection?.sequence ?? null}
-                  onSelectLeg={(sequence) => {
-                    dispatch(procedureLegSelected(sequence));
-                  }}
-                />
-              ) : (
-                <Suspense
-                  fallback={
-                    <p className="pos-sidstartab__diagram-loading">Loading 3D view…</p>
-                  }
-                >
-                  <ProcedureDiagram3D
+              <div className="pos-sidstartab__picture">
+                {diagramMode === '2d' ? (
+                  <ProcedureDiagram
                     layout={layout}
                     courseDeg={courseDeg}
                     selectedSequence={selection?.sequence ?? null}
                     onSelectLeg={(sequence) => {
                       dispatch(procedureLegSelected(sequence));
                     }}
-                    runway={runway ?? undefined}
-                    airportPosition={airport?.position}
                   />
-                </Suspense>
-              )}
+                ) : (
+                  <Suspense
+                    fallback={
+                      <p className="pos-sidstartab__diagram-loading">Loading 3D view…</p>
+                    }
+                  >
+                    <ProcedureDiagram3D
+                      layout={layout}
+                      courseDeg={courseDeg}
+                      selectedSequence={selection?.sequence ?? null}
+                      onSelectLeg={(sequence) => {
+                        dispatch(procedureLegSelected(sequence));
+                      }}
+                      runway={runway ?? undefined}
+                      airportPosition={airport?.position}
+                    />
+                  </Suspense>
+                )}
+              </div>
             </div>
           )}
           <div className="pos-sidstartab__legs">
