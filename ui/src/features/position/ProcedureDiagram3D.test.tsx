@@ -340,6 +340,96 @@ describe('node ident/altitude labels (#177)', () => {
   });
 });
 
+/**
+ * IF ROFIX (positioned, positionable, 5000 ft) -> TF RW18L (runway) -> HM ROFIX (the hold
+ * repeat: fixed, unpositionable, drawn but not clickable — mirroring
+ * `ProcedureDiagram.test.tsx`'s `HM HLD` fixture) back at the arriving leg's own coordinates,
+ * 200 ft above it. That Δaltitude sits *inside* the vertical gate (fit radius ≈ 4.3 NM ⇒ gate
+ * ≈ 780 ft), so the repeat's label is the suppressed one — and, being different text from the
+ * survivor's, lets the DOM pin keep-first (#199).
+ */
+const HOLD_LAYOUT: ProcedureLayout = {
+  airport_icao: 'ZZZZ',
+  kind: 'approach',
+  ident: 'I18LY',
+  transition: null,
+  approach_type: 'ils',
+  anchor: 'runway',
+  airport_x_nm: 0,
+  airport_y_nm: 0,
+  airport_elevation_ft: 0,
+  nodes: [
+    node({ sequence: 10, ident: 'ROFIX', x_nm: 1, y_nm: -6, altitude_ft: 5000 }),
+    node({
+      sequence: 20,
+      ident: 'RW18L',
+      x_nm: 0,
+      y_nm: 0,
+      altitude_ft: 0,
+      altitude_source: 'runway',
+      is_runway: true,
+    }),
+    node({
+      sequence: 30,
+      ident: 'ROFIX',
+      x_nm: 1,
+      y_nm: -6,
+      altitude_ft: 5200,
+      altitude_source: 'interpolated',
+      is_positionable: false,
+      is_missed_approach: true,
+    }),
+  ],
+  segments: [
+    segment({ from_sequence: 10, to_sequence: 20, true_length_nm: 6.1 }),
+    segment({ from_sequence: 20, to_sequence: 30, true_length_nm: 6.1 }),
+  ],
+  total_true_length_nm: 12.2,
+  compressed_segment_count: 0,
+  long_factor: 3.0,
+  nominal_leg_nm: 2.0,
+};
+
+describe('duplicate label suppression (#199)', () => {
+  function renderHoldDiagram(layout: ProcedureLayout) {
+    return render(
+      <ProcedureDiagram3D
+        layout={layout}
+        courseDeg={0}
+        selectedSequence={null}
+        onSelectLeg={vi.fn()}
+      />,
+    );
+  }
+
+  it('renders the repeated ident exactly once, keeping the first occurrence', () => {
+    renderHoldDiagram(HOLD_LAYOUT);
+    expect(screen.getAllByText('ROFIX')).toHaveLength(1);
+    // Keep-first: the arriving leg's altitude survives, the hold repeat's does not.
+    expect(screen.getByText('5000 ft')).toBeInTheDocument();
+    expect(screen.queryByText('5200 ft')).not.toBeInTheDocument();
+  });
+
+  it('still renders both nodes as visual markers — only the label is suppressed', () => {
+    renderHoldDiagram(HOLD_LAYOUT);
+    expect(visualMesh(10)).not.toBeNull();
+    expect(visualMesh(30)).not.toBeNull();
+  });
+
+  it('keeps both labels when the repeat is beyond the vertical gate (climb-in-hold)', () => {
+    const climbInHold: ProcedureLayout = {
+      ...HOLD_LAYOUT,
+      nodes: HOLD_LAYOUT.nodes.map((n) =>
+        n.sequence === 30 ? { ...n, altitude_ft: 8000 } : n,
+      ),
+    };
+    renderHoldDiagram(climbInHold);
+    expect(screen.getAllByText('ROFIX')).toHaveLength(2);
+    expect(screen.getByText('5000 ft')).toBeInTheDocument();
+    expect(screen.getByText('8000 ft')).toBeInTheDocument();
+  });
+});
+
 describe('OSM ground texture (#178)', () => {
   it('renders the textured ground mesh and the attribution link when ready', () => {
     useGroundTextureMock.mockReturnValue({

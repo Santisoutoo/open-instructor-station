@@ -4,11 +4,14 @@ import { VERTICAL_EXAGGERATION as PROJECTION_VERTICAL_EXAGGERATION } from './pro
 import {
   DEFAULT_FOV_DEG,
   GROUND_MARGIN_FACTOR,
+  LABEL_STACK_Y_FRACTION,
   MIN_GROUND_SPAN_NM,
   VERTICAL_EXAGGERATION,
   buildProcedureScene,
   buildRunwayQuad,
+  duplicateLabelSequences,
   groundPlaneFootprint,
+  type SceneNode,
 } from './procedureScene';
 
 const FEET_PER_NAUTICAL_MILE = 6076.12;
@@ -345,6 +348,68 @@ describe('VERTICAL_EXAGGERATION sharing', () => {
     const scene = buildProcedureScene(l, 0);
     const expected = ((7000 - 1000) / FEET_PER_NAUTICAL_MILE) * VERTICAL_EXAGGERATION;
     expect(scene.nodes[0]!.position[1]).toBeCloseTo(expected, 6);
+  });
+});
+
+/** Hand-built `SceneNode` at scene coordinates, altitude mapped through the real height
+ *  formula (airport reference 0 ft) — full control over the geometry the gates measure. */
+function labelNode(
+  sequence: number,
+  xNm: number,
+  zNm: number,
+  altitudeFt: number,
+): SceneNode {
+  return {
+    node: node({
+      sequence,
+      ident: `N${String(sequence)}`,
+      x_nm: xNm,
+      y_nm: -zNm,
+      altitude_ft: altitudeFt,
+    }),
+    position: [xNm, heightNm(altitudeFt, 0), zNm],
+    ground: [xNm, 0, zNm],
+  };
+}
+
+describe('duplicateLabelSequences (#199)', () => {
+  // radius 4 NM -> vertical gate 0.6 NM of world-y = 0.6 / 5 * 6076.12 ~= 729 ft.
+  const RADIUS_NM = 4;
+  const yGateFt =
+    ((LABEL_STACK_Y_FRACTION * RADIUS_NM) / VERTICAL_EXAGGERATION) *
+    FEET_PER_NAUTICAL_MILE;
+
+  it('suppresses the later of two consecutive nodes at identical position and altitude', () => {
+    const nodes = [labelNode(10, 2, -3, 5000), labelNode(20, 2, -3, 5000)];
+    expect(duplicateLabelSequences(nodes, RADIUS_NM)).toEqual(new Set([20]));
+  });
+
+  it('suppresses the later node when Δaltitude is inside the vertical gate', () => {
+    expect(200).toBeLessThan(yGateFt);
+    const nodes = [labelNode(10, 2, -3, 5000), labelNode(20, 2, -3, 5200)];
+    expect(duplicateLabelSequences(nodes, RADIUS_NM)).toEqual(new Set([20]));
+  });
+
+  it('keeps both labels when Δaltitude is well beyond the vertical gate (climb-in-hold)', () => {
+    expect(2000).toBeGreaterThan(yGateFt);
+    const nodes = [labelNode(10, 2, -3, 5000), labelNode(20, 2, -3, 7000)];
+    expect(duplicateLabelSequences(nodes, RADIUS_NM)).toEqual(new Set());
+  });
+
+  it('keeps both labels for distinct fixes ~1 NM apart at the same altitude', () => {
+    const nodes = [labelNode(10, 2, -3, 5000), labelNode(20, 3, -3, 5000)];
+    expect(duplicateLabelSequences(nodes, RADIUS_NM)).toEqual(new Set());
+  });
+
+  it('keeps only the first of a three-way coincidence', () => {
+    const nodes = [
+      labelNode(10, 2, -3, 5000),
+      labelNode(20, 2, -3, 5100),
+      labelNode(30, 2, -3, 5200),
+    ];
+    const suppressed = duplicateLabelSequences(nodes, RADIUS_NM);
+    expect(suppressed).toEqual(new Set([20, 30]));
+    expect(suppressed.has(10)).toBe(false);
   });
 });
 
