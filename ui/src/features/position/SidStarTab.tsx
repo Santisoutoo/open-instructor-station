@@ -376,7 +376,13 @@ export function SidStarTab() {
           can be placed on.
         </p>
       ) : (
-        <div className="pos-sidstartab__split">
+        <div
+          className={
+            layout !== undefined
+              ? 'pos-sidstartab__split'
+              : 'pos-sidstartab__split pos-sidstartab__split--legs-only'
+          }
+        >
           {layout !== undefined && (
             <div className="pos-sidstartab__diagram">
               <ProcedureViewToggle
