@@ -793,21 +793,48 @@ def test_zibo_b738_root_declares_its_read_back_confirmed_detection_dataref() -> 
     assert errors == ()
     zibo = next(document for document in documents if document.aircraft.catalog_id == "zibo-b738")
     assert zibo.detect.dataref_exists == "laminar/B738/autopilot/mcp_alt_dial"
-    # Wave 1 Track B ships the root only (docs/designs/cockpit-control-catalog.md
-    # §1.2) — the panel data files are Wave 2 (#222-#224).
-    assert zibo.controls == []
-    assert zibo.parked == []
+    # Wave 2 (#222) supplies the MCP panel's controls
+    # (docs/designs/cockpit-control-catalog.md §5.7) — the remaining panels
+    # (overhead, pedestal, lights) are #223/#224, still empty here.
+    assert {control.control_id for control in zibo.controls} == {
+        "fd_capt",
+        "fd_fo",
+        "cmd_a",
+        "cmd_b",
+        "ap_disconnect",
+        "hdg_sel",
+        "vorloc",
+        "app",
+        "mcp_alt",
+        "mcp_hdg",
+        "mcp_speed",
+    }
+    assert {control.control_id for control in zibo.parked} == {
+        "mcp_vs",
+        "ias_mach_changeover",
+        "lnav",
+    }
     assert {panel.panel_id for panel in zibo.panels} == {"mcp", "overhead", "pedestal", "lights"}
+    assert zibo.setup_overrides == {
+        "flight_director": "fd_capt",
+        "autopilot_master": "cmd_a",
+        "autopilot_hdg": "hdg_sel",
+        "autopilot_nav": "vorloc",
+        "autopilot_app": "app",
+        "target_altitude_ft": "mcp_alt",
+        "target_heading_deg": "mcp_hdg",
+        "target_ias_kt": "mcp_speed",
+    }
 
 
-async def test_cockpit_runtime_reports_zero_controls_for_zibo_until_wave_2(
+async def test_cockpit_runtime_reports_the_mcp_panel_controls_for_zibo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A sanity check against the REAL shipped directory (not the
-    ``fake-trainer`` fixture): detecting the Zibo today reports an aircraft
-    with no actuable controls, never an error — exactly what an instructor
-    sees before Wave 2 lands. Deliberately does NOT monkeypatch
-    ``COCKPIT_CATALOGS_DIR`` — this is the one test that exercises the real
+    ``fake-trainer`` fixture): detecting the Zibo now reports the MCP panel's
+    controls (#222), with the overhead/pedestal/lights panels still empty
+    (#223/#224). Deliberately does NOT monkeypatch ``COCKPIT_CATALOGS_DIR`` —
+    this is the one test that exercises the real
     ``adapters/xplane/cockpit_catalogs/`` tree end to end.
     """
     api = _FakeWebApi()
@@ -820,7 +847,9 @@ async def test_cockpit_runtime_reports_zero_controls_for_zibo_until_wave_2(
         catalog = await adapter.get_cockpit_catalog()
         assert catalog.aircraft is not None
         assert catalog.aircraft.catalog_id == "zibo-b738"
-        assert catalog.controls == []
-        assert catalog.parked == []
+        assert len(catalog.controls) == 11
+        assert len(catalog.parked) == 3
+        assert all(control.panel_id == "mcp" for control in catalog.controls)
+        assert all(control.panel_id == "mcp" for control in catalog.parked)
     finally:
         await adapter.disconnect()
