@@ -13,7 +13,7 @@
  * `setTimeout` resolving out of order.
  */
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -133,11 +133,14 @@ afterEach(() => {
 });
 
 describe('AirportGate — typing and search', () => {
-  it('auto-focuses the input; under 2 characters shows the hint, not the listbox', async () => {
+  it('auto-focuses the input, which has an accessible name; under 2 characters shows the hint, not the listbox', async () => {
     stubFetch();
     renderGate();
 
-    const input = await screen.findByRole('combobox');
+    // The accessible name test: a screen reader landing on this autofocused first control of
+    // the whole app must hear more than "combobox, edit" (a bare `placeholder` is not a
+    // reliable accessible name).
+    const input = await screen.findByRole('combobox', { name: /airport/i });
     expect(input).toHaveFocus();
     expect(screen.getByText(/type at least 2 characters/i)).toBeInTheDocument();
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
@@ -168,7 +171,7 @@ describe('AirportGate — typing and search', () => {
     await settleDebounce();
 
     const option = await screen.findByRole('option', { name: /LEMD/ });
-    await user.click(within(option).getByRole('button'));
+    await user.click(option);
 
     await waitFor(() => {
       expect(store.getState().startup.status).toBe('ready');
@@ -326,6 +329,38 @@ describe('AirportGate — keyboard', () => {
     expect(input).toHaveAttribute('aria-activedescendant', 'startup-gate-option-LEMD');
     await user.keyboard('{ArrowDown}');
     expect(input).toHaveAttribute('aria-activedescendant', 'startup-gate-option-LEBL');
+  });
+
+  it('Escape clears the highlight too — a following Enter resolves the typed text, not the dismissed suggestion', async () => {
+    const { requested } = stubFetch({
+      search: [LEMD_SUMMARY, { ...LEMD_SUMMARY, icao: 'LEBL', name: 'Barcelona–El Prat' }],
+    });
+    const user = userEvent.setup();
+    const { store } = renderGate();
+
+    const input = await screen.findByRole('combobox');
+    await user.type(input, 'LE');
+    await settleDebounce();
+    await waitFor(() => {
+      expect(screen.getByRole('listbox')).toBeInTheDocument();
+    });
+
+    // Highlight LEBL (second option), then dismiss the list — the instructor's intent is to
+    // keep typing "LE", not to pick LEBL.
+    await user.keyboard('{ArrowDown}{ArrowDown}');
+    expect(input).toHaveAttribute('aria-activedescendant', 'startup-gate-option-LEBL');
+
+    await user.keyboard('{Escape}');
+    expect(input).not.toHaveAttribute('aria-activedescendant');
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    await user.keyboard('{Enter}');
+
+    // Resolves the typed "LE", never the dismissed LEBL highlight.
+    await waitFor(() => {
+      expect(store.getState().startup.icao).toBe('LE');
+    });
+    expect(requested).not.toContain('/api/navdata/airports/LEBL');
   });
 });
 

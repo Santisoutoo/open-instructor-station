@@ -215,6 +215,10 @@ export function AirportGate() {
     }
     if (event.key === 'Escape') {
       setSuggestionsCollapsed(true);
+      // Dismissing the list must dismiss the highlight with it — otherwise a stale
+      // `highlighted` index survives Escape and a following Enter silently resolves the
+      // option the instructor just dismissed instead of what they typed.
+      setHighlighted(null);
     }
   }
 
@@ -242,7 +246,7 @@ export function AirportGate() {
       ) : (
         <div className="startup-gate__card">
           <h1>Open Instructor Station</h1>
-          <p>Choose the airport for this session.</p>
+          <p id="startup-gate-label">Choose the airport for this session.</p>
 
           {showRememberedButton && (
             <button
@@ -258,6 +262,7 @@ export function AirportGate() {
 
           <input
             role="combobox"
+            aria-labelledby="startup-gate-label"
             aria-expanded={listboxVisible}
             aria-controls="startup-gate-listbox"
             aria-activedescendant={
@@ -295,7 +300,12 @@ export function AirportGate() {
             )}
 
           {listboxVisible && (
-            <ul className="startup-gate__listbox" role="listbox" id="startup-gate-listbox">
+            <ul
+              className="startup-gate__listbox"
+              role="listbox"
+              id="startup-gate-listbox"
+              aria-label="Airport search results"
+            >
               {options.map((airport, index) => (
                 <li
                   key={airport.icao}
@@ -303,16 +313,12 @@ export function AirportGate() {
                   id={`startup-gate-option-${airport.icao}`}
                   aria-selected={index === highlighted}
                   className="startup-gate__option"
+                  onClick={() => {
+                    resolve(airport.icao);
+                  }}
                 >
-                  <button
-                    type="button"
-                    onClick={() => {
-                      resolve(airport.icao);
-                    }}
-                  >
-                    <span className="startup-gate__option-icao">{airport.icao}</span>
-                    <span className="startup-gate__option-name">{airport.name}</span>
-                  </button>
+                  <span className="startup-gate__option-icao">{airport.icao}</span>
+                  <span className="startup-gate__option-name">{airport.name}</span>
                 </li>
               ))}
             </ul>

@@ -94,7 +94,7 @@
   overflow-y: auto;
 }
 
-.startup-gate__option button {
+.startup-gate__option {
   width: 100%;
   min-height: 44px;
   display: flex;
@@ -106,14 +106,13 @@
   background: transparent;
   color: var(--text);
   cursor: pointer;
-  text-align: left;
 }
 
-.startup-gate__option button:hover {
+.startup-gate__option:hover {
   background: var(--bg-raised);
 }
 
-.startup-gate__option[aria-selected='true'] button {
+.startup-gate__option[aria-selected='true'] {
   border-color: var(--focus);
   background: var(--bg-raised);
 }
