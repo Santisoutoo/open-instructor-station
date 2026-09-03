@@ -172,3 +172,17 @@ export function breakGlyph(p: ScreenPoint, q: ScreenPoint, sizePx = 14): string 
     .map((point, i) => `${i === 0 ? 'M' : 'L'} ${String(point.x)} ${String(point.y)}`)
     .join(' ');
 }
+
+/**
+ * Fraction of `VIEWBOX_W` past which `ProcedureDiagram.tsx`'s node labels flip from the
+ * right to the left. `fitTransform` centres the projection with only a fixed
+ * `FIT_MARGIN_PX` margin, so — unlike `circuit.ts`'s fixed 8 markers — a busy procedure's
+ * rightmost node can genuinely land close to the diagram's right edge, and an HTML overlay
+ * label (unclipped, unlike the SVG `<text>` it replaced) would otherwise bleed past it.
+ */
+export const EDGE_FLIP_FRACTION = 0.85;
+
+/** Which side of its dot a node's labels should sit on, given its projected screen point. */
+export function nodeLabelSide(point: ScreenPoint): 'left' | 'right' {
+  return point.x / VIEWBOX_W > EDGE_FLIP_FRACTION ? 'left' : 'right';
+}

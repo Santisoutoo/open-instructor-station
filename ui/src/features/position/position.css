@@ -969,13 +969,6 @@
   stroke-width: 1.5;
 }
 
-.pos-procdiagram__break text {
-  fill: var(--pos-caution);
-  stroke: none;
-  font-size: 10px;
-  font-family: 'Spline Sans Mono', monospace;
-}
-
 .pos-procdiagram__node {
   fill: var(--pos-accent);
   stroke: var(--pos-bg);
@@ -990,18 +983,6 @@
 
 .pos-procdiagram__node--selected {
   filter: drop-shadow(0 0 5px color-mix(in oklch, var(--pos-accent) 17%, transparent));
-}
-
-.pos-procdiagram__node-label {
-  fill: var(--pos-t1);
-  font-size: 10px;
-  font-family: 'Spline Sans Mono', monospace;
-}
-
-.pos-procdiagram__node-altitude {
-  fill: var(--pos-t3);
-  font-size: 9px;
-  font-family: 'Spline Sans Mono', monospace;
 }
 
 .pos-procdiagram__node-button {
@@ -1019,16 +1000,81 @@
   fill: var(--pos-t1);
 }
 
-.pos-procdiagram__airport text {
-  fill: var(--pos-t2);
-  font-size: 11px;
+/*
+ * HTML overlays, not SVG `<text>` — same reason as `.pos-circuit__marker-label`: `font-size`
+ * inside the SVG is a user unit, scaled down by the same viewBox→box transform as the
+ * geometry, so it silently shrinks past legible once `.pos-procdiagram` is squeezed short.
+ * `clamp()` on `vw` (viewport width, not this diagram's own box) keeps every label legible
+ * regardless of how small the diagram itself is ever forced to become. Floors sit a notch
+ * below `.pos-circuit__marker-label`'s (0.85rem) because a busy procedure can carry 15+ nodes
+ * at once — far less room per label than the circuit diagram's fixed 8 markers — so the worst
+ * crowding case is a *squeezed* diagram with many nodes, and a smaller floor buys headroom
+ * there without touching legibility (a large ceiling is nearly free: it only applies when the
+ * diagram itself is already large). Verify against a real busy procedure, not just a simple
+ * fixture — if nodes still crowd, the fix is a container-query degradation, never a smaller
+ * floor (that just reintroduces the illegible-label bug this replaces).
+ */
+.pos-procdiagram__node-label,
+.pos-procdiagram__node-altitude,
+.pos-procdiagram__break-label,
+.pos-procdiagram__airport-label,
+.pos-procdiagram__legend {
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
   font-family: 'Spline Sans Mono', monospace;
 }
 
+.pos-procdiagram__node-label {
+  color: var(--pos-t1);
+  font-size: clamp(0.75rem, 0.85vw, 1.05rem);
+}
+
+.pos-procdiagram__node-label--selected {
+  font-weight: 700;
+  color: var(--pos-accent);
+}
+
+.pos-procdiagram__node-label--right {
+  transform: translate(8px, calc(-100% - 0.15em));
+}
+
+.pos-procdiagram__node-label--left {
+  transform: translate(calc(-100% - 8px), calc(-100% - 0.15em));
+}
+
+.pos-procdiagram__node-altitude {
+  color: var(--pos-t3);
+  font-size: clamp(0.7rem, 0.75vw, 0.9rem);
+}
+
+.pos-procdiagram__node-altitude--right {
+  transform: translate(8px, 0.15em);
+}
+
+.pos-procdiagram__node-altitude--left {
+  transform: translate(calc(-100% - 8px), 0.15em);
+}
+
+.pos-procdiagram__break-label {
+  color: var(--pos-caution);
+  font-size: clamp(0.75rem, 0.85vw, 1.05rem);
+  transform: translate(-50%, calc(-100% - 6px));
+}
+
+.pos-procdiagram__airport-label {
+  color: var(--pos-t2);
+  font-size: clamp(0.8rem, 0.95vw, 1.1rem);
+  /* A bigger gap than the other "above" labels — the airport reference point sits right next
+     to the runway threshold, so its label is the one most often fighting a node's own label
+     for the same few pixels; confirmed live on a real procedure (LFMN's BADO8A). */
+  transform: translate(-50%, calc(-100% - 14px));
+}
+
 .pos-procdiagram__legend {
-  fill: var(--pos-t3);
-  font-size: 10px;
-  font-family: 'Spline Sans Mono', monospace;
+  color: var(--pos-t3);
+  font-size: clamp(0.72rem, 0.8vw, 0.95rem);
+  transform: translateY(-100%);
 }
 
 /* ----------------------------------------------------------- procedure diagram, 3D */
