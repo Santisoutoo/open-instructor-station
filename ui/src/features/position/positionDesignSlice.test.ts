@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { CIRCUIT_LEG_OPTIONS_NM } from './circuitDistances';
 import reducer, {
   airportLoaded,
   approachFilterSelected,
+  circuitDistanceSelected,
+  CIRCUIT_LEG_KINDS,
   configChanged,
   coordinateHandoffReceived,
   designTabSelected,
@@ -188,6 +191,31 @@ describe('finalPlacementSelected', () => {
     expect(reducer(undefined, finalPlacementSelected('final_10nm')).finalPlacement).toBe(
       'final_10nm',
     );
+  });
+});
+
+describe('circuitDistanceSelected', () => {
+  it('touches one leg kind only', () => {
+    const state = reducer(
+      undefined,
+      circuitDistanceSelected({ kind: 'base', distanceNm: 10 }),
+    );
+    expect(state.circuitDistanceNm).toEqual({ downwind: 4, base: 10, vectors: 6 });
+  });
+
+  it('starts every leg on a chip its own selector actually offers', () => {
+    for (const kind of CIRCUIT_LEG_KINDS) {
+      expect(CIRCUIT_LEG_OPTIONS_NM[kind]).toContain(
+        initialPositionDesignState.circuitDistanceNm[kind],
+      );
+    }
+  });
+
+  it('is not cleared by loading another airport — it is the instructor’s own preference', () => {
+    let state = reducer(undefined, airportLoaded('LFMN'));
+    state = reducer(state, circuitDistanceSelected({ kind: 'vectors', distanceNm: 3 }));
+    state = reducer(state, airportLoaded('LEMD'));
+    expect(state.circuitDistanceNm.vectors).toBe(3);
   });
 });
 

@@ -35,7 +35,6 @@ import { formatAltitudeFt, formatSpeedKt } from './format';
 import { commitGate } from './gate';
 import {
   configChanged,
-  sendToggled,
   situationReset,
   startAtToggled,
   type AircraftConfigState,
@@ -44,13 +43,8 @@ import { placementStaged, setupOverridden, staleCleared } from './positionSlice'
 import { overridesOrNull } from './setup';
 import { unflyableReason } from './speed';
 import { StartAtPopover } from './StartAtPopover';
-import { startAtLabelOf, startAtPopoverId } from './startAt';
-import {
-  useGroundElevationFt,
-  useIls,
-  useSelectedRunway,
-  useStagedPlacement,
-} from './usePositionData';
+import { startAtPopoverId } from './startAt';
+import { useGroundElevationFt, useStagedPlacement } from './usePositionData';
 
 /** How long the confirmation stays up after a successful commit. MOTION is dialled low. */
 const FLASH_MS = 2400;
@@ -68,9 +62,6 @@ const FLAPS_ON_DEFAULT_PERCENT = 25;
 export function BottomBar() {
   const dispatch = useAppDispatch();
   const config = useAppSelector((state) => state.positionDesign.config);
-  const send = useAppSelector((state) => state.positionDesign.send);
-  const selectedRunway = useAppSelector((state) => state.positionDesign.selectedRunway);
-  const selectedStand = useAppSelector((state) => state.positionDesign.selectedStand);
   // The second entry point to the Start-at picker (issue #166): an instructor setting flaps
   // and gear down here should not have to travel back to the header to change the stand.
   const startAtOpen = useAppSelector(
@@ -79,11 +70,6 @@ export function BottomBar() {
       state.positionDesign.startAtAnchor === 'bottombar',
   );
   const startAtTriggerRef = useRef<HTMLButtonElement>(null);
-  const runway = useSelectedRunway();
-  // Tri-state on purpose: `null` while the lookup is in flight. Collapsing it to a boolean
-  // is what made the bar tell an instructor an ILS runway had none for a frame.
-  const { hasIls } = useIls(runway?.ident ?? null);
-  const ilsKnown = hasIls === true;
 
   const { request, preview, merged, setup, isFetching } = useStagedPlacement();
   const { data: capabilities, isError: capabilitiesFailed } = useGetCapabilitiesQuery();
@@ -326,43 +312,11 @@ export function BottomBar() {
       <div className="pos-bottombar__divider" aria-hidden="true" />
 
       <fieldset className="pos-bottombar__group">
-        <legend className="pos-bottombar__group-title">Sent with the position</legend>
-        <label
-          className={ilsKnown ? 'pos-checkbox' : 'pos-checkbox pos-checkbox--disabled'}
-        >
-          <input
-            type="checkbox"
-            className="pos-checkbox__input"
-            checked={send.course}
-            disabled={!ilsKnown}
-            onChange={() => {
-              dispatch(sendToggled('course'));
-            }}
-          />
-          <span className="pos-checkbox__box" aria-hidden="true" />
-          Course
-          {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
-        </label>
-        <label
-          className={ilsKnown ? 'pos-checkbox' : 'pos-checkbox pos-checkbox--disabled'}
-        >
-          <input
-            type="checkbox"
-            className="pos-checkbox__input"
-            checked={send.ilsFrequency}
-            disabled={!ilsKnown}
-            onChange={() => {
-              dispatch(sendToggled('ilsFrequency'));
-            }}
-          />
-          <span className="pos-checkbox__box" aria-hidden="true" />
-          ILS frequency
-          {hasIls === false && <span className="pos-mono pos-bottombar__na"> n/a</span>}
-        </label>
+        <legend className="pos-bottombar__group-title">Shortcuts</legend>
         <button
           ref={startAtTriggerRef}
           type="button"
-          className="pos-textaction pos-bottombar__startat"
+          className="pos-textaction"
           aria-haspopup="dialog"
           aria-expanded={startAtOpen}
           aria-controls={startAtPopoverId('bottombar')}
@@ -370,12 +324,18 @@ export function BottomBar() {
             dispatch(startAtToggled('bottombar'));
           }}
         >
-          Pick stand / gate{' '}
-          <span className="pos-mono">
-            {startAtLabelOf(selectedRunway, selectedStand)}
-          </span>
+          Start at position
         </button>
         <StartAtPopover anchor="bottombar" triggerRef={startAtTriggerRef} />
+        <button
+          type="button"
+          className="pos-textaction"
+          onClick={() => {
+            dispatch(moduleTabSelected('aircraft'));
+          }}
+        >
+          Open aircraft controls
+        </button>
       </fieldset>
 
       <div className="pos-bottombar__spacer" />

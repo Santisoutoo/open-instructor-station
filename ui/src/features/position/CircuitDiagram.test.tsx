@@ -1,19 +1,18 @@
 /**
- * The circuit diagram's tap targets.
+ * The circuit diagram's tap targets and labels.
  *
- * The SVG scales — `.pos-circuit` is `width: 720px; max-width: 100%` — so a hit target placed
- * at a raw viewBox pixel drifts away from the dot it belongs to on every viewport narrower
- * than the drawing. At 1024 px the scale is ~0.71 and the furthest marker's button lands
- * ~88 px from its circle: the instructor taps the dot and nothing happens. CLAUDE.md makes
- * the tablet first-class, so this is asserted rather than eyeballed.
+ * The SVG scales — `.pos-circuit` is always sized to the diagram's own 720:520 box, at
+ * whatever size its grid cell has room for — so a hit target placed at a raw viewBox pixel
+ * drifts away from the dot it belongs to at any size other than exactly 720×520. CLAUDE.md
+ * makes the tablet first-class, so this is asserted rather than eyeballed.
  */
 
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { CircuitDiagram } from './CircuitDiagram';
-import { CX, CY, place } from './circuit';
-import { CIRCUIT_MARKERS, labelPlacement } from './markers';
+import { place } from './circuit';
+import { CIRCUIT_MARKERS, DRAWN_MARKER_IDS, labelPlacement } from './markers';
 import { MARKER_IDS } from './positionDesignSlice';
 
 const COURSE_DEG = 40;
@@ -36,7 +35,7 @@ describe('the marker hit targets', () => {
   it('positions every one in percentages of the container, not viewBox pixels', () => {
     renderDiagram();
 
-    for (const id of MARKER_IDS) {
+    for (const id of DRAWN_MARKER_IDS) {
       const marker = CIRCUIT_MARKERS[id];
       const point = place(marker.u, marker.v, COURSE_DEG);
       const button = screen.getByRole('button', { name: marker.label });
@@ -51,6 +50,16 @@ describe('the marker hit targets', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'Downwind left' }));
     expect(onSelectMarker).toHaveBeenCalledWith('downwind-left');
+  });
+
+  it('draws no dot, label or button for the redundant 8 NM final — the chip menu covers it', () => {
+    renderDiagram();
+
+    expect(screen.queryByRole('button', { name: '8 NM final' })).toBeNull();
+    expect(screen.queryByText('8 NM final')).toBeNull();
+    expect(DRAWN_MARKER_IDS).not.toContain('final-8nm');
+    // The underlying marker/geometry data is untouched — only its diagram presence is gone.
+    expect(MARKER_IDS).toContain('final-8nm');
   });
 
   it('keeps the whole drawing inside the viewBox at every runway course', () => {
@@ -73,50 +82,50 @@ describe('the marker hit targets', () => {
   });
 });
 
-describe('marker labels stay upright', () => {
-  /** Courses that stress the illegible 90°–270° range the rotated `<g>` used to catch them in. */
-  const ROTATED_COURSES = [0, 40, 90, 180, 220, 270, 315];
+describe('marker labels', () => {
+  it('renders every label as an HTML overlay element, never inside the SVG', () => {
+    // A label sitting inside the SVG would be re-scaled (and re-rotated) by its ancestor
+    // transforms along with the geometry — see the module docstring for why that broke
+    // legibility on a squeezed layout. Every label must sit outside the <svg> entirely.
+    const { container } = renderDiagram();
+    const svg = container.querySelector('svg');
+    for (const label of container.querySelectorAll('.pos-circuit__marker-label')) {
+      expect(svg?.contains(label)).toBe(false);
+    }
+    expect(container.querySelectorAll('.pos-circuit__marker-label')).toHaveLength(
+      DRAWN_MARKER_IDS.length,
+    );
+  });
 
-  it('never rotates a marker label — no <g transform="rotate(...)"> ancestor but the identity one', () => {
-    for (const courseDeg of ROTATED_COURSES) {
-      const { container } = renderDiagram(vi.fn(), courseDeg);
-      for (const text of container.querySelectorAll('text.pos-circuit__marker-label')) {
-        let ancestor: Element | null = text.parentElement;
-        while (ancestor !== null) {
-          const transform = ancestor.getAttribute('transform');
-          if (transform !== null && /rotate\(/.exec(transform) !== null) {
-            expect(transform).toBe(`rotate(0 ${String(CX)} ${String(CY)})`);
-          }
-          ancestor = ancestor.parentElement;
-        }
-      }
+  it('positions each label at its marker’s fully-resolved screen point, in percentages', () => {
+    const courseDeg = 220;
+    renderDiagram(vi.fn(), courseDeg);
+
+    for (const id of DRAWN_MARKER_IDS) {
+      const marker = CIRCUIT_MARKERS[id];
+      const point = place(marker.u, marker.v, courseDeg);
+      const label = screen.getByText(marker.label, { selector: '.pos-circuit__marker-label' });
+      expect(label.style.left).toBe(`${String((point.x / 720) * 100)}%`);
+      expect(label.style.top).toBe(`${String((point.y / 520) * 100)}%`);
+      // The label carries a modifier class naming which side of its dot it sits on, per
+      // labelPlacement — never at the unrotated (course=0) point, which is what the old bug
+      // this suite guards against drew.
+      const anchor = labelPlacement(id, courseDeg);
+      expect(label.className).toContain(`pos-circuit__marker-label--${anchor}`);
     }
   });
 
-  it('positions each label at place(u, v, courseDeg) plus its offset, for a non-zero course', () => {
-    const courseDeg = 220;
-    const { container } = renderDiagram(vi.fn(), courseDeg);
-    const texts = container.querySelectorAll('text.pos-circuit__marker-label');
-    expect(texts).toHaveLength(MARKER_IDS.length);
+  it('gives the selected marker’s label the prominent modifier class, and no other', () => {
+    renderDiagram(vi.fn(), COURSE_DEG);
 
-    for (const id of MARKER_IDS) {
-      const marker = CIRCUIT_MARKERS[id];
-      const point = place(marker.u, marker.v, courseDeg);
-      const text = screen.getByText(marker.label, { selector: 'text' });
-      // labelOffset's numeric part is asserted indirectly via x/y below; textAnchor is the
-      // one part of the offset an attribute exposes directly.
-      const anchor = labelPlacement(id, courseDeg);
-      const expectedAnchor =
-        anchor === 'left' ? 'end' : anchor === 'right' ? 'start' : 'middle';
-      expect(text.getAttribute('text-anchor')).toBe(expectedAnchor);
-      expect(Number(text.getAttribute('x'))).not.toBeNaN();
-      expect(Number(text.getAttribute('y'))).not.toBeNaN();
-      // The label sits within a small, fixed offset of its rotated screen point — never at
-      // the unrotated (course=0) point, which is what the bug drew.
-      const dx = Number(text.getAttribute('x')) - point.x;
-      const dy = Number(text.getAttribute('y')) - point.y;
-      expect(Math.abs(dx)).toBeLessThanOrEqual(12.001);
-      expect(Math.abs(dy)).toBeLessThanOrEqual(18.001);
-    }
+    const selectedLabel = screen.getByText('Final', {
+      selector: '.pos-circuit__marker-label',
+    });
+    expect(selectedLabel.className).toContain('pos-circuit__marker-label--selected');
+
+    const otherLabel = screen.getByText('Take off', {
+      selector: '.pos-circuit__marker-label',
+    });
+    expect(otherLabel.className).not.toContain('pos-circuit__marker-label--selected');
   });
 });
