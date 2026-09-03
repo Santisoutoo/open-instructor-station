@@ -132,13 +132,17 @@ controls:
   # Confirmed live: laminar/B738/flight_controls/pitch_trim_up/down (Zibo-
   # specific commands the Phase 1 static reference files never listed —
   # only found by dumping the live command index) move
-  # laminar/B738/flight_model/stab_trim_units cleanly, ~0.004 units per
-  # single activate (X-Plane does not repeat a command over one activate,
-  # so `step` here is illustrative; max_delta is set high to make a
-  # meaningful adjustment reachable). sim/cockpit2/controls/elevator_trim
-  # moves in lockstep (Zibo pushes its own trim into it one-way) but a
-  # DIRECT write to that generic dataref is a confirmed no-op (accepted on
-  # the generic dataref, stab_trim_units never moves) — AircraftSetup.
+  # laminar/B738/flight_model/stab_trim_units by a real, signed amount per
+  # single activate — measured +0.00434 then -0.00384 across two
+  # consecutive clicks (X-Plane does not repeat a command over one
+  # activate, so this is genuinely the per-click delta, not an
+  # approximation). `step`/`readback_tolerance` are set from that
+  # measurement, not a round illustrative number — the schema defines
+  # `step` as "the value change one click produces" (§3.1), not a display
+  # convenience. sim/cockpit2/controls/elevator_trim moves in lockstep
+  # (Zibo pushes its own trim into it one-way) but a DIRECT write to that
+  # generic dataref is a confirmed no-op (accepted on the generic
+  # dataref, stab_trim_units never moves) — AircraftSetup.
   # elevator_trim_ratio cannot be overridden here either way (float field
   # requires a `dial` target; this is correctly an encoder).
   - control_id: stab_trim
@@ -146,8 +150,9 @@ controls:
     panel_id: pedestal
     kind: encoder
     unit: units
-    step: 0.05
+    step: 0.004
     max_delta: 100
+    readback_tolerance: 0.002
     hint: "Confirmed live via Zibo's own pitch_trim commands; generic elevator_trim write is a no-op."
     verified_on: 2026-09-03
     live_sweep: true
@@ -167,8 +172,9 @@ controls:
     panel_id: pedestal
     kind: encoder
     unit: units
-    step: 0.001
+    step: 0.0007
     max_delta: 100
+    readback_tolerance: 0.0005
     hint: "Confirmed live via the GENERIC commands+dataref; the Zibo-specific read binding is dead."
     verified_on: 2026-09-03
     live_sweep: true
@@ -187,6 +193,7 @@ controls:
     unit: units
     step: 0.003
     max_delta: 100
+    readback_tolerance: 0.001
     hint: "Same finding as rudder_trim: confirmed via the GENERIC dataref, not the Zibo-specific one."
     verified_on: 2026-09-03
     live_sweep: true
