@@ -22,6 +22,7 @@ function inputs(overrides: Partial<CheckInputs> = {}): CheckInputs {
     activeTab: 'approach',
     marker: 'final-3nm',
     finalPlacement: 'final_3nm',
+    circuitDistanceNm: { downwind: 4, base: 6, vectors: 6 },
     gearDown: true,
     iasKt: 121,
     altitudeFt: 968,
@@ -81,6 +82,18 @@ describe('rule 2 — gear up on a final/base/vectors marker', () => {
     expect(checks(inputs({ gearDown: false, marker: 'base-left' }))[0]?.text).toBe(
       'Gear up 6.0 NM from the threshold',
     );
+  });
+
+  it('follows the instructor’s own selected distance, not the hard-coded default', () => {
+    expect(
+      checks(
+        inputs({
+          gearDown: false,
+          marker: 'base-left',
+          circuitDistanceNm: { downwind: 4, base: 10, vectors: 6 },
+        }),
+      )[0]?.text,
+    ).toBe('Gear up 10.0 NM from the threshold');
   });
 
   it('does not fire on the threshold or downwind', () => {
