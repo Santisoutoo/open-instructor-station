@@ -149,14 +149,17 @@ CockpitControlKind = Literal["toggle", "press", "dial", "encoder", "selector"]
 CockpitValue = bool | int | float | str
 
 #: Unit vocabulary for dial/encoder entries. Closed so the UI formats every one.
-CockpitUnit = Literal["ft", "kt", "mach", "deg", "fpm", "ratio", "count", "khz", "mhz", "psi", "units"]
+CockpitUnit = Literal[
+    "ft", "kt", "mach", "deg", "fpm", "ratio", "count", "khz", "mhz", "psi", "units"
+]
 
-CONTROL_ID_PATTERN = r"^[a-z0-9]+(?:_[a-z0-9]+)*$"   # snake_case, e.g. mcp_alt, fd_capt
-CATALOG_ID_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"   # kebab-case, e.g. zibo-b738
+CONTROL_ID_PATTERN = r"^[a-z0-9]+(?:_[a-z0-9]+)*$"  # snake_case, e.g. mcp_alt, fd_capt
+CATALOG_ID_PATTERN = r"^[a-z0-9]+(?:-[a-z0-9]+)*$"  # kebab-case, e.g. zibo-b738
 
 
 class CockpitPanel(BaseModel):
     """One group in the panel picker. Catalog-defined — different aircraft, different panels."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     panel_id: str = Field(pattern=CONTROL_ID_PATTERN)
     label: str = Field(min_length=1, max_length=40)
@@ -171,20 +174,25 @@ class ControlCondition(BaseModel):
 
 class PreconditionGroup(BaseModel):
     """Satisfied when ANY condition holds. A control's list of groups must ALL hold (D9)."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     any_of: list[ControlCondition] = Field(min_length=1)
-    hint: str = Field(min_length=1, max_length=120,
-                      description="Shown to the instructor when the group is unmet.")
+    hint: str = Field(
+        min_length=1, max_length=120, description="Shown to the instructor when the group is unmet."
+    )
 
 
 class SelectorOption(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    value: int | str = Field(description="The value the read binding reports / the write binding takes.")
+    value: int | str = Field(
+        description="The value the read binding reports / the write binding takes."
+    )
     label: str = Field(min_length=1, max_length=30)
 
 
 class CockpitControlSpec(BaseModel):
     """The PUBLISHED half of a control — what the server and UI see. No binding (D3)."""
+
     model_config = ConfigDict(frozen=True)
 
     control_id: str = Field(pattern=CONTROL_ID_PATTERN)
@@ -193,9 +201,11 @@ class CockpitControlSpec(BaseModel):
     kind: CockpitControlKind
     hint: str | None = Field(default=None, max_length=120)
     preconditions: list[PreconditionGroup] = Field(default_factory=list)
-    readable: bool = Field(description="True when the adapter can report this control's state. "
-                           "Derived from the binding at load time: always True for toggle/dial/"
-                           "selector, False for press, binding-dependent for encoder.")
+    readable: bool = Field(
+        description="True when the adapter can report this control's state. "
+        "Derived from the binding at load time: always True for toggle/dial/"
+        "selector, False for press, binding-dependent for encoder."
+    )
     # --- toggle ---
     on_label: str = "On"
     off_label: str = "Off"
@@ -203,22 +213,31 @@ class CockpitControlSpec(BaseModel):
     unit: CockpitUnit | None = None
     min_value: float | None = None
     max_value: float | None = None
-    step: float | None = Field(default=None, gt=0.0,
-                               description="Dial: the UI stepper increment (NOT enforced on writes — "
-                               "X-Plane accepts any value; the sim rounds if it wants to). "
-                               "Encoder: the value change one click produces, in `unit`, for display.")
-    readback_tolerance: float = Field(default=0.0, ge=0.0,
-                                      description="Dial: |read_back - written| allowed, in `unit`.")
+    step: float | None = Field(
+        default=None,
+        gt=0.0,
+        description="Dial: the UI stepper increment (NOT enforced on writes — "
+        "X-Plane accepts any value; the sim rounds if it wants to). "
+        "Encoder: the value change one click produces, in `unit`, for display.",
+    )
+    readback_tolerance: float = Field(
+        default=0.0, ge=0.0, description="Dial: |read_back - written| allowed, in `unit`."
+    )
     # --- encoder ---
-    max_delta: int | None = Field(default=None, ge=1, le=200,
-                                  description="Largest |delta| one actuation may request.")
+    max_delta: int | None = Field(
+        default=None, ge=1, le=200, description="Largest |delta| one actuation may request."
+    )
     # --- selector ---
     options: list[SelectorOption] | None = Field(default=None, min_length=2)
     # --- provenance (D10) ---
-    verified_on: date = Field(description="Date the entry was read-back confirmed on a live sim. Required.")
-    live_sweep: bool = Field(default=True,
-                             description="False when the generic live sweep must not flip this control "
-                             "(battery off, start levers, TO/GA). Requires live_sweep_note.")
+    verified_on: date = Field(
+        description="Date the entry was read-back confirmed on a live sim. Required."
+    )
+    live_sweep: bool = Field(
+        default=True,
+        description="False when the generic live sweep must not flip this control "
+        "(battery off, start levers, TO/GA). Requires live_sweep_note.",
+    )
     live_sweep_note: str | None = Field(default=None, max_length=120)
 ```
 
@@ -242,16 +261,18 @@ class CockpitBinding(BaseModel):
     command path, an MSFS event — core validates only which fields are present per kind.
     An optional `[i]` suffix on `read`/`write` denotes an array element (adapter-parsed).
     """
+
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    press: str | None = None   # toggle/press: the command fired
-    read: str | None = None    # toggle/dial/selector/encoder: where the state is read
-    write: str | None = None   # dial/selector: where the value is written
-    inc: str | None = None     # encoder/stepped selector: the "one click up" command
-    dec: str | None = None     # encoder/stepped selector: the "one click down" command
+    press: str | None = None  # toggle/press: the command fired
+    read: str | None = None  # toggle/dial/selector/encoder: where the state is read
+    write: str | None = None  # dial/selector: where the value is written
+    inc: str | None = None  # encoder/stepped selector: the "one click up" command
+    dec: str | None = None  # encoder/stepped selector: the "one click down" command
     on_value: float = Field(default=1.0, description="toggle: the `read` value meaning ON.")
-    settle_s: float = Field(default=0.0, ge=0.0, le=5.0,
-                            description="Wait before the first read-back attempt.")
+    settle_s: float = Field(
+        default=0.0, ge=0.0, le=5.0, description="Wait before the first read-back attempt."
+    )
 ```
 
 Per-kind binding rules (`CockpitControlDefinition`'s validator):
@@ -268,32 +289,39 @@ Per-kind binding rules (`CockpitControlDefinition`'s validator):
 class CockpitControlDefinition(CockpitControlSpec):
     """A spec plus its binding — what a catalog FILE contains. `readable` is not written
     in files; the loader derives it from the binding and rejects a file that states it."""
+
     binding: CockpitBinding
 
     @property
-    def spec(self) -> CockpitControlSpec: ...   # the published half, binding dropped
+    def spec(self) -> CockpitControlSpec: ...  # the published half, binding dropped
 
 
 class CockpitDetection(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
-    dataref_exists: str = Field(min_length=1,
-                                description="Opaque to core/: the adapter probes this name per-name (D5).")
+    dataref_exists: str = Field(
+        min_length=1, description="Opaque to core/: the adapter probes this name per-name (D5)."
+    )
 
 
 class CockpitAircraft(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
     catalog_id: str = Field(pattern=CATALOG_ID_PATTERN)
-    label: str = Field(min_length=1, max_length=60)        # "Zibo Mod B737-800X"
-    path_hints: list[str] = Field(default_factory=list,
-                                  description="Substrings of the sim's aircraft path that suggest this "
-                                  "aircraft is loaded. NEVER used for detection — only so a live test "
-                                  "can fail loudly when the aircraft looks loaded but the probe is "
-                                  "negative (§8.4), and for the manifest's detection note.")
-    verified_against: str | None = Field(default=None, max_length=120)  # "Zibo 4.05.33, X-Plane 12.4.3"
+    label: str = Field(min_length=1, max_length=60)  # "Zibo Mod B737-800X"
+    path_hints: list[str] = Field(
+        default_factory=list,
+        description="Substrings of the sim's aircraft path that suggest this "
+        "aircraft is loaded. NEVER used for detection — only so a live test "
+        "can fail loudly when the aircraft looks loaded but the probe is "
+        "negative (§8.4), and for the manifest's detection note.",
+    )
+    verified_against: str | None = Field(
+        default=None, max_length=120
+    )  # "Zibo 4.05.33, X-Plane 12.4.3"
 
 
 class ParkedControl(BaseModel):
     """Exists on the aircraft, has no verified mapping (D10). Rendered disabled with the reason."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     control_id: str = Field(pattern=CONTROL_ID_PATTERN)
     label: str = Field(min_length=1, max_length=60)
@@ -304,6 +332,7 @@ class ParkedControl(BaseModel):
 
 class CockpitCatalogDocument(BaseModel):
     """One aircraft's whole catalog, after the loader has merged its directory (D4)."""
+
     model_config = ConfigDict(frozen=True)
 
     aircraft: CockpitAircraft
@@ -314,7 +343,8 @@ class CockpitCatalogDocument(BaseModel):
     setup_overrides: dict[str, str] = Field(
         default_factory=dict,
         description="AircraftSetup field name -> control_id (D11). A bool field maps to a toggle, "
-        "a float field to a dial.")
+        "a float field to a dial.",
+    )
 ```
 
 Document-level validation (`model_validator`): `panel_id`s unique; every `controls[*].panel_id`
@@ -331,8 +361,10 @@ dial → float); the precondition graph is acyclic; every `setup_overrides` key 
 class CockpitControlState(BaseModel):
     model_config = ConfigDict(frozen=True)
     control_id: str
-    value: CockpitValue | None = Field(description="None for a control that is not readable, or "
-                                       "whose read failed — 'unknown' is an answer.")
+    value: CockpitValue | None = Field(
+        description="None for a control that is not readable, or "
+        "whose read failed — 'unknown' is an answer."
+    )
 
 
 class CockpitStateSnapshot(BaseModel):
@@ -344,6 +376,7 @@ class CockpitStateSnapshot(BaseModel):
 
 class CockpitActuation(BaseModel):
     """One instructor intent. `value` for toggle/dial/selector, `delta` for encoder, neither for press."""
+
     model_config = ConfigDict(frozen=True, extra="forbid")
     control_id: str = Field(pattern=CONTROL_ID_PATTERN)
     value: CockpitValue | None = None
@@ -359,10 +392,15 @@ class CockpitActuation(BaseModel):
 class CockpitActuationResult(BaseModel):
     model_config = ConfigDict(frozen=True)
     requested: CockpitActuation
-    state: CockpitControlState = Field(description="The CONFIRMED state read back after the write. "
-                                       "value=None only for press, or an encoder without a read binding.")
-    actions_taken: int = Field(ge=0, description="Presses/writes performed. 0 means the control was "
-                               "already in the requested state — the guarded-toggle rule made visible.")
+    state: CockpitControlState = Field(
+        description="The CONFIRMED state read back after the write. "
+        "value=None only for press, or an encoder without a read binding."
+    )
+    actions_taken: int = Field(
+        ge=0,
+        description="Presses/writes performed. 0 means the control was "
+        "already in the requested state — the guarded-toggle rule made visible.",
+    )
     catalog_id: str
     revision: int
 ```
@@ -372,16 +410,23 @@ class CockpitActuationResult(BaseModel):
 ```python
 class CockpitCatalog(BaseModel):
     """What SimAdapter.get_cockpit_catalog() answers. Binding-free (D3)."""
+
     model_config = ConfigDict(frozen=True)
 
     supported: bool = Field(description="The adapter declares can_control_cockpit.")
-    reason: str | None = Field(description="Why nothing is actuable: no flag, or no catalog detected "
-                               "for the loaded aircraft. None when `aircraft` is set.")
+    reason: str | None = Field(
+        description="Why nothing is actuable: no flag, or no catalog detected "
+        "for the loaded aircraft. None when `aircraft` is set."
+    )
     aircraft: CockpitAircraft | None
-    revision: int = Field(ge=0, description="Bumped on every (re)detection. 0 before any detection.")
-    detection_note: str | None = Field(description="Human text: what was probed and what the sim's "
-                                       "aircraft path currently reads, e.g. 'Probed laminar/… — found; "
-                                       "aircraft path Aircraft/B737-800X/b738.acf'.")
+    revision: int = Field(
+        ge=0, description="Bumped on every (re)detection. 0 before any detection."
+    )
+    detection_note: str | None = Field(
+        description="Human text: what was probed and what the sim's "
+        "aircraft path currently reads, e.g. 'Probed laminar/… — found; "
+        "aircraft path Aircraft/B737-800X/b738.acf'."
+    )
     panels: list[CockpitPanel]
     controls: list[CockpitControlSpec]
     parked: list[ParkedControl]
@@ -389,6 +434,7 @@ class CockpitCatalog(BaseModel):
 
 class CockpitCatalogManifest(CockpitCatalog):
     """The REST shape: the catalog plus the adapter's name (the CameraManifest precedent)."""
+
     adapter: str
 ```
 
@@ -399,12 +445,18 @@ parses it.
 ### 3.5 Exceptions — `core/cockpit/errors.py`
 
 ```python
-class CockpitCatalogInactive(RuntimeError): ...      # no aircraft catalog detected → 409
-class CockpitControlUnknown(LookupError):            # id not in the active catalog → 404
+class CockpitCatalogInactive(RuntimeError): ...  # no aircraft catalog detected → 409
+
+
+class CockpitControlUnknown(LookupError):  # id not in the active catalog → 404
     def __init__(self, control_id: str, parked_reason: str | None = None) -> None: ...
-class CockpitPreconditionUnmet(RuntimeError):        # → 409
+
+
+class CockpitPreconditionUnmet(RuntimeError):  # → 409
     def __init__(self, control_id: str, hints: tuple[str, ...]) -> None: ...
-class CockpitWriteRejected(RuntimeError): ...        # read-back disagreed → 502 (WeatherRejected posture)
+
+
+class CockpitWriteRejected(RuntimeError): ...  # read-back disagreed → 502 (WeatherRejected posture)
 ```
 
 Adapter-agnostic on purpose, exactly `WeatherRejected`'s reasoning: the router maps types, never an
@@ -453,7 +505,9 @@ async def refresh_cockpit_catalog(self) -> CockpitCatalog:
     Requires can_control_cockpit."""
 
 
-async def read_cockpit_states(self, control_ids: Sequence[str] | None = None) -> CockpitStateSnapshot:
+async def read_cockpit_states(
+    self, control_ids: Sequence[str] | None = None
+) -> CockpitStateSnapshot:
     """Confirmed values of the readable controls named — or of every readable
     control when None — read from the simulator now, never from a ledger of
     what was asked for (the get_active_failures lesson). A control that is not
@@ -823,12 +877,15 @@ precedent).
 ```python
 CATALOG_ROOT_FILENAME = "aircraft.yaml"
 
+
 class CockpitCatalogLoadError(Exception):
     """One directory failed to load. Carries .path and .error (ScenarioLoadError's shape)."""
+
 
 def discover_catalog_dirs(root: Path) -> tuple[Path, ...]:
     """Every immediate subdirectory of root containing aircraft.yaml, sorted by name.
     A missing root is empty, not an error."""
+
 
 def load_catalog_dir(directory: Path) -> CockpitCatalogDocument:
     """Merge aircraft.yaml (aircraft, detect, panels — REQUIRED here, forbidden elsewhere)
@@ -838,10 +895,16 @@ def load_catalog_dir(directory: Path) -> CockpitCatalogDocument:
     name that differs from aircraft.catalog_id, or `readable` stated in a file is a
     CockpitCatalogLoadError; so is any pydantic ValidationError, wrapped."""
 
-def load_all_catalogs(root: Path) -> tuple[tuple[CockpitCatalogDocument, ...], tuple[CockpitCatalogLoadError, ...]]:
+
+def load_all_catalogs(
+    root: Path,
+) -> tuple[tuple[CockpitCatalogDocument, ...], tuple[CockpitCatalogLoadError, ...]]:
     """Never raises on one bad directory — the scenario loader's posture."""
 
-def publish(document: CockpitCatalogDocument, *, revision: int, detection_note: str | None) -> CockpitCatalog:
+
+def publish(
+    document: CockpitCatalogDocument, *, revision: int, detection_note: str | None
+) -> CockpitCatalog:
     """The binding-free projection (D3): supported=True, aircraft, panels sorted by order,
     controls in file order with `spec` applied, parked, revision."""
 ```
@@ -852,25 +915,33 @@ def publish(document: CockpitCatalogDocument, *, revision: int, detection_note: 
 def validate_actuation(spec: CockpitControlSpec, actuation: CockpitActuation) -> None:
     """Raise ValueError with a one-sentence reason on any kind/value mismatch (§2.2)."""
 
+
 def is_on(value: CockpitValue | None, on_value: float) -> bool:
     """A toggle's status as a bool. bool passes through; numbers compare to on_value
     with a 1e-6 tolerance; None and strings are False."""
+
 
 def toggle_needs_press(current: CockpitValue | None, requested: bool, on_value: float) -> bool:
     """Research §1: press only when the read state disagrees. An unknown current (None)
     counts as disagreeing — one press is the safest guess, and the read-back decides."""
 
+
 def dial_confirmed(written: float, read_back: CockpitValue | None, tolerance: float) -> bool:
     """abs(read_back - written) <= tolerance; a None or non-numeric read is never confirmed."""
 
+
 def selector_index(spec: CockpitControlSpec, value: CockpitValue | None) -> int | None:
     """Position of value among spec.options, or None."""
+
 
 def selector_steps(current_index: int, target_index: int, option_count: int) -> int:
     """Signed clicks from current to target with NO wrap-around (a rotary selector has stops).
     Raises ValueError for indices outside [0, option_count)."""
 
-def plan_setup_actuations(document: CockpitCatalogDocument, setup: AircraftSetup) -> tuple[CockpitActuation, ...]:
+
+def plan_setup_actuations(
+    document: CockpitCatalogDocument, setup: AircraftSetup
+) -> tuple[CockpitActuation, ...]:
     """Every set AircraftSetup field with an entry in setup_overrides, as actuations,
     ordered so that any control appearing in another planned control's preconditions
     comes first (stable topological order over the precondition graph; ties keep
@@ -881,14 +952,20 @@ def plan_setup_actuations(document: CockpitCatalogDocument, setup: AircraftSetup
 ### 6.3 `core/cockpit/preconditions.py`
 
 ```python
-def unmet_preconditions(spec: CockpitControlSpec, states: Mapping[str, CockpitValue | None]) -> tuple[PreconditionGroup, ...]:
+def unmet_preconditions(
+    spec: CockpitControlSpec, states: Mapping[str, CockpitValue | None]
+) -> tuple[PreconditionGroup, ...]:
     """Every group with no satisfied member. A referenced control missing from `states`
     or reading None is unsatisfied (unknown is not a pass). Numeric equals uses
     is_on()'s tolerance for floats; bools and strings compare exactly."""
 
-def precondition_order(document: CockpitCatalogDocument, control_ids: Iterable[str]) -> tuple[str, ...]:
+
+def precondition_order(
+    document: CockpitCatalogDocument, control_ids: Iterable[str]
+) -> tuple[str, ...]:
     """Topological order of control_ids over the document's precondition edges
     (dependency first). Raises ValueError on a cycle — also rejected at load time."""
+
 
 def referenced_control_ids(spec: CockpitControlSpec) -> frozenset[str]:
     """The ids an actuation of spec must read first."""
