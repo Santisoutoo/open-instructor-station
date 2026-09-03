@@ -1,0 +1,58 @@
+# MCP / autopilot panel controls (docs/designs/cockpit-control-catalog.md §4.1).
+controls:
+  - control_id: fd_capt
+    label: Flight director (captain)
+    panel_id: mcp
+    kind: toggle
+    verified_on: 2026-09-02
+    binding: {press: fake/fd_capt/press, read: fake/fd_capt/status}
+  - control_id: cmd_a
+    label: CMD A
+    panel_id: mcp
+    kind: toggle
+    verified_on: 2026-09-02
+    binding: {press: fake/cmd_a/press, read: fake/cmd_a/status}
+  - control_id: hdg_sel
+    label: HDG SEL
+    panel_id: mcp
+    kind: toggle
+    verified_on: 2026-09-02
+    preconditions:
+      - any_of:
+          - {control_id: fd_capt, equals: true}
+          - {control_id: cmd_a, equals: true}
+        hint: "HDG SEL needs a flight director or CMD A engaged."
+    binding: {press: fake/hdg_sel/press, read: fake/hdg_sel/status}
+  - control_id: mcp_alt
+    label: Altitude
+    panel_id: mcp
+    kind: dial
+    unit: ft
+    min_value: 0
+    max_value: 50000
+    step: 100
+    readback_tolerance: 0
+    verified_on: 2026-09-02
+    binding: {write: fake/mcp_alt/dial}
+  - control_id: mcp_hdg
+    label: Heading
+    panel_id: mcp
+    kind: dial
+    unit: deg
+    min_value: 0
+    max_value: 360
+    step: 1
+    verified_on: 2026-09-02
+    binding: {write: fake/mcp_hdg/dial}
+parked:
+  - control_id: mcp_vs
+    label: V/S
+    panel_id: mcp
+    since: 2026-09-02
+    reason: "No settable vertical-speed dataref exists on the reference aircraft (research §6)."
+setup_overrides:
+  flight_director: fd_capt
+  autopilot_master: cmd_a
+  autopilot_hdg: hdg_sel
+  target_altitude_ft: mcp_alt
+  target_heading_deg: mcp_hdg

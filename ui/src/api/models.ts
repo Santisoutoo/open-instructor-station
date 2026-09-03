@@ -489,6 +489,52 @@ export type CustomTrackSpawnRequest = components['schemas']['CustomTrackSpawnReq
 export type TrafficSpawnRequest =
   operations['spawn_traffic_api_traffic_spawn_post']['requestBody']['content']['application/json'];
 
+// ---------------------------------------------------------------------------
+// Cockpit Control Catalog
+// ---------------------------------------------------------------------------
+
+/** `GET /api/cockpit/catalog` and `POST /api/cockpit/catalog/refresh` — binding-free. */
+export type CockpitCatalogManifest = components['schemas']['CockpitCatalogManifest'];
+
+/** One aircraft catalog's identity, or `null` when none is active for the loaded aircraft. */
+export type CockpitAircraft = components['schemas']['CockpitAircraft'];
+
+/** One group in the panel picker. */
+export type CockpitPanel = components['schemas']['CockpitPanel'];
+
+/** The published half of a control — no binding, ever, on the wire. */
+export type CockpitControlSpec = components['schemas']['CockpitControlSpec'];
+
+/** The five control kinds, closed. */
+export type CockpitControlKind = CockpitControlSpec['kind'];
+
+/** Unit vocabulary for dial/encoder entries — read off the spec so the UI formats every one. */
+export type CockpitUnit = NonNullable<CockpitControlSpec['unit']>;
+
+/** One position of a `selector` control. */
+export type SelectorOption = components['schemas']['SelectorOption'];
+
+/** One member of a {@link PreconditionGroup}'s `any_of`. */
+export type ControlCondition = components['schemas']['ControlCondition'];
+
+/** Satisfied when ANY condition holds; a control's preconditions must ALL hold. */
+export type PreconditionGroup = components['schemas']['PreconditionGroup'];
+
+/** Exists on the aircraft, has no verified mapping — rendered disabled with the reason. */
+export type ParkedControl = components['schemas']['ParkedControl'];
+
+/** `GET /api/cockpit/state` — confirmed values of the readable controls asked for. */
+export type CockpitStateSnapshot = components['schemas']['CockpitStateSnapshot'];
+
+/** One control's confirmed state within a {@link CockpitStateSnapshot}. */
+export type CockpitControlState = components['schemas']['CockpitControlState'];
+
+/** The body of `POST /api/cockpit/actuate` — `value` for toggle/dial/selector, `delta` for encoder. */
+export type CockpitActuation = components['schemas']['CockpitActuation'];
+
+/** What `POST /api/cockpit/actuate` answers — the CONFIRMED state, read back after the write. */
+export type CockpitActuationResult = components['schemas']['CockpitActuationResult'];
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',

@@ -1,0 +1,7 @@
+controls:
+  - control_id: ghost
+    label: Ghost
+    panel_id: nonexistent
+    kind: press
+    verified_on: 2026-09-02
+    binding: {press: fake/ghost/press}
