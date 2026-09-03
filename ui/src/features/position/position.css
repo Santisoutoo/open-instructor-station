@@ -653,15 +653,52 @@
 
 /* -------------------------------------------------------- approach tab */
 
+/*
+ * `container: pos-approachtab / inline-size` lives on the tab's own root, but a `@container`
+ * rule can never match the element that establishes the container itself (confirmed live —
+ * Chrome silently no-ops a self-targeting `@container` rule rather than erroring). The actual
+ * two-column grid therefore lives one level down, on `.pos-approachtab__grid`, so the
+ * stacking fallback below can target it as an ordinary descendant.
+ */
 .pos-approachtab {
-  display: flex;
+  height: 100%;
+  min-height: 0;
+  container: pos-approachtab / inline-size;
+}
+
+/*
+ * The diagram gets most of the width (4fr vs. a 1fr column floored at 16rem so its facts stay
+ * readable), and `grid-template-rows: minmax(0, 1fr)` makes both columns stretch to
+ * `.pos-main`'s full available height rather than each other's content height.
+ */
+.pos-approachtab__grid {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(16rem, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 1.5rem;
-  flex-wrap: wrap;
 }
 
 .pos-approachtab__selected {
-  flex: 1;
-  min-width: 240px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * The diagram's own sizing/query context (§2 of the design doc): a grid cell that centres
+ * whatever exact 720:520 box `.pos-circuit` computes for itself, and that gives `.pos-circuit`
+ * a `container-type: size` context so `.pos-circuit`'s own width/height maths below can read
+ * cqw/cqh — the *cell's* resolved box, not the whole tab's.
+ */
+.pos-approachtab__diagram {
+  container-type: size;
+  container-name: pos-circuit;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
 .pos-approachtab__name {
@@ -679,16 +716,74 @@
 
 /* ------------------------------------------------------- circuit diagram */
 
+/*
+ * `.pos-circuit` is sized to the *exact* largest 720:520 box that fits its grid cell —
+ * `min(100cqw, 100cqh × 720/520)` picks whichever axis is the binding constraint, then
+ * `aspect-ratio` derives the other one to match. This matters because the marker `<button>`
+ * overlay below is positioned as a percentage of `.pos-circuit` itself, not of whatever the
+ * SVG's own `preserveAspectRatio` letterboxing draws inside it — if `.pos-circuit`'s box were
+ * simply `width:100%;height:100%` of a cell that isn't exactly 720:520, the buttons would
+ * drift off their dots. Sizing `.pos-circuit` to the fitted box first means the SVG (which
+ * shares that same 720:520 ratio) fills it with zero internal letterboxing, so the percentage
+ * math stays exact at every size.
+ */
 .pos-circuit {
   position: relative;
-  width: 720px;
-  max-width: 100%;
+  width: min(100cqw, calc(100cqh * 720 / 520));
+  aspect-ratio: 720 / 520;
 }
 
 .pos-circuit__svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+}
+
+/*
+ * Below this, side-by-side would squeeze the diagram's own box short enough to crowd its 9
+ * labels into each other — verified live at 1366×768 (≈854px inline size): a side-by-side
+ * diagram column there is fit-to-height at only ~230px tall, and labels sized to stay legible
+ * at that resolution then collide, because dot-to-dot spacing shrinks with the box while label
+ * size (deliberately) does not. Stacking instead gives the diagram the tab's *full* width with
+ * `height: auto` (no height cap), which is what actually buys back the spacing labels need —
+ * switching layout without dropping the height cap would not have helped, since height, not
+ * width, was always the binding constraint here. The trade-off is `.pos-main`'s own scroll
+ * reappearing at this one resolution, same as it did before any of this diagram sizing work —
+ * not a new regression, and the honest cost of legible, non-overlapping labels within an
+ * unmovable header/tabs/bottom-bar chrome budget this task does not touch.
+ *
+ * This block must appear after `.pos-circuit`'s own base rule above: both declare `width` at
+ * equal specificity, and a `@container` rule's condition being true does not give it cascade
+ * priority over a later plain rule — source order still decides the tie exactly as it would
+ * outside any conditional block.
+ */
+@container pos-approachtab (max-width: 64rem) {
+  .pos-approachtab__grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    height: auto;
+    overflow-y: auto;
+  }
+
+  .pos-approachtab__selected {
+    overflow-y: visible;
+  }
+
+  /*
+   * `container-type: size` needs a size that does not itself depend on content — fine when
+   * the grid row is `minmax(0, 1fr)` (the row's height comes from the grid, not this element),
+   * but a paradox against this breakpoint's `auto` row: nothing but this box's own (contained,
+   * therefore unavailable) content would size it. Drop to `inline-size` here — width is still
+   * a definite grid-column measurement, and `.pos-circuit`'s height no longer needs `cqh` below
+   * because it is driven by `aspect-ratio` off the full-width box instead.
+   */
+  .pos-approachtab__diagram {
+    container-type: inline-size;
+  }
+
+  .pos-circuit {
+    width: 100%;
+  }
 }
 
 .pos-circuit__centreline {
@@ -726,10 +821,48 @@
   filter: drop-shadow(0 0 5px color-mix(in oklch, var(--pos-accent) 17%, transparent));
 }
 
+/*
+ * An HTML overlay, not SVG `<text>` — deliberately. SVG `font-size` is a *user unit*, already
+ * subject to the same viewBox→box scale transform `.pos-circuit`'s sizing above establishes,
+ * so a value tuned to look right at 720px display width silently shrinks to a few physical
+ * pixels once `.pos-circuit` is squeezed by a tall header/tabs/bottom-bar chrome budget (a
+ * measured 14px SVG label painted at 8px actual height at 1366×768). `clamp()` on `vw` — the
+ * viewport, not the diagram's own box — is what keeps legibility independent of how small the
+ * diagram itself is ever forced to become; this is `.pos-circuit`'s positioning context, same
+ * percentage math as the marker buttons.
+ */
 .pos-circuit__marker-label {
-  fill: var(--pos-t2);
-  font-size: 11px;
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--pos-t2);
+  font-size: clamp(0.85rem, 1vw, 1.15rem);
   font-family: 'Schibsted Grotesk', sans-serif;
+}
+
+.pos-circuit__marker-label--left {
+  transform: translate(calc(-100% - 8px), -50%);
+  text-align: right;
+}
+
+.pos-circuit__marker-label--right {
+  transform: translate(8px, -50%);
+  text-align: left;
+}
+
+.pos-circuit__marker-label--above {
+  transform: translate(-50%, calc(-100% - 6px));
+  text-align: center;
+}
+
+.pos-circuit__marker-label--below {
+  transform: translate(-50%, 6px);
+  text-align: center;
+}
+
+.pos-circuit__marker-label--selected {
+  font-weight: 700;
+  color: var(--pos-accent);
 }
 
 .pos-circuit__marker-button {
@@ -749,15 +882,27 @@
 }
 
 .pos-circuit__wind-label {
-  fill: var(--pos-t3);
-  font-size: 11px;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--pos-t3);
+  font-size: clamp(0.75rem, 0.85vw, 1rem);
   font-family: 'Spline Sans Mono', monospace;
 }
 
+/* The small tick mark drawn inside the SVG — see .pos-circuit__north-label for the "N" text. */
 .pos-circuit__north {
   stroke: var(--pos-t3);
-  fill: var(--pos-t3);
-  font-size: 11px;
+}
+
+.pos-circuit__north-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  color: var(--pos-t3);
+  font-size: clamp(0.75rem, 0.85vw, 1rem);
+  font-weight: 600;
 }
 
 /* --------------------------------------------------------- procedure diagram */
@@ -1677,9 +1822,9 @@
   font-size: 0.78rem;
 }
 
-/* ------------------------------------------------- the final-distance rail */
+/* --------------------------------------------- the distance-selector chips */
 
-.pos-approachtab__finals {
+.pos-approachtab__distances {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;

@@ -95,6 +95,14 @@ export const MARKER_IDS = [
 ] as const;
 export type MarkerId = (typeof MARKER_IDS)[number];
 
+/**
+ * The three circuit legs whose request geometry a distance selector drives — downwind's
+ * abeam offset, base's and vectors' distance out. `takeoff` has no distance to select and
+ * the two finals have their own selector (`FinalPlacementName`), so neither is a leg kind.
+ */
+export const CIRCUIT_LEG_KINDS = ['downwind', 'base', 'vectors'] as const;
+export type CircuitLegKind = (typeof CIRCUIT_LEG_KINDS)[number];
+
 /** Which procedure the SID & STAR tab has open, and which of its legs is the placement. */
 export interface ProcedureSelection {
   readonly ident: string;
@@ -173,6 +181,8 @@ export interface PositionDesignState {
   selectedMarker: MarkerId;
   /** Which of the server's seven finals the two final markers place on. */
   finalPlacement: FinalPlacementName;
+  /** The instructor's chosen distance for each circuit leg — see {@link CircuitLegKind}. */
+  circuitDistanceNm: Record<CircuitLegKind, number>;
   procedureFamily: ProcedureFamily;
   approachFilter: ApproachFilter;
   procedure: ProcedureSelection | null;
@@ -214,6 +224,8 @@ export const initialPositionDesignState: PositionDesignState = {
   activeTab: 'approach',
   selectedMarker: 'final-3nm',
   finalPlacement: DEFAULT_FINAL,
+  // The values `CIRCUIT_PLACEMENTS` hard-coded before this selector existed.
+  circuitDistanceNm: { downwind: 4, base: 6, vectors: 6 },
   procedureFamily: 'sid',
   approachFilter: 'all',
   procedure: null,
@@ -307,6 +319,12 @@ const positionDesignSlice = createSlice({
     },
     finalPlacementSelected(state, action: PayloadAction<FinalPlacementName>) {
       state.finalPlacement = action.payload;
+    },
+    circuitDistanceSelected(
+      state,
+      action: PayloadAction<{ kind: CircuitLegKind; distanceNm: number }>,
+    ) {
+      state.circuitDistanceNm[action.payload.kind] = action.payload.distanceNm;
     },
     procedureFamilySelected(state, action: PayloadAction<ProcedureFamily>) {
       state.procedureFamily = action.payload;
@@ -433,6 +451,7 @@ export const {
   designTabSelected,
   markerSelected,
   finalPlacementSelected,
+  circuitDistanceSelected,
   procedureFamilySelected,
   approachFilterSelected,
   procedureSelected,

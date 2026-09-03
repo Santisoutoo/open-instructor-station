@@ -15,7 +15,7 @@
 
 import { place } from './circuit';
 import { FINAL_DISTANCE_NM, type FinalPlacementName } from './finals';
-import type { MarkerId } from './positionDesignSlice';
+import { MARKER_IDS, type CircuitLegKind, type MarkerId } from './positionDesignSlice';
 
 export interface CircuitMarker {
   readonly id: MarkerId;
@@ -24,48 +24,55 @@ export interface CircuitMarker {
   readonly u: number;
   /** Cross-track NM, negative = left of centreline. Schematic only. */
   readonly v: number;
-  /**
-   * The distance the marker's own request asks for, in NM — 4 NM abeam on downwind, a 6 NM
-   * base leg. `null` for the two final markers, whose distance is the tab's final selector,
-   * and for the threshold, which is at zero by definition.
-   */
-  readonly distNm: number | null;
 }
 
 /** `Record<MarkerId, …>` — every id in the closed set is covered, checked at compile time. */
 export const CIRCUIT_MARKERS: Record<MarkerId, CircuitMarker> = {
-  takeoff: { id: 'takeoff', label: 'Take off', u: 0, v: 0, distNm: 0 },
-  'downwind-left': {
-    id: 'downwind-left',
-    label: 'Downwind left',
-    u: -1,
-    v: -4,
-    distNm: 4,
-  },
-  'downwind-right': {
-    id: 'downwind-right',
-    label: 'Downwind right',
-    u: -1,
-    v: 4,
-    distNm: 4,
-  },
-  'vectors-left': { id: 'vectors-left', label: 'Vectors left', u: -6, v: -2, distNm: 6 },
-  'vectors-right': {
-    id: 'vectors-right',
-    label: 'Vectors right',
-    u: -6,
-    v: 2,
-    distNm: 6,
-  },
-  'base-left': { id: 'base-left', label: 'Base left', u: -6, v: -4, distNm: 6 },
-  'base-right': { id: 'base-right', label: 'Base right', u: -6, v: 4, distNm: 6 },
-  'final-3nm': { id: 'final-3nm', label: '3 NM final', u: -3, v: 0, distNm: null },
-  'final-8nm': { id: 'final-8nm', label: '8 NM final', u: -8, v: 0, distNm: null },
+  takeoff: { id: 'takeoff', label: 'Take off', u: 0, v: 0 },
+  'downwind-left': { id: 'downwind-left', label: 'Downwind left', u: -1, v: -4 },
+  'downwind-right': { id: 'downwind-right', label: 'Downwind right', u: -1, v: 4 },
+  'vectors-left': { id: 'vectors-left', label: 'Vectors left', u: -6, v: -2 },
+  'vectors-right': { id: 'vectors-right', label: 'Vectors right', u: -6, v: 2 },
+  'base-left': { id: 'base-left', label: 'Base left', u: -6, v: -4 },
+  'base-right': { id: 'base-right', label: 'Base right', u: -6, v: 4 },
+  // Generic "Final", not "3 NM final": the dot's label is static, but the distance it places
+  // at is whatever the finals chip selector currently has picked — `markerLabel()` (not this
+  // field) is what names the actual selected distance, in the tab's heading.
+  'final-3nm': { id: 'final-3nm', label: 'Final', u: -6, v: 0 },
+  'final-8nm': { id: 'final-8nm', label: '8 NM final', u: -8, v: 0 },
 };
 
 /** True for the two markers the final-distance selector drives. */
-export function isFinalMarker(id: MarkerId): boolean {
+export function isFinalMarker(id: MarkerId): id is 'final-3nm' | 'final-8nm' {
   return id === 'final-3nm' || id === 'final-8nm';
+}
+
+/**
+ * `MARKER_IDS` minus the 8 NM final dot/label/button. `final_8nm` stays fully selectable via
+ * the finals chip menu (`finals.ts` / `positionDesignSlice.ts`) — only its redundant diagram
+ * presence is removed, since the chip menu already covers that distance precisely.
+ */
+export const DRAWN_MARKER_IDS = MARKER_IDS.filter((id) => id !== 'final-8nm');
+
+/** Every circuit marker id except the threshold and the two finals. */
+export type CircuitLegMarkerId = Exclude<MarkerId, 'takeoff' | 'final-3nm' | 'final-8nm'>;
+
+/** Which leg-distance selector drives each circuit marker's request — exhaustive by construction. */
+export const MARKER_LEG_KIND: Record<CircuitLegMarkerId, CircuitLegKind> = {
+  'downwind-left': 'downwind',
+  'downwind-right': 'downwind',
+  'base-left': 'base',
+  'base-right': 'base',
+  'vectors-left': 'vectors',
+  'vectors-right': 'vectors',
+};
+
+/** Which leg-distance selector a marker's request is driven by; `null` for takeoff and the finals. */
+export function legKindOf(id: MarkerId): CircuitLegKind | null {
+  if (id === 'takeoff' || isFinalMarker(id)) {
+    return null;
+  }
+  return MARKER_LEG_KIND[id];
 }
 
 /**
@@ -81,10 +88,19 @@ export function isDownwindMarker(id: MarkerId): boolean {
  * How far from the threshold this marker places, in NM.
  *
  * The two final markers answer with the tab's selected final rather than with the dot they
- * draw: the diagram keeps its two illustrative dots, the selector is what places.
+ * draw: the diagram keeps its two illustrative dots, the selector is what places. Every other
+ * circuit marker answers with its own leg's selected distance; the threshold is zero.
  */
-export function markerDistanceNm(id: MarkerId, final: FinalPlacementName): number {
-  return isFinalMarker(id) ? FINAL_DISTANCE_NM[final] : (CIRCUIT_MARKERS[id].distNm ?? 0);
+export function markerDistanceNm(
+  id: MarkerId,
+  final: FinalPlacementName,
+  circuitDistanceNm: Record<CircuitLegKind, number>,
+): number {
+  if (isFinalMarker(id)) {
+    return FINAL_DISTANCE_NM[final];
+  }
+  const legKind = legKindOf(id);
+  return legKind === null ? 0 : circuitDistanceNm[legKind];
 }
 
 /** The label shown for the selected marker: the finals name their selected distance. */
