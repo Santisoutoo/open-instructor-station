@@ -44,6 +44,9 @@ export const instructorApi = createApi({
     // resolves tag types at `createApi` time — `injectEndpoints` cannot add one.
     'CameraPositions',
     'Traffic',
+    // Owned by `features/cockpit/cockpitApi.ts`, same reason.
+    'CockpitCatalog',
+    'CockpitState',
   ],
   endpoints: (builder) => ({
     getHealth: builder.query<HealthResponse, void>({
