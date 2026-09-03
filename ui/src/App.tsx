@@ -7,6 +7,7 @@ import { StatusBar } from './components/StatusBar';
 import { TabBar } from './components/TabBar';
 import { ThemeToggle } from './components/ThemeToggle';
 import { TABS } from './components/tabs';
+import { SUPPORT_URL } from './config/support';
 import { AirportGate } from './features/startup/AirportGate';
 import { useMockTelemetryFeed } from './features/telemetry/useMockTelemetryFeed';
 import { useTelemetrySocket } from './features/telemetry/useTelemetrySocket';
@@ -77,6 +78,15 @@ export default function App() {
               Context
             </button>
             <ConnectionBadge />
+            <a
+              className="ghost-button"
+              href={SUPPORT_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Support the project — Buy Me a Coffee"
+            >
+              Support
+            </a>
           </div>
         </header>
       )}

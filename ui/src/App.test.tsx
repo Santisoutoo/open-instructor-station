@@ -8,6 +8,7 @@ import { render, screen, waitFor } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App';
+import { SUPPORT_URL } from './config/support';
 import { readyStartupState } from './features/startup/testFixtures';
 import { setupStore } from './store';
 import { tabSelected } from './store/uiSlice';
@@ -125,5 +126,27 @@ describe('App — gated tabs', () => {
     await waitFor(() => {
       expect(store.getState().ui.activeTab).toBe('position');
     });
+  });
+});
+
+describe('App — support link', () => {
+  it('renders the Buy Me a Coffee support link pointing at SUPPORT_URL', async () => {
+    const store = readyStore();
+    render(
+      <Provider store={store}>
+        <App />
+      </Provider>,
+    );
+
+    // The header (and the support link inside it) is only rendered outside the
+    // full-bleed Position tab, which is the default active tab.
+    store.dispatch(tabSelected('weather'));
+
+    const link = await screen.findByRole('link', {
+      name: 'Support the project — Buy Me a Coffee',
+    });
+    expect(link).toHaveAttribute('href', SUPPORT_URL);
+    expect(link).toHaveAttribute('target', '_blank');
+    expect(link.getAttribute('rel')).toContain('noreferrer');
   });
 });
