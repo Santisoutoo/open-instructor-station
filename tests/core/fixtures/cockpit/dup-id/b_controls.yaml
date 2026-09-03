@@ -1,0 +1,7 @@
+controls:
+  - control_id: dup
+    label: Dup B
+    panel_id: p
+    kind: press
+    verified_on: 2026-09-02
+    binding: {press: fake/dup/press_b}

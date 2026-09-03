@@ -1,0 +1,11 @@
+# Broken fixture: the same control_id is defined in two files (§8.1's
+# "dup-id/" case).
+aircraft:
+  catalog_id: dup-id
+  label: Dup id fixture
+detect:
+  dataref_exists: fake/dup-id/present
+panels:
+  - panel_id: p
+    label: P
+    order: 0

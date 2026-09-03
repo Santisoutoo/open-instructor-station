@@ -1,0 +1,9 @@
+controls:
+  - control_id: x
+    label: X
+    panel_id: p
+    kind: toggle
+    verified_on: 2026-09-02
+    binding: {press: fake/x/press, read: fake/x/status}
+setup_overrides:
+  no_such_field: x

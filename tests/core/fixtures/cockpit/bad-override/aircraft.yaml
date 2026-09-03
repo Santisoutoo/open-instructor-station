@@ -1,0 +1,11 @@
+# Broken fixture: setup_overrides names a field AircraftSetup does not have
+# (§8.1's "bad-override/" case).
+aircraft:
+  catalog_id: bad-override
+  label: Bad override fixture
+detect:
+  dataref_exists: fake/bad-override/present
+panels:
+  - panel_id: p
+    label: P
+    order: 0

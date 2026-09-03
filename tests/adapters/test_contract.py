@@ -23,10 +23,28 @@ The history behind those rules is in ``docs/designs/live-contract-suite.md``.
 """
 
 import asyncio
+import datetime
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import pytest
+from core.cockpit.errors import (
+    CockpitCatalogInactive,
+    CockpitControlUnknown,
+    CockpitPreconditionUnmet,
+)
+from core.cockpit.models import (
+    CockpitActuation,
+    CockpitAircraft,
+    CockpitBinding,
+    CockpitCatalogDocument,
+    CockpitControlDefinition,
+    CockpitControlKind,
+    CockpitControlSpec,
+    CockpitDetection,
+    CockpitPanel,
+    CockpitValue,
+)
 from pydantic import ValidationError
 
 from adapters.fake import FakeSimAdapter
@@ -260,6 +278,14 @@ CAMERA_OFFSET_TOLERANCE = {"fake": 0.001, "xplane": 0.5}
 #: capture the view before it starts.
 CAMERA_RESTING_VIEW: CameraViewId = "cockpit"
 
+#: Per-adapter dial/encoder read-back tolerance for the cockpit contract
+#: tests (docs/designs/cockpit-control-catalog.md §4.2). ``None`` means "use
+#: the entry's own ``readback_tolerance``" — a live catalog states its own
+#: tolerance per control (§3.1), so there is no single fixed number that
+#: would work across every X-Plane dial the way :data:`COMMANDED_IAS_TOLERANCE_KT`
+#: does for a single flight-state field.
+COCKPIT_READBACK_TOLERANCE: dict[str, float | None] = {"fake": 0.0, "xplane": None}
+
 #: Which test pins each capability. ``PENDING`` marks a flag whose manager
 #: arrives in a later phase: the contract is not written yet, and that is a
 #: deliberate, visible decision rather than an oversight.
@@ -275,6 +301,7 @@ CAPABILITY_COVERAGE: dict[str, str] = {
     "can_set_fuel_payload": "test_set_loadout_round_trips",
     "can_control_camera": "test_set_camera_view_is_accepted_for_every_supported_view",
     "can_pushback": "test_pushback_moves_the_aircraft_backward",
+    "can_control_cockpit": "test_actuate_toggle_round_trips",
 }
 
 #: Capability -> a setup carrying a field that capability gates. Used twice: to
@@ -1938,6 +1965,472 @@ async def test_switching_view_clears_the_offset_read(adapter: SimAdapter) -> Non
 
 
 # --------------------------------------------------------------------------
+# can_control_cockpit
+# --------------------------------------------------------------------------
+
+#: A second, minimal synthetic catalog used only by
+#: :func:`test_swapping_the_aircraft_replaces_the_catalog` — a different
+#: ``catalog_id`` and a single toggle, so the swap is unmistakably a
+#: different aircraft rather than a mutated copy of ``fake-trainer``.
+_FAKE_OTHER_DOCUMENT = CockpitCatalogDocument(
+    aircraft=CockpitAircraft(catalog_id="fake-other", label="Fake other"),
+    detect=CockpitDetection(dataref_exists="fake/other/present"),
+    panels=[CockpitPanel(panel_id="p", label="P", order=0)],
+    controls=[
+        CockpitControlDefinition(
+            control_id="only_switch",
+            label="Only switch",
+            panel_id="p",
+            kind="toggle",
+            readable=True,
+            verified_on=datetime.date(2026, 9, 2),
+            binding=CockpitBinding(press="fake/only_switch/press", read="fake/only_switch/status"),
+        )
+    ],
+)
+
+
+async def _first_control(
+    adapter: SimAdapter, kind: CockpitControlKind, *, live_sweep: bool = True
+) -> CockpitControlSpec | None:
+    """The first actuable spec of ``kind`` in ``adapter``'s own active catalog.
+
+    ``None`` when there is no active catalog, or none of ``kind`` marked
+    ``live_sweep`` — the per-kind tests below skip on that, with the
+    sentence §4.2 pins, which is only an ENVIRONMENTAL skip against a live
+    simulator with an uncatalogued aircraft loaded (the ``grounded_adapter``
+    precedent), never against the Fake — see
+    :func:`test_fake_cockpit_catalog_has_a_live_sweep_control_of_every_kind`.
+    """
+    catalog = await adapter.get_cockpit_catalog()
+    for spec in catalog.controls:
+        if spec.kind == kind and (not live_sweep or spec.live_sweep):
+            return spec
+    return None
+
+
+def _cockpit_readback_tolerance(adapter_name: str, spec: CockpitControlSpec) -> float:
+    tolerance = COCKPIT_READBACK_TOLERANCE[adapter_name]
+    return spec.readback_tolerance if tolerance is None else tolerance
+
+
+def _require_numeric(value: CockpitValue | None) -> float:
+    """Narrow a possibly-``None`` cockpit read-back to a float.
+
+    Fails loudly rather than silently coercing ``None`` — every call site
+    only reaches this after selecting a ``readable`` dial/encoder via
+    :func:`_first_control`, so a ``None`` here is a real adapter bug, not an
+    expected case to swallow.
+    """
+    assert value is not None, "expected a numeric cockpit read-back, got None"
+    return float(value)
+
+
+#: Every control kind, precisely typed — a bare ``tuple[str, ...]`` loop
+#: variable would not satisfy :func:`_first_control`'s
+#: ``CockpitControlKind`` parameter without a per-call ``# type: ignore``.
+_ALL_CONTROL_KINDS: tuple[CockpitControlKind, ...] = (
+    "toggle",
+    "press",
+    "dial",
+    "encoder",
+    "selector",
+)
+
+
+async def test_fake_cockpit_catalog_has_a_live_sweep_control_of_every_kind() -> None:
+    """The mechanical proof that the per-kind skips below are never vacuous
+    against the Fake. ``FakeSimAdapter`` declares ``can_control_cockpit``
+    (:func:`test_fake_adapter_declares_every_capability`) and its synthetic
+    catalog (§4.1) covers every kind with at least one ``live_sweep`` entry
+    — a broken Fake catalog would otherwise turn all five per-kind tests
+    into silent, always-passing skips instead of real assertions.
+    """
+    sim = FakeSimAdapter()
+    await sim.connect()
+    try:
+        for kind in _ALL_CONTROL_KINDS:
+            spec = await _first_control(sim, kind)
+            assert spec is not None, f"fake-trainer has no live_sweep {kind!r} control"
+    finally:
+        await sim.disconnect()
+
+
+async def test_actuate_toggle_round_trips(adapter: SimAdapter) -> None:
+    """The flag's coverage entry (§4.2).
+
+    Guarded-toggle rule (research §1): actuating the value already in place
+    performs no press — ``actions_taken`` is 0 the second time.
+    """
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    spec = await _first_control(adapter, "toggle")
+    if spec is None:
+        pytest.skip(
+            f"{adapter.name}: the active cockpit catalog has no toggle control marked live_sweep"
+        )
+
+    before = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+    original = bool(before)
+    target = not original
+    try:
+        flipped = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=target)
+        )
+        assert flipped.state.value == target
+        assert flipped.actions_taken == 1
+
+        unchanged = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=target)
+        )
+        assert unchanged.actions_taken == 0
+        assert unchanged.state.value == target
+    finally:
+        await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=original)
+        )
+
+
+async def test_actuate_dial_round_trips(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    spec = await _first_control(adapter, "dial")
+    if spec is None:
+        pytest.skip(
+            f"{adapter.name}: the active cockpit catalog has no dial control marked live_sweep"
+        )
+    assert spec.min_value is not None
+    assert spec.max_value is not None
+    assert spec.step is not None
+    tolerance = _cockpit_readback_tolerance(adapter.name, spec)
+
+    original = _require_numeric(
+        (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+    )
+    target = (
+        original + spec.step if original + spec.step <= spec.max_value else original - spec.step
+    )
+    try:
+        result = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=target)
+        )
+        assert _require_numeric(result.state.value) == pytest.approx(target, abs=tolerance)
+        confirmed = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+        assert _require_numeric(confirmed) == pytest.approx(target, abs=tolerance)
+    finally:
+        await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=original)
+        )
+
+
+async def test_actuate_selector_round_trips(adapter: SimAdapter) -> None:
+    """Cycle to the option after the current one, wrapping to the first."""
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    spec = await _first_control(adapter, "selector")
+    if spec is None:
+        pytest.skip(
+            f"{adapter.name}: the active cockpit catalog has no selector control marked live_sweep"
+        )
+    assert spec.options is not None
+    values = [option.value for option in spec.options]
+
+    original = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+    current_index = values.index(original)
+    target = values[(current_index + 1) % len(values)]
+    try:
+        result = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=target)
+        )
+        assert result.state.value == target
+    finally:
+        await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=original)
+        )
+
+
+async def test_actuate_encoder_moves_by_delta(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    spec = await _first_control(adapter, "encoder")
+    if spec is None:
+        pytest.skip(
+            f"{adapter.name}: the active cockpit catalog has no encoder control marked live_sweep"
+        )
+    assert spec.step is not None
+    tolerance = _cockpit_readback_tolerance(adapter.name, spec)
+
+    original: float | None = None
+    if spec.readable:
+        value = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+        original = _require_numeric(value)
+
+    try:
+        up = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, delta=2)
+        )
+        if spec.readable:
+            assert original is not None
+            assert _require_numeric(up.state.value) == pytest.approx(
+                original + 2 * spec.step, abs=tolerance
+            )
+        else:
+            assert up.state.value is None
+    finally:
+        down = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, delta=-2)
+        )
+        if spec.readable:
+            assert original is not None
+            assert _require_numeric(down.state.value) == pytest.approx(original, abs=tolerance)
+        else:
+            assert down.state.value is None
+
+
+async def test_press_control_is_accepted(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    spec = await _first_control(adapter, "press")
+    if spec is None:
+        pytest.skip(
+            f"{adapter.name}: the active cockpit catalog has no press control marked live_sweep"
+        )
+
+    result = await adapter.actuate_cockpit_control(CockpitActuation(control_id=spec.control_id))
+    assert result.actions_taken == 1
+    assert result.state.value is None
+
+
+async def test_actuate_refuses_unmet_precondition(adapter: SimAdapter) -> None:
+    """§4.2. Against the Fake this is exactly ``hdg_sel`` gated on
+    ``fd_capt``/``cmd_a`` (research §2's finding, reproduced here in CI).
+
+    Restricted to controls whose every referenced precondition control is a
+    toggle (§4.2's own carve-out: "only if every one of them is a
+    toggle/selector the test can safely restore") — a selector-gated
+    precondition is left to a catalog-specific live test.
+    """
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    catalog = await adapter.get_cockpit_catalog()
+    spec = next((entry for entry in catalog.controls if entry.preconditions), None)
+    if spec is None:
+        pytest.skip(f"{adapter.name}: the active cockpit catalog has no control with preconditions")
+    group = spec.preconditions[0]
+    referenced_ids = [condition.control_id for condition in group.any_of]
+    referenced_specs = {
+        entry.control_id: entry for entry in catalog.controls if entry.control_id in referenced_ids
+    }
+    if any(entry.kind != "toggle" for entry in referenced_specs.values()):
+        pytest.skip(
+            f"{adapter.name}: this precondition references a non-toggle control the "
+            "test cannot safely drive and restore"
+        )
+
+    own_before = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+    referenced_originals = {
+        control_id: (await adapter.read_cockpit_states([control_id])).states[0].value
+        for control_id in referenced_ids
+    }
+    try:
+        for control_id in referenced_ids:
+            await adapter.actuate_cockpit_control(
+                CockpitActuation(control_id=control_id, value=False)
+            )
+
+        with pytest.raises(CockpitPreconditionUnmet) as excinfo:
+            await adapter.actuate_cockpit_control(
+                CockpitActuation(control_id=spec.control_id, value=True)
+            )
+        assert group.hint in str(excinfo.value)
+
+        after_refusal = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+        assert after_refusal == own_before
+
+        satisfy_id = referenced_ids[0]
+        await adapter.actuate_cockpit_control(CockpitActuation(control_id=satisfy_id, value=True))
+        result = await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=True)
+        )
+        assert result.state.value is True
+    finally:
+        # The control itself is gated by the same precondition it is being
+        # restored from, so it must go back BEFORE the referenced controls
+        # that satisfy it — restoring fd_capt/cmd_a first would make turning
+        # hdg_sel back off raise the very error this test exists to prove.
+        await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=spec.control_id, value=own_before)
+        )
+        for control_id, original_value in referenced_originals.items():
+            await adapter.actuate_cockpit_control(
+                CockpitActuation(control_id=control_id, value=original_value)
+            )
+
+
+async def test_read_cockpit_states_reports_requested_ids_only(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    catalog = await adapter.get_cockpit_catalog()
+    if catalog.aircraft is None:
+        pytest.skip(f"{adapter.name}: no cockpit catalog is active for the loaded aircraft")
+
+    readable_ids = [spec.control_id for spec in catalog.controls if spec.readable]
+    if len(readable_ids) < 2:
+        pytest.skip(f"{adapter.name}: the active catalog has fewer than two readable controls")
+    a_id, b_id = readable_ids[0], readable_ids[1]
+
+    scoped = await adapter.read_cockpit_states([a_id, b_id])
+    assert [state.control_id for state in scoped.states] == [a_id, b_id]
+
+    everything = await adapter.read_cockpit_states()
+    assert {state.control_id for state in everything.states} == set(readable_ids)
+    assert len(everything.states) == len(readable_ids)
+
+    non_readable_ids = [spec.control_id for spec in catalog.controls if not spec.readable]
+    if non_readable_ids:
+        one = await adapter.read_cockpit_states([non_readable_ids[0]])
+        assert one.states[0].value is None
+
+
+async def test_actuate_unknown_control_raises(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    catalog = await adapter.get_cockpit_catalog()
+    if catalog.aircraft is None:
+        pytest.skip(f"{adapter.name}: no cockpit catalog is active for the loaded aircraft")
+
+    with pytest.raises(CockpitControlUnknown):
+        await adapter.actuate_cockpit_control(CockpitActuation(control_id="no_such_control"))
+
+    if not catalog.parked:
+        pytest.skip(f"{adapter.name}: the active catalog has no parked entries")
+    parked = catalog.parked[0]
+    with pytest.raises(CockpitControlUnknown) as excinfo:
+        await adapter.actuate_cockpit_control(
+            CockpitActuation(control_id=parked.control_id, value=True)
+        )
+    assert parked.reason in str(excinfo.value)
+
+
+async def test_actuate_rejects_kind_mismatch(adapter: SimAdapter) -> None:
+    """§2.2's mismatch table, against whichever kinds the active catalog has.
+    Nothing is ever written: every case is verified unchanged afterwards."""
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    catalog = await adapter.get_cockpit_catalog()
+    if catalog.aircraft is None:
+        pytest.skip(f"{adapter.name}: no cockpit catalog is active for the loaded aircraft")
+
+    by_kind: dict[str, CockpitControlSpec] = {}
+    for entry in catalog.controls:
+        by_kind.setdefault(entry.kind, entry)
+
+    cases: list[tuple[CockpitControlSpec, CockpitActuation]] = []
+    if "dial" in by_kind:
+        dial = by_kind["dial"]
+        assert dial.max_value is not None
+        cases.append((dial, CockpitActuation(control_id=dial.control_id, value=True)))
+        cases.append(
+            (dial, CockpitActuation(control_id=dial.control_id, value=dial.max_value + 1_000_000.0))
+        )
+    if "toggle" in by_kind:
+        toggle = by_kind["toggle"]
+        cases.append((toggle, CockpitActuation(control_id=toggle.control_id, delta=1)))
+    if "encoder" in by_kind:
+        encoder = by_kind["encoder"]
+        cases.append((encoder, CockpitActuation(control_id=encoder.control_id, value=1.0)))
+    if "press" in by_kind:
+        press = by_kind["press"]
+        cases.append((press, CockpitActuation(control_id=press.control_id, value=True)))
+    if not cases:
+        pytest.skip(f"{adapter.name}: not enough kinds in the active catalog for a mismatch case")
+
+    for entry, actuation in cases:
+        before = None
+        if entry.readable:
+            before = (await adapter.read_cockpit_states([entry.control_id])).states[0].value
+        with pytest.raises(ValueError, match=r".*"):
+            await adapter.actuate_cockpit_control(actuation)
+        if entry.readable:
+            after = (await adapter.read_cockpit_states([entry.control_id])).states[0].value
+            assert after == before
+
+
+async def test_refresh_bumps_the_revision(adapter: SimAdapter) -> None:
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    before = await adapter.get_cockpit_catalog()
+    refreshed = await adapter.refresh_cockpit_catalog()
+    assert refreshed.revision > before.revision
+
+    after = await adapter.get_cockpit_catalog()
+    assert after.revision == refreshed.revision
+    if before.aircraft is not None:
+        assert refreshed.aircraft is not None
+        assert refreshed.aircraft.catalog_id == before.aircraft.catalog_id
+
+
+async def test_cockpit_state_and_result_carry_the_revision(adapter: SimAdapter) -> None:
+    """The UI's swap detector (D13): a snapshot and an actuation result both
+    name the revision they were taken/applied against."""
+    if not adapter.capabilities.can_control_cockpit:
+        pytest.skip(f"{adapter.name} does not declare can_control_cockpit")
+    catalog = await adapter.get_cockpit_catalog()
+    if catalog.aircraft is None:
+        pytest.skip(f"{adapter.name}: no cockpit catalog is active for the loaded aircraft")
+
+    states = await adapter.read_cockpit_states()
+    assert states.revision == catalog.revision
+
+    spec = await _first_control(adapter, "toggle")
+    if spec is None:
+        pytest.skip(
+            f"{adapter.name}: the active cockpit catalog has no toggle control marked live_sweep"
+        )
+    current = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+    # A no-op actuation (request the value already in place) needs no restore.
+    result = await adapter.actuate_cockpit_control(
+        CockpitActuation(control_id=spec.control_id, value=bool(current))
+    )
+    assert result.actions_taken == 0
+    assert result.revision == catalog.revision
+
+
+async def test_swapping_the_aircraft_replaces_the_catalog() -> None:
+    """Fake-only, via the ``load_cockpit_catalog`` test affordance (§4.1) —
+    the CI-visible surface of "the aircraft was swapped"."""
+    sim = FakeSimAdapter()
+    await sim.connect()
+    try:
+        original = await sim.get_cockpit_catalog()
+        assert original.aircraft is not None
+        original_control_id = original.controls[0].control_id
+
+        sim.load_cockpit_catalog(_FAKE_OTHER_DOCUMENT)
+        swapped = await sim.get_cockpit_catalog()
+        assert swapped.aircraft is not None
+        assert swapped.aircraft.catalog_id == "fake-other"
+        assert swapped.revision > original.revision
+
+        with pytest.raises(CockpitControlUnknown):
+            await sim.read_cockpit_states([original_control_id])
+
+        sim.load_cockpit_catalog(None)
+        cleared = await sim.get_cockpit_catalog()
+        assert cleared.aircraft is None
+
+        empty_states = await sim.read_cockpit_states()
+        assert empty_states.catalog_id is None
+
+        with pytest.raises(CockpitCatalogInactive):
+            await sim.actuate_cockpit_control(
+                CockpitActuation(control_id="only_switch", value=True)
+            )
+    finally:
+        await sim.disconnect()
+
+
+# --------------------------------------------------------------------------
 # Capability-free reads
 # --------------------------------------------------------------------------
 
@@ -2353,5 +2846,42 @@ async def test_offset_methods_refuse_without_custom_positions_support() -> None:
         for view_id in CAMERA_VIEW_IDS:
             await sim.set_camera_view(view_id)
         assert await sim.get_camera_offset() is None
+    finally:
+        await sim.disconnect()
+
+
+async def test_cockpit_methods_refuse_without_the_capability() -> None:
+    """The refusal half of ``can_control_cockpit`` (cockpit-control-catalog.md §4.2).
+
+    ``FakeSimAdapter`` declares every capability
+    (:func:`test_fake_adapter_declares_every_capability`), so a skip-guarded
+    case against the parametrised ``adapter`` fixture would never actually
+    exercise this — the same reasoning every other capability's refusal test
+    in this cluster already states.
+
+    The three *writes*/mutating reads raise; ``get_cockpit_catalog`` is
+    capability-free (D1) and answers ``supported=False`` with a reason
+    instead.
+    """
+
+    class NoCockpitAdapter(FakeSimAdapter):
+        @property
+        def capabilities(self) -> Capabilities:
+            return super().capabilities.model_copy(update={"can_control_cockpit": False})
+
+    sim = NoCockpitAdapter()
+    await sim.connect()
+    try:
+        with pytest.raises(CapabilityNotSupported, match="can_control_cockpit"):
+            await sim.refresh_cockpit_catalog()
+        with pytest.raises(CapabilityNotSupported, match="can_control_cockpit"):
+            await sim.read_cockpit_states()
+        with pytest.raises(CapabilityNotSupported, match="can_control_cockpit"):
+            await sim.actuate_cockpit_control(CockpitActuation(control_id="fd_capt", value=True))
+
+        catalog = await sim.get_cockpit_catalog()
+        assert catalog.supported is False
+        assert catalog.reason
+        assert catalog.aircraft is None
     finally:
         await sim.disconnect()

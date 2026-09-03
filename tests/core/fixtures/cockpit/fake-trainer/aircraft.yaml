@@ -1,0 +1,31 @@
+# The "fake-trainer" catalog, in file form.
+#
+# This is a hand-written mirror of the Python constant
+# `adapters.fake.cockpit_catalog.FAKE_COCKPIT_CATALOG` (docs/designs/
+# cockpit-control-catalog.md D12, §4.1). It exists so the loader has
+# something real to exercise in CI, and so `test_cockpit_catalog.py`'s
+# consistency guard can prove the Python constant and this fixture never
+# drift apart: `FAKE_COCKPIT_CATALOG == load_catalog_dir(this directory)`,
+# field for field. Every detail this design left open for the Fake — labels,
+# `fake/...` binding strings, no hints on non-precondition controls,
+# `verified_against=None`, `path_hints=[]` — is PINNED HERE FIRST: this
+# fixture is the oracle, and the Python constant must match it, not the
+# other way around.
+aircraft:
+  catalog_id: fake-trainer
+  label: Fake trainer
+detect:
+  dataref_exists: fake/cockpit/present
+panels:
+  - panel_id: mcp
+    label: MCP / autopilot
+    order: 0
+  - panel_id: overhead
+    label: Overhead
+    order: 1
+  - panel_id: pedestal
+    label: Pedestal
+    order: 2
+  - panel_id: lights
+    label: Lights
+    order: 3

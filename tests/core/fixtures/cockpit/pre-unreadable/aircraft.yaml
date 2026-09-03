@@ -1,0 +1,11 @@
+# Broken fixture: a precondition references a control that is not readable
+# (a `press`) — §8.1's "pre-unreadable/" case.
+aircraft:
+  catalog_id: pre-unreadable
+  label: Pre-unreadable fixture
+detect:
+  dataref_exists: fake/pre-unreadable/present
+panels:
+  - panel_id: p
+    label: P
+    order: 0
