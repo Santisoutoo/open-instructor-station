@@ -308,7 +308,10 @@ async def test_zibo_hdg_sel_needs_a_flight_director_or_cmd_before_it_arms(
         armed = await live_adapter.actuate_cockpit_control(
             CockpitActuation(control_id="hdg_sel", value=True)
         )
-        assert armed.state.value is True
+        # X-Plane reports a toggle status as a JSON float (1.0/0.0), never a
+        # Python bool — `bool(...)`, not `is True` (core/cockpit/preconditions.py
+        # had exactly this float-vs-bool bug; the assertion style mirrors the fix).
+        assert bool(armed.state.value) is True
     finally:
         current_hdg_sel = (await live_adapter.read_cockpit_states(["hdg_sel"])).states[0].value
         if bool(current_hdg_sel):
@@ -406,8 +409,10 @@ async def test_zibo_setup_overrides_deliver_the_autopilot_fields_via_apply_setup
         alt_state = (await live_adapter.read_cockpit_states(["mcp_alt"])).states[0].value
         hdg_state = (await live_adapter.read_cockpit_states(["mcp_hdg"])).states[0].value
 
-        assert fd_state is True
-        assert hdg_sel_state is True
+        # X-Plane reports a toggle status as a JSON float (1.0/0.0), never a
+        # Python bool — `bool(...)`, not `is True`.
+        assert bool(fd_state) is True
+        assert bool(hdg_sel_state) is True
         assert alt_state == pytest.approx(target_altitude, abs=0.0)
         assert hdg_state == pytest.approx(target_heading, abs=0.0)
 
@@ -417,7 +422,7 @@ async def test_zibo_setup_overrides_deliver_the_autopilot_fields_via_apply_setup
         # finally below, which also clears cmd_b's channel for free.
         await live_adapter.apply_setup(AircraftSetup(autopilot_master=True))
         cmd_a_state = (await live_adapter.read_cockpit_states(["cmd_a"])).states[0].value
-        assert cmd_a_state is True
+        assert bool(cmd_a_state) is True
     finally:
         await live_adapter.actuate_cockpit_control(CockpitActuation(control_id="ap_disconnect"))
         current_hdg_sel = (await live_adapter.read_cockpit_states(["hdg_sel"])).states[0].value
