@@ -1,0 +1,37 @@
+# Zibo Mod B737-800X — catalog root.
+#
+# Shipped by Wave 1 Track B (docs/designs/cockpit-control-catalog.md §5.1):
+# identity, live detection and the panel layout only. NO controls here — that
+# is Wave 2 (issues #222-#224), one file per panel
+# (mcp.yaml / overhead.yaml / pedestal.yaml / lights.yaml), each disjoint at
+# the file level so the three issues never conflict (D4).
+#
+# detect.dataref_exists is read-back confirmed BOTH present (Zibo loaded) and
+# absent (Zibo not loaded) against a live X-Plane 12.4.3 install
+# (docs/research/zibo-737-autopilot-dataref-mapping.md §7). Never acf_ICAO —
+# both the stock 737-800 and the Zibo read "B738" (§7's finding); the MCP
+# altitude dial dataref exists on the Zibo only.
+
+aircraft:
+  catalog_id: zibo-b738
+  label: "Zibo Mod B737-800X"
+  path_hints:
+    - B737-800X
+  verified_against: "Zibo 4.05.33, X-Plane 12.4.3, 2026-09-02"
+
+detect:
+  dataref_exists: laminar/B738/autopilot/mcp_alt_dial
+
+panels:
+  - panel_id: mcp
+    label: MCP / autopilot
+    order: 0
+  - panel_id: overhead
+    label: Overhead
+    order: 1
+  - panel_id: pedestal
+    label: Pedestal
+    order: 2
+  - panel_id: lights
+    label: Lights
+    order: 3
