@@ -271,9 +271,8 @@
 
 .pos-startat {
   left: 12rem;
-  width: 716px;
   display: grid;
-  grid-template-columns: 186px auto 200px;
+  grid-template-columns: 160px auto 200px;
   gap: 1rem;
 }
 
@@ -286,21 +285,18 @@
 }
 
 /*
- * On a short viewport (1280×800 tablet) the bottom bar wraps taller and the full-height
- * sidebar pushes the popover's top edge past the top of the screen by a few pixels. The
- * sidebar is the only column without its own cap — the stand list and the diagram are both
- * 262px — so cap it and let it scroll, rather than shrinking the 44px touch rows.
+ * Some airports publish far more runway ends than the diagram and stand list have room
+ * for — LEMD alone has eight — and without its own cap the sidebar was the one column
+ * that grew to fit all of them, stretching the whole popover well past its neighbours
+ * and leaving the diagram and stand list stranded in a mostly empty row (issue #229
+ * follow-up). Capped to the same height as the diagram, it scrolls instead, and the two
+ * side-by-side columns stop wasting the space the sidebar isn't using.
  */
-@media (max-height: 820px) {
-  .pos-startat--above .pos-startat__sidebar {
-    max-height: 396px;
-    overflow-y: auto;
-  }
-}
-
 .pos-startat__sidebar {
   display: flex;
   flex-direction: column;
+  max-height: 300px;
+  overflow-y: auto;
   gap: 1rem;
 }
 
@@ -357,7 +353,9 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 262px;
+  /* The count line above it takes the rest, so the list still bottoms out level with the
+     300px diagram beside it rather than falling short by that line's own height. */
+  max-height: 276px;
   overflow-y: auto;
 }
 
@@ -1792,17 +1790,6 @@
   opacity: 0.85;
 }
 
-.pos-bottombar__na {
-  color: var(--pos-caution);
-}
-
-/* On its own row under Course / ILS frequency — the gap issue #166 points at. */
-.pos-bottombar__startat {
-  flex-basis: 100%;
-  padding-left: 0;
-  text-align: left;
-}
-
 /* ----------------------------------------------------------------- checkbox */
 
 .pos-checkbox {
@@ -1847,14 +1834,6 @@
   line-height: 15px;
   text-align: center;
   color: var(--pos-on-accent);
-}
-
-.pos-checkbox--disabled {
-  opacity: 0.55;
-}
-
-.pos-checkbox--disabled .pos-checkbox__input {
-  cursor: not-allowed;
 }
 
 /* ------------------------------------------------------- gates and states */
