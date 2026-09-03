@@ -21,6 +21,7 @@ from core.cockpit.models import (
     PreconditionGroup,
 )
 from core.cockpit.preconditions import (
+    _condition_satisfied,
     precondition_order,
     referenced_control_ids,
     unmet_preconditions,
@@ -74,6 +75,23 @@ def test_unmet_preconditions_with_no_preconditions_is_empty() -> None:
     doc = _fake_trainer_document()
     (fd_capt,) = [c.spec for c in doc.controls if c.control_id == "fd_capt"]
     assert unmet_preconditions(fd_capt, {}) == ()
+
+
+def test_unmet_preconditions_satisfied_by_a_live_float_readback() -> None:
+    """Regression for the live bug: a real adapter (e.g. X-Plane's Web API) reports
+    every toggle-status dataref as a JSON float, never a Python bool. A catalog's
+    ``equals: true`` must match a live ``1.0`` readback exactly like it matches
+    ``True`` — this is the exact case that silently blocked hdg_sel/vorloc/app
+    through ``actuate_cockpit_control`` against a real simulator."""
+    spec = _hdg_sel_spec()
+    assert unmet_preconditions(spec, {"fd_capt": 1.0}) == ()
+
+
+def test_unmet_preconditions_bool_true_still_satisfies() -> None:
+    """The FakeSimAdapter/mock path (a literal bool state) must keep working
+    exactly as before — this is what made the float regression invisible in CI."""
+    spec = _hdg_sel_spec()
+    assert unmet_preconditions(spec, {"fd_capt": True}) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -140,3 +158,50 @@ def test_cycle_fixture_is_rejected_at_load_time() -> None:
     all (§8.1's "cycle/" fixture)."""
     with pytest.raises(CockpitCatalogLoadError):
         load_catalog_dir(FIXTURE_DIR / "cycle")
+
+
+# ---------------------------------------------------------------------------
+# _condition_satisfied — bool/numeric equivalence (regression for the live
+# bug: X-Plane's Web API reports every toggle-status dataref as a JSON float,
+# never a Python bool, so a catalog's ``equals: true`` must match a live
+# ``1.0``/``0.0`` readback — and the mirror direction too).
+# ---------------------------------------------------------------------------
+
+
+def _condition(equals: bool | int | float | str) -> ControlCondition:
+    return ControlCondition(control_id="fd_capt", equals=equals)
+
+
+def test_condition_satisfied_bool_equals_matches_numeric_one() -> None:
+    """The exact live bug case: equals=True against a live value=1.0."""
+    assert _condition_satisfied(_condition(True), 1.0) is True
+
+
+def test_condition_satisfied_bool_equals_matches_numeric_zero() -> None:
+    assert _condition_satisfied(_condition(False), 0.0) is True
+
+
+def test_condition_satisfied_bool_equals_rejects_mismatched_numeric() -> None:
+    assert _condition_satisfied(_condition(True), 0.0) is False
+
+
+def test_condition_satisfied_numeric_equals_matches_bool_value() -> None:
+    """Mirror case: equals=1 (a plain int, not a bool) against value=True."""
+    assert _condition_satisfied(_condition(1), True) is True
+
+
+def test_condition_satisfied_bool_equals_bool_value_unchanged() -> None:
+    assert _condition_satisfied(_condition(True), True) is True
+    assert _condition_satisfied(_condition(True), False) is False
+    assert _condition_satisfied(_condition(False), False) is True
+
+
+def test_condition_satisfied_numeric_equals_numeric_value_unchanged() -> None:
+    assert _condition_satisfied(_condition(180.0), 180.0000001) is True
+    assert _condition_satisfied(_condition(180.0), 181.0) is False
+
+
+def test_condition_satisfied_genuine_type_mismatch_is_not_satisfied() -> None:
+    """A string ``equals`` must never match a numeric value — the fix must not
+    make the comparison so permissive it papers over a real type mismatch."""
+    assert _condition_satisfied(_condition("on"), 1.0) is False
