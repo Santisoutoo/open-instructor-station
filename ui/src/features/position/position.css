@@ -572,8 +572,11 @@
 .pos-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 1rem;
+  container: pos-main / inline-size;
 }
 
 .pos-chip {
@@ -909,8 +912,22 @@
 
 .pos-procdiagram {
   position: relative;
-  width: 600px;
-  max-width: 100%;
+  width: 100%;
+}
+
+/* Sizing stays width-driven even here — `width` (not `max-height`) is what's capped, derived
+   from the available height via `100cqh * 600/380` so the SVG's own `height:auto` still follows
+   from width exactly as it always has. Capping height directly would decouple the axes and let
+   the box drift off 600:380, which misaligns every percentage-positioned node overlay
+   (`ProcedureDiagram.tsx`) — a regression a screenshot wouldn't catch. `min(100%, ...)` means
+   the diagram is only ever narrower than its 1fr column when the height budget is the binding
+   constraint; `flex:none` on the `.pos-sidstartab__picture` flex row keeps it from stretching
+   back out once its own width is explicitly set. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) .pos-procdiagram {
+    width: min(100%, calc(100cqh * 600 / 380));
+    flex: none;
+  }
 }
 
 .pos-procdiagram__svg {
@@ -1017,12 +1034,27 @@
 /* ----------------------------------------------------------- procedure diagram, 3D */
 
 /* Sized explicitly, unlike the 2D SVG's viewBox: a WebGL canvas has no auto-scaling, and an
-   unset height collapses to 0. Same footprint as .pos-procdiagram so the 2D/3D toggle doesn't
-   jump the layout underneath it. */
+   unset height collapses to 0. Footprint parity with .pos-procdiagram is structural, not a
+   matched pixel value: both are 100% of the same capped grid column, and both share the
+   600:380 intrinsic ratio (2D via viewBox + height: auto, 3D via aspect-ratio below), so the
+   2D/3D toggle still can't jump the layout underneath it at any container width. */
 .pos-procdiagram3d {
   position: relative;
-  width: 600px;
-  max-width: 100%;
+  width: 100%;
+}
+
+/* Same width-driven-height-cap technique as `.pos-procdiagram` above, with one addition: this
+   wrapper's own height is canvas_height + `.pos-procdiagram3d__toolbar`'s height (they're
+   siblings stacked in normal block flow inside this element, not just the canvas alone) — the
+   canvas fills the wrapper's width via its own `width:100%`, so subtracting the toolbar's
+   ~26px (rounded up to 1.875rem/30px for a safety margin) from the cqh budget before deriving
+   width keeps `wrapper_height = canvas_height + toolbar_height <= 100cqh` by construction.
+   Verify live and tune the constant down if it visibly under-fills. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) .pos-procdiagram3d {
+    width: min(100%, calc((100cqh - 1.875rem) * 600 / 380));
+    flex: none;
+  }
 }
 
 /* Anchors the OSM attribution (#178) to the canvas itself — the component's own bottom edge
@@ -1135,26 +1167,72 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 68rem;
 }
 
-/* The diagram and the leg list, side by side. `auto-fit` is what makes this collapse to one
-   column on a narrow panel without a media query — the deciding width is this grid's own,
-   which a viewport query cannot see because `ApplyRail` sits in the same row. When no layout
-   has loaded the empty track collapses and the leg list takes the full width by itself.
-   The 24rem floor is the diagram's, not the list's: the SVG scales its 600-unit viewBox to
-   the column, so a narrower one shrinks the 10px node labels below reading size — better one
-   wide column than two columns of unreadable waypoint idents. */
+/* The diagram and the leg list, side by side. The split queries `.pos-main` — a CSS container
+   — rather than the viewport, because the deciding width is the grid's own, which a viewport
+   media query cannot see: `ApplyRail` shares the row with `.pos-main`, so the viewport can stay
+   wide while the split's actual container is narrow. Below 52rem (and in browsers without
+   container-query support) the split stacks to one column via the default template; the
+   `--legs-only` modifier (SidStarTab.tsx) reproduces the old empty-track collapse when no
+   layout has loaded, forcing the full-width single column regardless of container size.
+   The diagram is the primary visualization, so it is the flexible (`1fr`) track: CSS Grid's
+   track-sizing algorithm maximizes every non-flexible track (the leg list, up to its 32rem cap)
+   before handing any remaining space to a flexible one, so the diagram is what grows into the
+   surplus. The 24rem floor on the diagram is about legibility, unchanged: the SVG scales its
+   600-unit viewBox to the column, and a narrower one shrinks the 10px node labels below reading
+   size — better one wide column than two columns of unreadable waypoint idents. The leg list is
+   a data table, not a visualization — it does not need to grow past a comfortable reading width,
+   so it caps at 32rem instead of absorbing surplus itself. `align-items: center` keeps the two
+   blocks centered on each other's cross axis when their heights differ (e.g. a short leg list
+   next to a taller 3D canvas) — the fallback for the single-column/`--legs-only` states below.
+   In the two-column state (`@container` block below) the row's height stops being auto-sized to
+   content: it is bound by the flex chain rooted at `.pos-main`, and `align-items` switches to
+   `stretch` there specifically so the leg list's own internal scroll — not `.pos-main`'s —
+   absorbs any overflow, and the diagram's height cap (`.pos-sidstartab__picture`, `cqh`-driven)
+   never forces the page to scroll. See `docs/designs/position-responsive-layout.md` for why a
+   `cqh`-based width-from-height formula is needed rather than a hand-typed viewport constant. */
 .pos-sidstartab__split {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  grid-template-columns: minmax(min(24rem, 100%), 1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: center;
 }
 
-/* Without this the diagram's own 600px width refuses to shrink and blows the track out. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) {
+    /* The diagram (1fr) absorbs all surplus width; the leg list caps at a compact 32rem. */
+    grid-template-columns: minmax(24rem, 1fr) minmax(20rem, 32rem);
+    /* The row's height is now bound by the flex chain (below), not auto-sized to content —
+       `minmax(0, 1fr)` lets it shrink to fit and `stretch` hands that exact height to both
+       columns, so the diagram's cqh-derived cap and the leg list's own internal scroll are
+       both working against a real, definite number instead of "whatever the tallest content
+       wants to be". */
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+/* Without this the diagram's own 600px width refuses to shrink and blows the track out; the
+   height counterpart matters only once the two-column state below makes this row's height
+   definite instead of content-sized. */
 .pos-sidstartab__split > * {
   min-width: 0;
+  min-height: 0;
+}
+
+/* Claims .pos-main's full remaining height only once a two-column split exists to spend it on
+   (the `flex:1` below is unconditional, but its effect is inert — a `min-height:auto` block —
+   everywhere else). In the transient legs-only state at a wide container this leaves harmless
+   empty space below the single-column leg list rather than the list ending flush with its
+   content; not worth a `:has()` selector for a loading state. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab {
+    flex: 1;
+    min-height: 0;
+  }
 }
 
 .pos-sidstartab__legs {
@@ -1165,7 +1243,18 @@
 
 .pos-sidstartab__legs .pos-legs {
   margin: 0;
-  max-height: 22rem;
+  max-height: clamp(22rem, calc(100vh - 30rem), 44rem);
+  max-height: clamp(22rem, calc(100dvh - 30rem), 44rem);
+}
+
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) .pos-sidstartab__legs .pos-legs {
+    /* The stretched row (above) now supplies the real cap; 44rem stays only as a ceiling so a
+       very long procedure can't blow past a comfortable reading height even on a tall monitor. */
+    flex: 1;
+    min-height: 0;
+    max-height: 44rem;
+  }
 }
 
 .pos-sidstartab__kind {
@@ -1208,6 +1297,22 @@
 .pos-sidstartab__view-toggle {
   display: flex;
   gap: 0.4rem;
+}
+
+/* Sizing seam for the height cap below: gives the picture (2D SVG or 3D canvas, whichever is
+   active) a genuinely definite height via the flex chain — `flex:1;min-height:0` inside
+   `.pos-sidstartab__diagram`'s own flex column takes exactly what's left after the toggle row's
+   natural height, no hand-typed "subtract the toggle row" constant needed — then exposes that
+   height to `.pos-procdiagram`/`.pos-procdiagram3d` as `100cqh` via `container-type: size`. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__picture {
+    flex: 1;
+    min-height: 0;
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .pos-sidstartab__diagram-loading {
@@ -1289,7 +1394,7 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 480px;
+  max-width: clamp(30rem, 55%, 44rem);
 }
 
 .pos-airworktab__ladder {
@@ -1337,7 +1442,7 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 480px;
+  max-width: clamp(30rem, 55%, 44rem);
 }
 
 .pos-customtab__row {
@@ -1355,7 +1460,7 @@
 
 .pos-rail {
   flex: none;
-  width: 480px;
+  width: clamp(22.5rem, 30vw, 30rem);
   min-height: 0;
   padding: 15px 0; /* must equal the notch pseudo-elements' height below, or the punch band
     (z-index: 1, painted over .pos-rail__scroll) bleeds into the scrollable content instead of
@@ -1408,12 +1513,18 @@
    punched-through edge rather than a printed pattern. It is defined once, pre-transform, on the
    shared selector: `.pos-rail::after` mirrors it via `scaleY(-1)` (see below), which flips the
    `1px` offset too, so the shadow still falls toward the panel's *centre* on both edges instead
-   of one of them casting "backwards". */
+   of one of them casting "backwards".
+   The tile pattern is width-independent: `background-repeat: repeat-x` tiles the 30px pattern
+   left-anchored across whatever width `.pos-rail` resolves to (now a `clamp()`, previously a
+   fixed 480px), so the rightmost bite is clipped mid-tile at most widths — that was already true
+   at the old fixed 480px (481px painted span / 30px tile = 16.03 tiles) and is not a regression
+   introduced by making the rail's width fluid. */
 .pos-rail::before,
 .pos-rail::after {
   content: '';
   position: absolute;
-  left: -1px; /* compensates the 1px border-left so the strip spans exactly 480px, see below */
+  left: -1px; /* compensates the 1px border-left so the strip spans the rail's full width
+    edge-to-edge, see below */
   right: 0;
   height: 15px;
   background-image: radial-gradient(
