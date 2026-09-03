@@ -1,0 +1,240 @@
+# Zibo Mod B737-800X — Lights panel.
+#
+# Wave 2, issue #224. Live-verified against X-Plane 12.4.3 + Zibo 4.05.33 at
+# LEMD, through the real adapter code path — see pedestal.yaml's header for
+# the shared method note (one live session, split across two files).
+#
+# THE HEADLINE FINDING (issue #224's explicit "LightsSetup generic-vs-
+# override" ask, now definitively answered, live, per field — no assumption
+# carried from one field to another, the whole epic's repeated lesson):
+#
+#   | LightsSetup field | generic dataref write | Zibo's own switch follows |
+#   |---|---|---|
+#   | landing | REJECTED outright (does not stick on the generic dataref) | n/a |
+#   | nav     | REJECTED outright | n/a |
+#   | strobe  | REJECTED outright | n/a |
+#   | taxi    | ACCEPTED (sticks on the generic dataref) | NO — taxi_light_brightness_pos never moved across an isolated apply_setup(taxi=True) call. The exact "accepted but ignored" shape research §5 found for the MCP airspeed dial. |
+#   | beacon  | ACCEPTED, reversible (True->False->True round-tripped via apply_setup) | UNKNOWN — no laminar/B738/* beacon dataref exists anywhere in the live index, so there is no independent signal to check. Confirmed ACCEPTED, which is the most that can honestly be said — not the same as "confirmed working". |
+#
+# Conclusion: every one of LightsSetup's five fields needs a catalog
+# override to be trustworthy on Zibo — three are flatly dead, one is
+# accepted-but-ignored, and the fifth (beacon) cannot be independently
+# confirmed either way. Four of the five overrides below use a live-found
+# Zibo-specific binding; beacon has none anywhere and stays on the generic
+# path with that caveat on its own entry, not silently assumed safe.
+#
+# setup_overrides is NOT populated in this file: `lights` is a single
+# AircraftSetup field of type LightsSetup (a nested model, 5 sub-fields),
+# and core.cockpit.actuation.plan_setup_actuations/_actuation_value expects
+# every overridden field's value to be a bool or a float — a LightsSetup
+# instance is neither, so it cannot be assigned to ANY single control_id
+# through the existing mechanism. This is a genuine gap in the Wave 1 design
+# (D11 was scoped to autopilot fields, all flat bool/float — nothing
+# anticipated a nested field), not an oversight here. Flagged for a
+# follow-up design note, not something this issue's stated scope ("pure
+# catalog data + live validation — no new machinery") authorises fixing.
+#
+# Structural note carried from Phase 1: LightsSetup has no field at all for
+# runway turnoff, wing, logo, dome or wheel-well lights — those five are
+# necessarily catalog-only regardless of any override question.
+#
+# Method note: every `_on`/`_off` or `_up`/`_dn` COMMAND PAIR the Phase 1
+# static reference files documented turned out to have a companion,
+# directly-WRITABLE `_pos` (or bare) dataref live — the #223 overhead.yaml
+# lesson repeats here almost across the board. Where that write worked
+# (confirmed by round-tripping it), the binding below writes the position
+# directly instead of stepping the command pair.
+controls:
+  - control_id: landing_lights_left
+    label: "Landing lights — left"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Direct write, confirmed 0<->1. The separate retract-mechanism echo never moved — untouched."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/switch/land_lights_left_pos
+      read: laminar/B738/switch/land_lights_left_pos
+
+  - control_id: landing_lights_right
+    label: "Landing lights — right"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Same finding and shape as landing_lights_left."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/switch/land_lights_right_pos
+      read: laminar/B738/switch/land_lights_right_pos
+
+  # Phase 1 only found switch/rwy_light_left_on/_off COMMANDS; live
+  # discovery found toggle_switch/rwy_light_left is itself a directly
+  # writable dataref. No LightsSetup equivalent exists — catalog-only.
+  - control_id: rwy_turnoff_left
+    label: "Runway turnoff light — left"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Direct write to a live-found dataref, confirmed 0<->1. Phase 1 only had the command pair."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/toggle_switch/rwy_light_left
+      read: laminar/B738/toggle_switch/rwy_light_left
+
+  - control_id: rwy_turnoff_right
+    label: "Runway turnoff light — right"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Same finding and shape as rwy_turnoff_left."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/toggle_switch/rwy_light_right
+      read: laminar/B738/toggle_switch/rwy_light_right
+
+  - control_id: logo_light
+    label: Logo light
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Direct write, confirmed 0<->1. No LightsSetup equivalent — catalog-only."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/toggle_switch/logo_light
+      read: laminar/B738/toggle_switch/logo_light
+
+  - control_id: wing_light
+    label: Wing light
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Direct write, confirmed 0<->1. No LightsSetup equivalent — catalog-only."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/toggle_switch/wing_light
+      read: laminar/B738/toggle_switch/wing_light
+
+  - control_id: wheel_well_light
+    label: "Wheel well light"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Bonus find (not in the issue's checklist), same lighting.lua namespace, confirmed 0<->1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/toggle_switch/wheel_light
+      read: laminar/B738/toggle_switch/wheel_light
+
+  # Live-mapped the full range (0/1/2, clamped both ends). The command
+  # names are MISLEADING: `_pos_up` moves the read value DOWN (2->1->0)
+  # and `_pos_dn` moves it UP (0->1->2) — verified directly, not assumed
+  # from the name; inc/dec below match the observed direction. This is the
+  # Zibo binding LightsSetup.taxi needed: the generic taxi_light_on write
+  # is accepted but Zibo's own switch (this dataref) never follows it,
+  # confirmed via an isolated apply_setup(taxi=True) call.
+  - control_id: taxi_light
+    label: Taxi light
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "Dim"}
+      - {value: 2, label: "Bright"}
+    hint: "Live-mapped 0/1/2; the _up/_dn command names are REVERSED from their real effect."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/toggle_switch/taxi_light_brightness_pos_dn
+      dec: laminar/B738/toggle_switch/taxi_light_brightness_pos_up
+      read: laminar/B738/toggle_switch/taxi_light_brightness_pos
+
+  # Live-mapped all three positions (-1/0/1) by stepping position_light_up
+  # twice from OFF — confirms this IS the real 3-position switch (OFF /
+  # POSITION / STROBE+POSITION) Phase 1 could only guess at. This is the
+  # Zibo binding LightsSetup.nav needed: the generic navigation_lights_on
+  # write is REJECTED outright (confirmed via an isolated direct write).
+  - control_id: position_light
+    label: "Position / strobe selector"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: -1, label: "Off"}
+      - {value: 0, label: "Position"}
+      - {value: 1, label: "Strobe + Position"}
+    hint: "Live-mapped all 3 positions; the real combined switch, not just position-only."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/toggle_switch/position_light_up
+      dec: laminar/B738/toggle_switch/position_light_down
+      read: laminar/B738/toggle_switch/position_light_pos
+
+  - control_id: cockpit_dome
+    label: "Dome (cockpit) light"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Confirmed 0<->1; no intermediate brightness observed in this test. No LightsSetup equivalent."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/toggle_switch/cockpit_dome_up
+      dec: laminar/B738/toggle_switch/cockpit_dome_dn
+      read: laminar/B738/toggle_switch/cockpit_dome_pos
+
+  # No laminar/B738/* beacon dataref or command of any kind exists
+  # anywhere in the live index — this is the GENERIC dataref, the only
+  # candidate that exists at all. Confirmed ACCEPTED and reversible
+  # (True->False->True round-tripped via apply_setup, matching the live
+  # aircraft state — beacon was on at session start). Not the same
+  # confidence as a Zibo-specific binding: there is no way to confirm the
+  # physical beacon light itself responds, only that the sim's own
+  # bookkeeping dataref does. The design's own verification method (read,
+  # actuate, read back, confirm, restore) is fully satisfied by what was
+  # tested — the caveat is stated, not hidden.
+  - control_id: anti_collision_beacon
+    label: "Anti-collision (beacon) light"
+    panel_id: lights
+    kind: selector
+    options:
+      - {value: 0, label: "Off"}
+      - {value: 1, label: "On"}
+    hint: "Only the GENERIC dataref exists at all (no Zibo-specific candidate); confirmed accepted+reversible."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: sim/cockpit2/switches/beacon_on
+      read: sim/cockpit2/switches/beacon_on
+
+parked:
+  - control_id: strobe_light
+    label: Strobe light
+    panel_id: lights
+    since: 2026-09-03
+    reason: >-
+      No laminar/B738/* strobe dataref/command exists anywhere in the live
+      index, and the generic strobe_lights_on write is REJECTED outright —
+      confirmed by an isolated direct write.
