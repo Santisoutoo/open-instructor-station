@@ -46,6 +46,7 @@ export function ApplyRail() {
     activeTab: design.activeTab,
     marker: design.selectedMarker,
     finalPlacement: design.finalPlacement,
+    circuitDistanceNm: design.circuitDistanceNm,
     gearDown: merged.gear_down ?? null,
     iasKt: merged.ias_kt ?? preview?.placement.ias_kt ?? null,
     altitudeFt: merged.altitude_ft ?? preview?.placement.position.altitude_ft ?? null,

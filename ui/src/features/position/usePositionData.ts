@@ -268,6 +268,7 @@ function usePlacementRequest(): PlacementRequest | null {
     activeTab,
     selectedMarker,
     finalPlacement,
+    circuitDistanceNm,
     procedure,
     procedureFamily,
     airworkLevel,
@@ -283,6 +284,7 @@ function usePlacementRequest(): PlacementRequest | null {
         activeTab,
         marker: selectedMarker,
         finalPlacement,
+        circuitDistanceNm,
         procedure:
           procedure === null
             ? null
@@ -317,6 +319,7 @@ function usePlacementRequest(): PlacementRequest | null {
       activeTab,
       selectedMarker,
       finalPlacement,
+      circuitDistanceNm,
       procedure,
       procedureFamily,
       airworkLevel,
