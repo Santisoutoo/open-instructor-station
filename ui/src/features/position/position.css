@@ -1792,17 +1792,6 @@
   opacity: 0.85;
 }
 
-.pos-bottombar__na {
-  color: var(--pos-caution);
-}
-
-/* On its own row under Course / ILS frequency — the gap issue #166 points at. */
-.pos-bottombar__startat {
-  flex-basis: 100%;
-  padding-left: 0;
-  text-align: left;
-}
-
 /* ----------------------------------------------------------------- checkbox */
 
 .pos-checkbox {
@@ -1847,14 +1836,6 @@
   line-height: 15px;
   text-align: center;
   color: var(--pos-on-accent);
-}
-
-.pos-checkbox--disabled {
-  opacity: 0.55;
-}
-
-.pos-checkbox--disabled .pos-checkbox__input {
-  cursor: not-allowed;
 }
 
 /* ------------------------------------------------------- gates and states */
