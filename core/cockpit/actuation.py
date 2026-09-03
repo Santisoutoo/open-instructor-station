@@ -37,6 +37,11 @@ __all__ = [
 #: Tolerance for comparing a numeric read-back against a toggle's ``on_value``.
 _IS_ON_TOLERANCE = 1e-6
 
+#: Tolerance for comparing a numeric read-back against a selector option's
+#: value (the same 1e-6 as ``_IS_ON_TOLERANCE`` and ``core.cockpit.
+#: preconditions._NUMERIC_TOLERANCE`` — one convention, three call sites).
+_SELECTOR_TOLERANCE = 1e-6
+
 
 def is_on(value: CockpitValue | None, on_value: float) -> bool:
     """A toggle's status as a bool.
@@ -73,11 +78,31 @@ def dial_confirmed(written: float, read_back: CockpitValue | None, tolerance: fl
 
 
 def selector_index(spec: CockpitControlSpec, value: CockpitValue | None) -> int | None:
-    """Position of ``value`` among ``spec.options``, or ``None``."""
+    """Position of ``value`` among ``spec.options``, or ``None``.
+
+    Numeric options (``int``/``float``/``bool`` — ``bool`` is an ``int``
+    subtype in Python) compare within ``_SELECTOR_TOLERANCE``, never by exact
+    Python type: a real adapter's Web API reports every numeric dataref as a
+    JSON float, so an option declared ``value: 0`` (an ``int``, the catalog
+    YAML's natural spelling) must still match a live read-back of ``0.0``.
+    Mirrors ``is_on`` and ``core.cockpit.preconditions._condition_satisfied``
+    — the same "X-Plane never sends a Python int or bool" lesson (issue #223
+    live verification; the identical disease #247 fixed for preconditions).
+    String options still compare by exact equality, and a numeric value never
+    matches a string option or vice versa.
+    """
     if spec.options is None:
         return None
+    if isinstance(value, (int, float)):
+        for index, option in enumerate(spec.options):
+            if (
+                isinstance(option.value, (int, float))
+                and abs(float(value) - float(option.value)) <= _SELECTOR_TOLERANCE
+            ):
+                return index
+        return None
     for index, option in enumerate(spec.options):
-        if type(value) is type(option.value) and value == option.value:
+        if not isinstance(option.value, (int, float)) and value == option.value:
             return index
     return None
 
@@ -92,10 +117,6 @@ def selector_steps(current_index: int, target_index: int, option_count: int) -> 
             f"option_count={option_count}."
         )
     return target_index - current_index
-
-
-def _selector_matches(value: CockpitValue, option_value: int | str) -> bool:
-    return type(value) is type(option_value) and value == option_value
 
 
 def validate_actuation(spec: CockpitControlSpec, actuation: CockpitActuation) -> None:
@@ -149,7 +170,11 @@ def validate_actuation(spec: CockpitControlSpec, actuation: CockpitActuation) ->
         if value is None:
             raise ValueError(f"{control_id!r} is a selector and requires a value.")
         assert spec.options is not None
-        if not any(_selector_matches(value, option.value) for option in spec.options):
+        # selector_index (not a second hand-rolled equality check, the
+        # now-fixed duplicate _selector_matches used to be — issue #223 live
+        # verification): one tolerant match rule for "is this value one of
+        # my options", shared by validation and actuation alike.
+        if selector_index(spec, value) is None:
             raise ValueError(f"{control_id!r}: {value!r} is not among its options.")
         return
 

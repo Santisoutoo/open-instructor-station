@@ -172,6 +172,34 @@ def test_selector_index_missing_value_is_none() -> None:
     assert selector_index(spec, 99) is None
 
 
+def test_selector_index_matches_a_live_float_readback_against_int_options() -> None:
+    """Issue #223 live verification: X-Plane's Web API reports every numeric
+    dataref as a JSON float, never a Python int — a `value: 0` option (the
+    catalog YAML's natural spelling) must still match a live `0.0` read-back.
+    The identical disease #247 fixed for preconditions
+    (core.cockpit.preconditions._condition_satisfied), caught here for
+    selector_index because issue #223's overhead panel is the first catalog
+    with a live `selector` control (mcp.yaml has none)."""
+    spec = _spec("selector")
+    assert selector_index(spec, 0.0) == 0
+    assert selector_index(spec, 1.0) == 1
+    assert selector_index(spec, 2.0) == 2
+
+
+def test_selector_index_never_matches_a_numeric_value_against_a_string_option() -> None:
+    spec = _spec(
+        "selector",
+        options=[SelectorOption(value="OFF", label="Off"), SelectorOption(value="ON", label="On")],
+    )
+    assert selector_index(spec, 0) is None
+    assert selector_index(spec, 0.0) is None
+
+
+def test_selector_index_never_matches_a_string_value_against_a_numeric_option() -> None:
+    spec = _spec("selector")
+    assert selector_index(spec, "0") is None
+
+
 def test_selector_steps_forward() -> None:
     assert selector_steps(0, 3, 4) == 3
 
