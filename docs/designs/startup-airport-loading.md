@@ -1,6 +1,12 @@
 # Startup Airport-Selection Loading Screen — design
 
-**Status:** designed, not yet implemented.
+**Status:** as-built. Implemented across #232 (`feature/airport-selection-gate`, PR #240) and
+#233 (`feature/support-link`, PR #239), both merged to `dev`. The state machine (SG-2), the
+`startup` slice's shape and reducers (SG-1, §4.1), the localStorage key and payload (SG-4), the
+mount point in `App.tsx` (SG-6, §5.3) and the support link (SG-9, §5.4) all shipped exactly as
+pinned. §8.5 below records the deviations found comparing this document against the merged code;
+none of them change the pinned contracts, only implementation details the design left open or one
+call this document got wrong.
 **Phase:** layered onto manager 15, the **Instructor Panel**
 ([`../feature-spec.md`](../feature-spec.md#15-instructor-panel)) — cross-cutting, "not built in a
 single step … grows one tab per phase." This document does not add a tab; it adds the shell's own
@@ -624,6 +630,63 @@ original brief is not confused by the discrepancy:
 - Whether `AirportGate.css` needs a dedicated dark/light contrast pass beyond reusing existing
   tokens (SG-10) — no test in §6 asserts specific colour values.
 - The real `SUPPORT_URL` (SG-9) — explicitly the repo owner's decision, never invented here.
+
+### 8.5 As-built deviations (recorded at close-out, #235)
+
+Comparing this document against the merged code (#232 → PR #240, `a28028d` "airport-selection gate
++ persistence" plus follow-up `966c17f` "clear highlight on Escape…"; #233 → PR #239, `a9475ae`
+"buy me a coffee support link"), every pinned decision in §0 shipped as designed — state
+machine, slice shape, storage key, mount point, error handling. The deviations below are all in
+the "how", not the "what":
+
+- **SG-3's `getAirport` addition landed in a different file than planned, for a reason this
+  document could not have known.** `getAirport` was **not** added to `instructorApi.ts`. By the
+  time #232 started, it already existed as an injected endpoint in `ui/src/features/map/mapApi.ts`
+  — shipped by an earlier, independent epic (the Instructor Map manager) that this design's
+  sourcing pass (written against `98e0022`) did not see. `AirportGate.tsx` imports
+  `useLazyGetAirportQuery` from `../map/mapApi` instead of from `instructorApi.ts`; no second
+  `getAirport` endpoint was declared anywhere. This also changes the shape of §8.1's predicted
+  cross-epic collision: rather than two designs racing to add an identical endpoint to the same
+  file, one of them (Instructor Map) had already landed it, and #232 reused rather than duplicated
+  it once discovered — `mapApi.ts`'s own doc comment records this explicitly. Whether
+  `weather-station.md` §8.1's own planned addition still collides was not re-verified here; it is
+  outside this close-out's scope.
+- **Escape's behaviour matches SG-10's pin, but a same-day follow-up fix hardened it.** The first
+  cut of `AirportGate.tsx` collapsed the suggestion list on Escape but left the local `highlighted`
+  index (and `aria-activedescendant`) set, which `reviewer-typescript`'s pass on PR #240 flagged: a
+  stale `aria-activedescendant` pointed at an option no longer in the DOM, and a following Enter
+  silently resolved the dismissed suggestion instead of the typed text. Commit `966c17f` makes
+  Escape clear both `suggestionsCollapsed` and `highlighted` together. The pinned behaviour itself
+  — Escape collapses suggestions only, never dismisses the gate, never changes `status` — is
+  unchanged and is exactly what shipped; this was a bug fix on top of it, not a deviation from it.
+- **The listbox is the plain `<li role="option" onClick>` the design's own §5.1 sketch already
+  showed** — confirmed by reading the merged `AirportGate.tsx`. The same `966c17f` follow-up commit
+  records that a nested `<button>` inside each `<li>` was tried during review and reverted: ARIA
+  strips the `option` role from an element containing a nested interactive control and adds an
+  unwanted Tab stop. The shipped markup is the design's original sketch, not the alternative that
+  was briefly explored.
+- **The test harness uses real timers, not fake timers, for the debounce/search tests** — a
+  deviation from §6.2's own wording ("a `vi.useFakeTimers()` + `advanceTimersByTime(DEBOUNCE_MS)`
+  assertion"). `AirportGate.test.tsx`'s header docstring states the reasoning: the 250 ms debounce
+  and the RTK Query round trip are both real async work, `waitFor` already retries, and a
+  fake-timers harness risks the interaction between `userEvent`, RTK Query's own microtasks and the
+  debounce `setTimeout` resolving out of order. Tests instead await a real 320 ms
+  (`settleDebounce()`) past the debounce window.
+- **`usePositionData.ts`'s stale `useAirport()` docstring was fixed inside #232 itself**, not left
+  for #235 as SG-3 predicted ("deferred to #235, which already lists it as a fallback close-out
+  item"). Commit `a28028d` rewrites the docstring to state that `GET /api/navdata/airports/{icao}`
+  does exist (`server/navdata_routes.py:203`, consumed as `getAirport` in `mapApi.ts` and by the
+  gate), while explicitly leaving `useAirport()`'s own implementation on the search endpoint —
+  switching it was judged outside that change's scope. Confirmed against `git log -p` on `dev`:
+  the docstring fix and the gate both landed in the same commit, so there is nothing left for this
+  close-out to do here.
+- **Two small accessibility additions beyond the §5.1/§5.4 sketches, both non-breaking.** The
+  combobox gained `aria-labelledby` wired to the "Choose the airport for this session." paragraph
+  (the design's sketch had no accessible-name mechanism for the input at all — `966c17f`, also
+  flagged by `reviewer-typescript`: a bare `placeholder` is not a reliable accessible name), and the
+  listbox gained `aria-label="Airport search results"` for parity with `AirportMenu.tsx`. The
+  support link (#233) gained `aria-label="Support the project — Buy Me a Coffee"` beyond the design's
+  plain `<a>Support</a>` sketch. None of these change any pinned contract in §0 or §4.
 
 ---
 
