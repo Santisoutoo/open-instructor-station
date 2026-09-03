@@ -793,9 +793,8 @@ def test_zibo_b738_root_declares_its_read_back_confirmed_detection_dataref() -> 
     assert errors == ()
     zibo = next(document for document in documents if document.aircraft.catalog_id == "zibo-b738")
     assert zibo.detect.dataref_exists == "laminar/B738/autopilot/mcp_alt_dial"
-    # Wave 2 supplies the MCP (#222) and overhead (#223) panels' controls
-    # (docs/designs/cockpit-control-catalog.md §5.7) — pedestal/lights (#224)
-    # are still empty here.
+    # Wave 2 supplies the MCP (#222), overhead (#223) and pedestal/lights
+    # (#224) panels' controls (docs/designs/cockpit-control-catalog.md §5.7).
     assert {control.control_id for control in zibo.controls} == {
         # --- mcp.yaml (#222) ---
         "fd_capt",
@@ -842,6 +841,38 @@ def test_zibo_b738_root_declares_its_read_back_confirmed_detection_dataref() -> 
         "iso_valve",
         "pack_l",
         "pack_r",
+        # --- pedestal.yaml (#224) ---
+        "flaps_lever",
+        "speedbrake_lever",
+        "speedbrake_arm",
+        "parking_brake",
+        "stab_trim",
+        "rudder_trim",
+        "aileron_trim",
+        "stab_trim_cutout_main",
+        "stab_trim_cutout_autopilot",
+        "transponder_mode",
+        "transponder_ident",
+        "transponder_atc",
+        "nav1_swap",
+        "nav2_swap",
+        "com1_standby_freq",
+        "com1_swap",
+        "com2_standby_freq",
+        "com2_swap",
+        "transponder_code",
+        # --- lights.yaml (#224) ---
+        "landing_lights_left",
+        "landing_lights_right",
+        "rwy_turnoff_left",
+        "rwy_turnoff_right",
+        "logo_light",
+        "wing_light",
+        "wheel_well_light",
+        "taxi_light",
+        "position_light",
+        "cockpit_dome",
+        "anti_collision_beacon",
     }
     assert {control.control_id for control in zibo.parked} == {
         # --- mcp.yaml (#222) ---
@@ -860,6 +891,24 @@ def test_zibo_b738_root_declares_its_read_back_confirmed_detection_dataref() -> 
         "bus_transfer",
         "irs_l",
         "irs_r",
+        # --- pedestal.yaml (#224): real bindings found live but not safely
+        # actuable this session (engines running — start levers; no
+        # observable side effect to confirm — TOGA/A-T disconnect), a
+        # genuinely ambiguous subsystem (horn_cutout, com_rtp_panel), or no
+        # dataref read-back at all (weather_radar_wxr) —
+        # docs/research/zibo-737-pedestal-lights-dataref-mapping.md
+        "start_lever_1",
+        "start_lever_2",
+        "toga_left",
+        "toga_right",
+        "at_disconnect_left",
+        "at_disconnect_right",
+        "horn_cutout",
+        "weather_radar_wxr",
+        "com_rtp_panel",
+        # --- lights.yaml (#224): confirmed REJECTED even in isolation, no
+        # laminar/B738/* candidate exists at all ---
+        "strobe_light",
     }
     assert {panel.panel_id for panel in zibo.panels} == {"mcp", "overhead", "pedestal", "lights"}
     assert zibo.setup_overrides == {
@@ -878,11 +927,10 @@ async def test_cockpit_runtime_reports_the_mcp_panel_controls_for_zibo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A sanity check against the REAL shipped directory (not the
-    ``fake-trainer`` fixture): detecting the Zibo now reports the MCP (#222)
-    and overhead (#223) panels' controls, with the pedestal/lights panels
-    still empty (#224). Deliberately does NOT monkeypatch
-    ``COCKPIT_CATALOGS_DIR`` — this is the one test that exercises the real
-    ``adapters/xplane/cockpit_catalogs/`` tree end to end.
+    ``fake-trainer`` fixture): detecting the Zibo now reports the MCP (#222),
+    overhead (#223) and pedestal/lights (#224) panels' controls. Deliberately
+    does NOT monkeypatch ``COCKPIT_CATALOGS_DIR`` — this is the one test that
+    exercises the real ``adapters/xplane/cockpit_catalogs/`` tree end to end.
     """
     api = _FakeWebApi()
     api.publish_dataref("laminar/B738/autopilot/mcp_alt_dial", 5000.0)
@@ -894,11 +942,19 @@ async def test_cockpit_runtime_reports_the_mcp_panel_controls_for_zibo(
         catalog = await adapter.get_cockpit_catalog()
         assert catalog.aircraft is not None
         assert catalog.aircraft.catalog_id == "zibo-b738"
-        assert len(catalog.controls) == 43  # 11 mcp (#222) + 32 overhead (#223)
-        assert len(catalog.parked) == 10  # 3 mcp (#222) + 7 overhead (#223)
-        assert all(control.panel_id in ("mcp", "overhead") for control in catalog.controls)
-        assert all(control.panel_id in ("mcp", "overhead") for control in catalog.parked)
-        # pedestal/lights (#224) are still untouched.
-        assert not any(control.panel_id in ("pedestal", "lights") for control in catalog.controls)
+        # 11 mcp (#222) + 32 overhead (#223) + 19 pedestal + 11 lights (#224)
+        assert len(catalog.controls) == 73
+        # 3 mcp (#222) + 7 overhead (#223) + 9 pedestal + 1 lights (#224)
+        assert len(catalog.parked) == 20
+        assert all(
+            control.panel_id in ("mcp", "overhead", "pedestal", "lights")
+            for control in catalog.controls
+        )
+        assert all(
+            control.panel_id in ("mcp", "overhead", "pedestal", "lights")
+            for control in catalog.parked
+        )
+        assert any(control.panel_id == "pedestal" for control in catalog.controls)
+        assert any(control.panel_id == "lights" for control in catalog.controls)
     finally:
         await adapter.disconnect()

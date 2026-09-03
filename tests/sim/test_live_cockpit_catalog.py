@@ -524,3 +524,154 @@ async def test_zibo_isolation_valve_steps_across_all_three_positions(
         )
         after = (await live_adapter.read_cockpit_states(["iso_valve"])).states[0].value
         assert selector_index(spec, after) == original_index
+
+
+async def test_zibo_stab_trim_encoder_actually_moves_the_authoritative_dataref(
+    live_adapter: XPlaneSimAdapter,
+) -> None:
+    """Issue #224's headline ask: stab trim MUST be a working encoder, not
+    just a control that resolves. The generic sweep's encoder branch (§8.5)
+    only asserts ``value is not None`` after one +1/-1 tick — it proves the
+    commands resolve, not that anything moved. This test reads
+    ``laminar/B738/flight_model/stab_trim_units`` before and after a larger
+    delta and asserts a real, signed movement, then restores with the
+    opposite delta and confirms the read-back returns within a loose
+    tolerance (docs/research/zibo-737-pedestal-lights-dataref-mapping.md's
+    Phase 2 update: a single command activation moves the wheel a very
+    small amount, ~0.004 units, so the round trip is not exact to the last
+    digit — the assertion is "moved the right way by a real amount", the
+    same shape as the MCP research's read-back gotchas, not bit-for-bit
+    equality).
+    """
+    catalog = await live_adapter.get_cockpit_catalog()
+    if catalog.aircraft is None or catalog.aircraft.catalog_id != "zibo-b738":
+        pytest.skip("zibo-b738 is not the active cockpit catalog on this install")
+
+    spec_by_id = {spec.control_id: spec for spec in catalog.controls}
+    if "stab_trim" not in spec_by_id:
+        pytest.skip("'stab_trim' is not in the live manifest (parked, or a catalog mismatch)")
+
+    before = (await live_adapter.read_cockpit_states(["stab_trim"])).states[0].value
+    assert isinstance(before, int | float) and not isinstance(before, bool)
+    original = float(before)
+
+    try:
+        up = await live_adapter.actuate_cockpit_control(
+            CockpitActuation(control_id="stab_trim", delta=10)
+        )
+        assert up.state.value is not None
+        after_up = float(up.state.value)
+        # A real, signed movement — not merely "resolved without error".
+        assert after_up > original + 0.001, (
+            f"stab_trim +10 delta did not move stab_trim_units upward: "
+            f"before={original!r} after={after_up!r}"
+        )
+    finally:
+        down = await live_adapter.actuate_cockpit_control(
+            CockpitActuation(control_id="stab_trim", delta=-10)
+        )
+        assert down.state.value is not None
+        restored = float(down.state.value)
+        assert restored == pytest.approx(original, abs=0.05)
+
+
+async def test_zibo_lightssetup_generic_path_confirmed_dead_or_unreliable_per_field(
+    live_adapter: XPlaneSimAdapter,
+) -> None:
+    """Issue #224's explicit ask: does ``LightsSetup`` (the generic,
+    typed ``AircraftSetup`` path) actually work on the Zibo? Phase 2 found a
+    DIFFERENT answer per field (never assumed from one field to the next,
+    the whole epic's repeated lesson) — this test pins all five, live,
+    through the real ``apply_setup`` path, each checked in isolation:
+
+    * landing / nav / strobe — the generic dataref write is REJECTED
+      outright: it does not even persist on the generic dataref itself.
+    * taxi — the generic write IS accepted (persists on the generic
+      dataref), but Zibo's own switch
+      (``laminar/B738/toggle_switch/taxi_light_brightness_pos``) never
+      follows it — the exact "accepted but ignored" shape the MCP
+      research found for the airspeed dial (research §5).
+    * beacon — the generic write is accepted AND reversible, but there is
+      no Zibo-specific dataref anywhere to independently confirm the
+      physical light responds (none exists in the live index at all) —
+      the most that can honestly be asserted is "accepted", not "works".
+
+    Every field is restored to its original value via a second
+    ``apply_setup`` call before this test returns.
+    """
+    catalog = await live_adapter.get_cockpit_catalog()
+    if catalog.aircraft is None or catalog.aircraft.catalog_id != "zibo-b738":
+        pytest.skip("zibo-b738 is not the active cockpit catalog on this install")
+
+    from core.models import AircraftSetup, LightsSetup
+
+    generic_paths = {
+        "landing": "sim/cockpit2/switches/landing_lights_on",
+        "taxi": "sim/cockpit2/switches/taxi_light_on",
+        "nav": "sim/cockpit2/switches/navigation_lights_on",
+        "beacon": "sim/cockpit2/switches/beacon_on",
+        "strobe": "sim/cockpit2/switches/strobe_lights_on",
+    }
+    zibo_echo_path = "laminar/B738/toggle_switch/taxi_light_brightness_pos"
+
+    before_generic = {
+        field: await live_adapter._cockpit._read_binding(live_adapter, path)
+        for field, path in generic_paths.items()
+    }
+    before_taxi_echo = await live_adapter._cockpit._read_binding(live_adapter, zibo_echo_path)
+
+    try:
+        await live_adapter.apply_setup(
+            AircraftSetup(
+                lights=LightsSetup(
+                    landing=not bool(before_generic["landing"]),
+                    taxi=not bool(before_generic["taxi"]),
+                    nav=not bool(before_generic["nav"]),
+                    beacon=not bool(before_generic["beacon"]),
+                    strobe=not bool(before_generic["strobe"]),
+                )
+            )
+        )
+
+        after_generic = {
+            field: await live_adapter._cockpit._read_binding(live_adapter, path)
+            for field, path in generic_paths.items()
+        }
+        after_taxi_echo = await live_adapter._cockpit._read_binding(live_adapter, zibo_echo_path)
+
+        # landing / nav / strobe: REJECTED outright — unchanged even at the
+        # generic bookkeeping level.
+        for field in ("landing", "nav", "strobe"):
+            assert bool(after_generic[field]) == bool(before_generic[field]), (
+                f"LightsSetup.{field}'s generic write was expected dead on Zibo "
+                f"but the generic dataref changed: before={before_generic[field]!r} "
+                f"after={after_generic[field]!r}"
+            )
+
+        # taxi: generic dataref DOES change, but Zibo's own switch does not.
+        assert bool(after_generic["taxi"]) != bool(before_generic["taxi"]), (
+            "LightsSetup.taxi's generic write was expected to persist on the "
+            "generic dataref (even though Zibo ignores it) but it did not change"
+        )
+        assert bool(after_taxi_echo) == bool(before_taxi_echo), (
+            "Zibo's own taxi light switch followed the generic LightsSetup.taxi "
+            "write — if this now passes, the taxi_light entry's hint and this "
+            "test's docstring both need updating: it may no longer be "
+            "'accepted but ignored'"
+        )
+
+        # beacon: generic write accepted and reflects the requested state —
+        # no independent Zibo-side signal exists to check further.
+        assert bool(after_generic["beacon"]) == (not bool(before_generic["beacon"]))
+    finally:
+        await live_adapter.apply_setup(
+            AircraftSetup(
+                lights=LightsSetup(
+                    landing=bool(before_generic["landing"]),
+                    taxi=bool(before_generic["taxi"]),
+                    nav=bool(before_generic["nav"]),
+                    beacon=bool(before_generic["beacon"]),
+                    strobe=bool(before_generic["strobe"]),
+                )
+            )
+        )
