@@ -35,6 +35,7 @@ import pytest
 
 from adapters.xplane import cockpit_controls
 from adapters.xplane.xplane_adapter import XPlaneSimAdapter
+from core.cockpit.actuation import selector_index
 from core.cockpit.catalog import load_all_catalogs
 from core.cockpit.errors import CockpitPreconditionUnmet
 from core.cockpit.models import (
@@ -228,8 +229,18 @@ async def test_the_generic_live_sweep(live_adapter: XPlaneSimAdapter, entry: _Sw
         before_selector = (
             (await live_adapter.read_cockpit_states([spec.control_id])).states[0].value
         )
-        assert isinstance(before_selector, (int, str))
-        current_index = option_values.index(before_selector)
+        # Never a raw `isinstance(before_selector, (int, str))` / `list.index`
+        # pair here: X-Plane's Web API reports every numeric dataref as a JSON
+        # float (never a Python int), so a live read-back of a `value: 0`
+        # option arrives as `0.0` — the exact disease #247 fixed for
+        # preconditions, hit here for the first time because no catalog had a
+        # live `selector` control before issue #223's overhead panel.
+        # core.cockpit.actuation.selector_index is the fixed, tolerant match.
+        current_index = selector_index(spec, before_selector)
+        assert current_index is not None, (
+            f"{spec.control_id!r}: live read-back {before_selector!r} does not match any "
+            f"declared option {option_values!r}"
+        )
         selector_target = option_values[(current_index + 1) % len(option_values)]
         try:
             result = await live_adapter.actuate_cockpit_control(
@@ -466,3 +477,50 @@ async def test_stock_aircraft_has_no_catalog_and_generic_setup_still_works(
         )
     finally:
         await live_adapter.apply_setup(AircraftSetup(autopilot_hdg=False))
+
+
+async def test_zibo_isolation_valve_steps_across_all_three_positions(
+    live_adapter: XPlaneSimAdapter,
+) -> None:
+    """Issue #223's overhead panel: the generic sweep (§8.5) only ever hops
+    from the current option to the NEXT one and back — a single step. This
+    panel's three 3-position selectors (``iso_valve``, ``pack_l``, ``pack_r``,
+    all ``write``-bound directly to the position dataref per the live finding
+    that ``*_up``/``*_dn`` commands resolve but do not move these switches —
+    see ``overhead.yaml``) never get their bounded, non-wrapping multi-step
+    path (``core.cockpit.actuation.selector_steps``) exercised by that hop
+    alone. This test drives ``iso_valve`` CLOSE(0) -> OPEN(2), a two-position
+    jump, and back — representative of all three, which share the identical
+    binding shape (a direct ``write`` to the position dataref, §5.5's
+    selector-with-write path, not the inc/dec stepping path).
+    """
+    catalog = await live_adapter.get_cockpit_catalog()
+    if catalog.aircraft is None or catalog.aircraft.catalog_id != "zibo-b738":
+        pytest.skip("zibo-b738 is not the active cockpit catalog on this install")
+
+    spec_by_id = {spec.control_id: spec for spec in catalog.controls}
+    spec = spec_by_id.get("iso_valve")
+    if spec is None:
+        pytest.skip("'iso_valve' is not in the live manifest (parked, or a catalog mismatch)")
+
+    before = (await live_adapter.read_cockpit_states(["iso_valve"])).states[0].value
+    assert isinstance(before, int | float) and not isinstance(before, bool)
+    original_index = selector_index(spec, before)
+    assert original_index is not None
+
+    try:
+        opened = await live_adapter.actuate_cockpit_control(
+            CockpitActuation(control_id="iso_valve", value=2)  # OPEN
+        )
+        assert opened.state.value == 2
+        closed = await live_adapter.actuate_cockpit_control(
+            CockpitActuation(control_id="iso_valve", value=0)  # CLOSE
+        )
+        assert closed.state.value == 0
+    finally:
+        restore_value = spec.options[original_index].value  # type: ignore[index]
+        await live_adapter.actuate_cockpit_control(
+            CockpitActuation(control_id="iso_valve", value=restore_value)
+        )
+        after = (await live_adapter.read_cockpit_states(["iso_valve"])).states[0].value
+        assert selector_index(spec, after) == original_index

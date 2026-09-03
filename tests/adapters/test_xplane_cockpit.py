@@ -793,10 +793,11 @@ def test_zibo_b738_root_declares_its_read_back_confirmed_detection_dataref() -> 
     assert errors == ()
     zibo = next(document for document in documents if document.aircraft.catalog_id == "zibo-b738")
     assert zibo.detect.dataref_exists == "laminar/B738/autopilot/mcp_alt_dial"
-    # Wave 2 (#222) supplies the MCP panel's controls
-    # (docs/designs/cockpit-control-catalog.md §5.7) — the remaining panels
-    # (overhead, pedestal, lights) are #223/#224, still empty here.
+    # Wave 2 supplies the MCP (#222) and overhead (#223) panels' controls
+    # (docs/designs/cockpit-control-catalog.md §5.7) — pedestal/lights (#224)
+    # are still empty here.
     assert {control.control_id for control in zibo.controls} == {
+        # --- mcp.yaml (#222) ---
         "fd_capt",
         "fd_fo",
         "cmd_a",
@@ -808,11 +809,57 @@ def test_zibo_b738_root_declares_its_read_back_confirmed_detection_dataref() -> 
         "mcp_alt",
         "mcp_hdg",
         "mcp_speed",
+        # --- overhead.yaml (#223) ---
+        "gen1",
+        "gen2",
+        "apu_gen1",
+        "apu_gen2",
+        "apu_master",
+        "apu_bleed",
+        "ext_power",
+        "fuel_pump_l1",
+        "fuel_pump_l2",
+        "fuel_pump_r1",
+        "fuel_pump_r2",
+        "fuel_pump_c1",
+        "fuel_pump_c2",
+        "fuel_crossfeed",
+        "hyd_eng1_pump",
+        "hyd_eng2_pump",
+        "hyd_elec1_pump",
+        "hyd_elec2_pump",
+        "window_heat_l_side",
+        "window_heat_l_fwd",
+        "window_heat_r_side",
+        "window_heat_r_fwd",
+        "probe_heat_capt",
+        "probe_heat_fo",
+        "wing_anti_ice",
+        "eng1_anti_ice",
+        "eng2_anti_ice",
+        "bleed_eng1",
+        "bleed_eng2",
+        "iso_valve",
+        "pack_l",
+        "pack_r",
     }
     assert {control.control_id for control in zibo.parked} == {
+        # --- mcp.yaml (#222) ---
         "mcp_vs",
         "ias_mach_changeover",
         "lnav",
+        # --- overhead.yaml (#223): identified live but deliberately not
+        # actuated (battery/standby power/gen drive disconnect/IRS mode —
+        # destructive or hard-to-recover risk to a shared session), or
+        # confirmed absent against the live dataref/command index
+        # (bus_transfer) — docs/research/zibo-737-overhead-dataref-mapping.md
+        "battery",
+        "standby_power",
+        "gen_drive_disc1",
+        "gen_drive_disc2",
+        "bus_transfer",
+        "irs_l",
+        "irs_r",
     }
     assert {panel.panel_id for panel in zibo.panels} == {"mcp", "overhead", "pedestal", "lights"}
     assert zibo.setup_overrides == {
@@ -831,10 +878,10 @@ async def test_cockpit_runtime_reports_the_mcp_panel_controls_for_zibo(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A sanity check against the REAL shipped directory (not the
-    ``fake-trainer`` fixture): detecting the Zibo now reports the MCP panel's
-    controls (#222), with the overhead/pedestal/lights panels still empty
-    (#223/#224). Deliberately does NOT monkeypatch ``COCKPIT_CATALOGS_DIR`` —
-    this is the one test that exercises the real
+    ``fake-trainer`` fixture): detecting the Zibo now reports the MCP (#222)
+    and overhead (#223) panels' controls, with the pedestal/lights panels
+    still empty (#224). Deliberately does NOT monkeypatch
+    ``COCKPIT_CATALOGS_DIR`` — this is the one test that exercises the real
     ``adapters/xplane/cockpit_catalogs/`` tree end to end.
     """
     api = _FakeWebApi()
@@ -847,9 +894,11 @@ async def test_cockpit_runtime_reports_the_mcp_panel_controls_for_zibo(
         catalog = await adapter.get_cockpit_catalog()
         assert catalog.aircraft is not None
         assert catalog.aircraft.catalog_id == "zibo-b738"
-        assert len(catalog.controls) == 11
-        assert len(catalog.parked) == 3
-        assert all(control.panel_id == "mcp" for control in catalog.controls)
-        assert all(control.panel_id == "mcp" for control in catalog.parked)
+        assert len(catalog.controls) == 43  # 11 mcp (#222) + 32 overhead (#223)
+        assert len(catalog.parked) == 10  # 3 mcp (#222) + 7 overhead (#223)
+        assert all(control.panel_id in ("mcp", "overhead") for control in catalog.controls)
+        assert all(control.panel_id in ("mcp", "overhead") for control in catalog.parked)
+        # pedestal/lights (#224) are still untouched.
+        assert not any(control.panel_id in ("pedestal", "lights") for control in catalog.controls)
     finally:
         await adapter.disconnect()
