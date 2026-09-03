@@ -5,6 +5,12 @@
  * re-declared here — they already exist on `instructorApi` and the map imports those
  * hooks directly.
  *
+ * `getAirport` is also consumed by the startup airport-selection gate
+ * (`features/startup/AirportGate.tsx`, via `useLazyGetAirportQuery`): the gate's own
+ * design doc (`docs/designs/startup-airport-loading.md` §2.1) anticipated adding this
+ * exact endpoint fresh, but it already lived here, injected by an earlier, independent
+ * epic — reused rather than duplicated once discovered.
+ *
  * `kinds` must serialize as **repeated** query keys (`kinds=vor&kinds=ndb`) to match
  * FastAPI's `Annotated[list[NavaidKind] | None, Query()]`. `fetchBaseQuery`'s default
  * `params` handling comma-joins arrays, which FastAPI rejects as one unknown kind — so
@@ -97,5 +103,11 @@ export const {
   useGetNavaidsNearQuery,
   useGetFixesNearQuery,
   useGetAirportQuery,
+  // The startup gate resolves imperatively (`features/startup/AirportGate.tsx`): a query
+  // hook re-subscribing to a cached error entry does not refetch by default
+  // (`refetchOnMountOrArgChange` is `false`), which would silently break "retry the same
+  // ICAO." `getAirport` already lives here (map manager), not duplicated in
+  // `instructorApi.ts` — this endpoint predates the startup gate.
+  useLazyGetAirportQuery,
   useMeasureGeodesicQuery,
 } = mapApi;
