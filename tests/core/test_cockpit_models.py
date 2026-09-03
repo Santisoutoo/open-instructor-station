@@ -20,6 +20,15 @@ from core.cockpit.models import (
 
 VERIFIED_ON = datetime.date(2026, 9, 2)
 
+#: Sentinel telling ``_spec`` to drop a key that its per-kind defaults would
+#: otherwise fill, instead of overriding it. A plain ``del kwargs[field]``
+#: before merging into ``base`` is a no-op — ``base`` already carries that
+#: same default from a *different* source, so the key survives the merge and
+#: the "missing required field" case the test wants is never constructed.
+#: Passing ``_OMIT`` as an override value makes the omission explicit and
+#: actually removes the key from the dict handed to ``model_validate``.
+_OMIT = object()
+
 
 def _spec(kind: str, **overrides: object) -> CockpitControlSpec:
     """A minimally valid ``CockpitControlSpec`` of ``kind``, overridable per test.
@@ -29,6 +38,9 @@ def _spec(kind: str, **overrides: object) -> CockpitControlSpec:
     for toggle/dial/selector, ``False`` for press, ``True`` for encoder (an
     encoder's readability is binding-dependent — either is legal, so a test
     that cares picks explicitly).
+
+    An override value of ``_OMIT`` deletes the key from the constructed dict
+    instead of setting it, so a test can exercise a genuinely missing field.
     """
     base: dict[str, object] = {
         "control_id": "x",
@@ -54,7 +66,11 @@ def _spec(kind: str, **overrides: object) -> CockpitControlSpec:
             SelectorOption(value=0, label="Off"),
             SelectorOption(value=1, label="On"),
         ]
-    base.update(overrides)
+    for key, value in overrides.items():
+        if value is _OMIT:
+            base.pop(key, None)
+        else:
+            base[key] = value
     return CockpitControlSpec.model_validate(base)
 
 
@@ -152,10 +168,8 @@ def test_press_forbids_a_non_default_off_label() -> None:
 
 @pytest.mark.parametrize("required_field", ["unit", "min_value", "max_value", "step"])
 def test_dial_requires_its_own_fields(required_field: str) -> None:
-    kwargs: dict[str, object] = {"unit": "ft", "min_value": 0.0, "max_value": 100.0, "step": 10.0}
-    del kwargs[required_field]
     with pytest.raises(ValidationError):
-        _spec("dial", **kwargs)
+        _spec("dial", **{required_field: _OMIT})
 
 
 def test_dial_rejects_min_not_less_than_max() -> None:
@@ -177,10 +191,8 @@ def test_dial_forbids_encoder_and_selector_fields(field: str) -> None:
 
 @pytest.mark.parametrize("required_field", ["unit", "step", "max_delta"])
 def test_encoder_requires_its_own_fields(required_field: str) -> None:
-    kwargs: dict[str, object] = {"unit": "units", "step": 1.0, "max_delta": 10}
-    del kwargs[required_field]
     with pytest.raises(ValidationError):
-        _spec("encoder", **kwargs)
+        _spec("encoder", **{required_field: _OMIT})
 
 
 @pytest.mark.parametrize("field", ["min_value", "max_value", "options"])
