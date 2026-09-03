@@ -34,9 +34,17 @@ def referenced_control_ids(spec: CockpitControlSpec) -> frozenset[str]:
 
 
 def _condition_satisfied(condition: ControlCondition, value: CockpitValue) -> bool:
+    """``bool`` is a subtype of ``int`` in Python, so ``isinstance(x, (int, float))``
+    already matches ``bool`` — this one numeric branch is symmetric over all four
+    bool/numeric combinations (bool==bool, bool==numeric, numeric==bool,
+    numeric==numeric), comparing at their 1.0/0.0 equivalent within tolerance.
+    This mirrors ``core.cockpit.actuation.is_on``'s convention: a real adapter
+    (e.g. X-Plane's Web API) reports every toggle-status dataref as a JSON float,
+    never a Python bool, so a catalog's ``equals=True`` must match a live ``1.0``.
+    A non-numeric ``equals`` (e.g. a string) never matches a numeric value, and
+    vice versa — only the final fallback handles that case.
+    """
     equals = condition.equals
-    if isinstance(equals, bool) or isinstance(value, bool):
-        return isinstance(equals, bool) and isinstance(value, bool) and equals is value
     if isinstance(equals, (int, float)) and isinstance(value, (int, float)):
         return abs(float(value) - float(equals)) <= _NUMERIC_TOLERANCE
     return equals == value
