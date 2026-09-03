@@ -1,0 +1,458 @@
+# Zibo Mod B737-800X — Overhead panel.
+#
+# Wave 2, issue #223. Phase 1 (docs/research/zibo-737-overhead-dataref-mapping.md)
+# discovered candidates from the add-on's static reference files only, with no
+# live sim access. Phase 2 (this file) live-verified every entry below against
+# a running X-Plane 12.4.3 + Zibo 4.05.33 at LEMD, through the real adapter
+# code path (adapters/xplane/cockpit_controls.py's CockpitRuntime executors,
+# exercised via tests/sim/test_live_cockpit_catalog.py's generic sweep) —
+# never a hand-rolled HTTP call.
+#
+# Phase 1's biggest gap — battery/standby power/generators/GEN drive/external
+# power had NO candidate in the vendor's bundled B738_Datarefs.txt /
+# B738_Commands.txt reference files at all — turned out to be a documentation
+# gap, not a missing feature: live discovery (grepping the connected sim's own
+# full dataref/command index, GET /api/v2/datarefs and /api/v2/commands, the
+# same endpoint connect() already scans) found a `laminar/B738/electrical/*`
+# and `laminar/B738/electric/*` namespace the static files never mention at
+# all (gen1_pos/gen2_pos/apu_gen1_pos/apu_gen2_pos/gpu_pos live under
+# `electrical/`; battery_pos/standby_bat_pos live under `electric/` — note the
+# two different, both real, prefixes).
+#
+# Not every live-found candidate is in `controls:` below, on purpose: battery,
+# standby power, the generator drive disconnects and the IRS mode selectors
+# were deliberately NOT actuated this session even though a real binding was
+# found for most of them — see `parked:` below for exactly why (destructive
+# or hard-to-recover risk to a shared live session, not an unverified name).
+controls:
+  # --- Electrical -----------------------------------------------------------
+  - control_id: gen1
+    label: Generator 1
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ON"}
+    hint: "gen1_up|dn resolve live but don't move this switch — writes the position dataref directly instead."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/electrical/gen1_pos
+      write: laminar/B738/electrical/gen1_pos
+
+  - control_id: gen2
+    label: Generator 2
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ON"}
+    hint: "toggle_switch/gen2_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/electrical/gen2_pos
+      write: laminar/B738/electrical/gen2_pos
+
+  - control_id: apu_gen1
+    label: APU generator (bus 1)
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ON"}
+    hint: "apu_gen1_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/electrical/apu_gen1_pos
+      write: laminar/B738/electrical/apu_gen1_pos
+
+  - control_id: apu_gen2
+    label: APU generator (bus 2)
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ON"}
+    hint: "apu_gen2_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/electrical/apu_gen2_pos
+      write: laminar/B738/electrical/apu_gen2_pos
+
+  - control_id: apu_master
+    label: APU (OFF/ON/START)
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ON"}
+      - {value: 2, label: "START"}
+    hint: "The live sweep only cycles OFF<->ON; START is a spring-loaded transient position not exercised automatically."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/switches/apu_start
+      write: laminar/B738/switches/apu_start
+
+  - control_id: apu_bleed
+    label: APU bleed
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/bleed_air_apu
+      read: laminar/B738/toggle_switch/bleed_air_apu_pos
+
+  - control_id: ext_power
+    label: External power (GPU)
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "DISCONNECT"}
+      - {value: 1, label: "CONNECT"}
+    hint: "toggle_switch/gpu_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/electrical/gpu_pos
+      write: laminar/B738/electrical/gpu_pos
+
+  # --- Fuel -------------------------------------------------------------
+  - control_id: fuel_pump_l1
+    label: Fuel pump — left tank 1
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fuel_pump_lft1
+      read: laminar/B738/fuel/fuel_tank_pos_lft1
+
+  - control_id: fuel_pump_l2
+    label: Fuel pump — left tank 2
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fuel_pump_lft2
+      read: laminar/B738/fuel/fuel_tank_pos_lft2
+
+  - control_id: fuel_pump_r1
+    label: Fuel pump — right tank 1
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fuel_pump_rgt1
+      read: laminar/B738/fuel/fuel_tank_pos_rgt1
+
+  - control_id: fuel_pump_r2
+    label: Fuel pump — right tank 2
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fuel_pump_rgt2
+      read: laminar/B738/fuel/fuel_tank_pos_rgt2
+
+  - control_id: fuel_pump_c1
+    label: Fuel pump — center tank 1
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fuel_pump_ctr1
+      read: laminar/B738/fuel/fuel_tank_pos_ctr1
+
+  - control_id: fuel_pump_c2
+    label: Fuel pump — center tank 2
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fuel_pump_ctr2
+      read: laminar/B738/fuel/fuel_tank_pos_ctr2
+
+  - control_id: fuel_crossfeed
+    label: Fuel crossfeed
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ON"}
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/knobs/cross_feed_pos
+      write: laminar/B738/knobs/cross_feed_pos
+
+  # --- Hydraulics ---------------------------------------------------------
+  - control_id: hyd_eng1_pump
+    label: Engine 1 hydraulic pump
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/hydro_pumps1
+      read: laminar/B738/toggle_switch/hydro_pumps1_pos
+
+  - control_id: hyd_eng2_pump
+    label: Engine 2 hydraulic pump
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/hydro_pumps2
+      read: laminar/B738/toggle_switch/hydro_pumps2_pos
+
+  - control_id: hyd_elec1_pump
+    label: Electric hydraulic pump 1
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/electric_hydro_pumps1
+      read: laminar/B738/toggle_switch/electric_hydro_pumps1_pos
+
+  - control_id: hyd_elec2_pump
+    label: Electric hydraulic pump 2
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/electric_hydro_pumps2
+      read: laminar/B738/toggle_switch/electric_hydro_pumps2_pos
+
+  # --- Anti-ice -------------------------------------------------------
+  - control_id: window_heat_l_side
+    label: Window heat — L side
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/window_heat_l_side
+      read: laminar/B738/ice/window_heat_l_side_pos
+
+  - control_id: window_heat_l_fwd
+    label: Window heat — L fwd
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/window_heat_l_fwd
+      read: laminar/B738/ice/window_heat_l_fwd_pos
+
+  - control_id: window_heat_r_side
+    label: Window heat — R side
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/window_heat_r_side
+      read: laminar/B738/ice/window_heat_r_side_pos
+
+  - control_id: window_heat_r_fwd
+    label: Window heat — R fwd
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/window_heat_r_fwd
+      read: laminar/B738/ice/window_heat_r_fwd_pos
+
+  - control_id: probe_heat_capt
+    label: Probe heat — captain
+    panel_id: overhead
+    kind: toggle
+    hint: "Command and dataref share one path, confirmed live — not a documentation typo."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/capt_probes_pos
+      read: laminar/B738/toggle_switch/capt_probes_pos
+
+  - control_id: probe_heat_fo
+    label: Probe heat — F/O
+    panel_id: overhead
+    kind: toggle
+    hint: "Command and dataref share one path, confirmed live — not a documentation typo."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/fo_probes_pos
+      read: laminar/B738/toggle_switch/fo_probes_pos
+
+  - control_id: wing_anti_ice
+    label: Wing anti-ice
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/wing_heat
+      read: laminar/B738/ice/wing_heat_pos
+
+  - control_id: eng1_anti_ice
+    label: Engine 1 anti-ice
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/eng1_heat
+      read: laminar/B738/ice/eng1_heat_pos
+
+  - control_id: eng2_anti_ice
+    label: Engine 2 anti-ice
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/eng2_heat
+      read: laminar/B738/ice/eng2_heat_pos
+
+  # --- Pneumatics -----------------------------------------------------
+  - control_id: bleed_eng1
+    label: Engine 1 bleed
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/bleed_air_1
+      read: laminar/B738/toggle_switch/bleed_air_1_pos
+
+  - control_id: bleed_eng2
+    label: Engine 2 bleed
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/bleed_air_2
+      read: laminar/B738/toggle_switch/bleed_air_2_pos
+
+  - control_id: iso_valve
+    label: Isolation valve
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "CLOSE"}
+      - {value: 1, label: "AUTO"}
+      - {value: 2, label: "OPEN"}
+    hint: "iso_valve_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/air/isolation_valve_pos
+      write: laminar/B738/air/isolation_valve_pos
+
+  - control_id: pack_l
+    label: Left pack
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "AUTO"}
+      - {value: 2, label: "OPEN"}
+    hint: "l_pack_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/air/l_pack_pos
+      write: laminar/B738/air/l_pack_pos
+
+  - control_id: pack_r
+    label: Right pack
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "AUTO"}
+      - {value: 2, label: "OPEN"}
+    hint: "r_pack_up|dn resolve live but do not move this switch — writes the position dataref directly, see gen1."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      read: laminar/B738/air/r_pack_pos
+      write: laminar/B738/air/r_pack_pos
+
+parked:
+  - control_id: battery
+    label: Battery
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Real binding found live (electric/battery_pos; switch/battery_up/dn)
+      but not actuated: generators and GPU were OFF, so battery may be the
+      sole power source and this session cannot restart the sim.
+
+  - control_id: standby_power
+    label: Standby power
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Real read found live (electric/standby_bat_pos=1.0, four candidate
+      commands) but which pair drives it and what its positions mean was
+      not determined — same sole-power-source risk as battery.
+
+  - control_id: gen_drive_disc1
+    label: Generator drive disconnect 1
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Real binding found live (drive_disconnect1_pos=0.0, on/off commands)
+      but not actuated: a real CSD disconnect is one-way maintenance-only,
+      and Zibo's one_way_switch naming hints at the same.
+
+  - control_id: gen_drive_disc2
+    label: Generator drive disconnect 2
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Same finding as gen_drive_disc1 (drive_disconnect2_pos=0.0),
+      deliberately not actuated for the same one-way-disconnect risk.
+
+  - control_id: bus_transfer
+    label: Bus transfer
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Confirmed absent live: grepped the sim's full dataref/command index
+      for bus_tr*/bus_tie*/transfer* — nothing beyond the read-only
+      trans_bus_off1/2 annunciators exists.
+
+  - control_id: irs_l
+    label: IRS mode selector (L)
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Live read found (irs/irs_mode=2.0, consistent with NAV) but no
+      selector command — every irs_L_*/irs_R_* command belongs to the
+      display unit. Disturbing NAV forces a realignment #224 inherits.
+
+  - control_id: irs_r
+    label: IRS mode selector (R)
+    panel_id: overhead
+    since: 2026-09-03
+    reason: >-
+      Same finding as irs_l (irs/irs2_mode=2.0), not actuated for the
+      same realignment risk.
