@@ -1,0 +1,260 @@
+/*
+ * Cockpit panel. Custom properties only — both themes are a value swap away
+ * (see index.css). Tablet-first: rows and tabs ≥44px, a sticky-feeling picker+search pair
+ * above a simple list, built for a catalog that will eventually hold hundreds of rows
+ * (design §7.1).
+ */
+
+/* ---------------------------------------------------------------- aircraft banner */
+
+.cockpit-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.cockpit-banner__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.cockpit-banner__aircraft {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cockpit-banner__note {
+  margin: 0.2rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+
+.cockpit-banner__reason {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--warn);
+}
+
+.cockpit-banner__stale {
+  margin-left: 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+
+.cockpit-banner__refresh {
+  flex: none;
+  min-height: 44px;
+  padding: 0 1rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cockpit-banner__refresh:not(:disabled):hover {
+  border-color: var(--accent);
+  transition: border-color 80ms ease-out;
+}
+
+.cockpit-banner__refresh:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cockpit-banner__refresh:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ----------------------------------------------------------------- search + picker */
+
+.cockpit-search {
+  width: 100%;
+  min-height: 44px;
+  margin-bottom: 0.75rem;
+  padding: 0 0.75rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
+.cockpit-search:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cockpit-picker {
+  display: flex;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+  overflow-x: auto;
+}
+
+.cockpit-picker__tab {
+  flex: none;
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.cockpit-picker__tab:hover {
+  color: var(--text);
+  transition: color 80ms ease-out;
+}
+
+.cockpit-picker__tab[aria-selected='true'] {
+  background: var(--bg-panel);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.cockpit-picker__tab:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------------------------------- list */
+
+.cockpit-list {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.cockpit-empty {
+  margin: 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.cockpit-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1rem;
+  padding: 0.6rem 0.85rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.cockpit-row--unmet {
+  border-color: var(--warn);
+}
+
+.cockpit-row--parked {
+  opacity: 0.65;
+}
+
+.cockpit-row__main {
+  flex: 1;
+  min-width: 180px;
+}
+
+.cockpit-row__label {
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.cockpit-row__hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-dim);
+}
+
+.cockpit-row__unmet {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  font-style: italic;
+  color: var(--warn);
+}
+
+.cockpit-row__reason {
+  margin: 0.15rem 0 0;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+.cockpit-row__parked-badge {
+  flex: none;
+  padding: 0.2rem 0.6rem;
+  background: var(--bg-raised);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.cockpit-row__widget {
+  flex: none;
+}
+
+/* ------------------------------------------------------------------------ widgets */
+
+/* Dial/encoder share the base `.control` box from index.css; only their own layout
+   quirks live here. */
+.cockpit-dial,
+.cockpit-encoder {
+  min-width: 220px;
+}
+
+.cockpit-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.cockpit-selector__option {
+  min-height: 44px;
+  padding: 0 0.85rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cockpit-selector__option:hover {
+  color: var(--text);
+  transition: color 80ms ease-out;
+}
+
+.cockpit-selector__option[aria-pressed='true'] {
+  background: var(--bg-panel);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.cockpit-selector__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cockpit-selector__option:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

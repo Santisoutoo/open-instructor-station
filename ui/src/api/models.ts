@@ -535,6 +535,13 @@ export type CockpitActuation = components['schemas']['CockpitActuation'];
 /** What `POST /api/cockpit/actuate` answers — the CONFIRMED state, read back after the write. */
 export type CockpitActuationResult = components['schemas']['CockpitActuationResult'];
 
+/**
+ * What a control's state or a requested value can be (design §3: `bool | int | float |
+ * str`). Derived from {@link CockpitControlState} rather than declared separately, so a
+ * widened wire union is caught here rather than re-typed by hand.
+ */
+export type CockpitValue = NonNullable<CockpitControlState['value']>;
+
 /** Numeric members of {@link AircraftState}, used by the runtime WebSocket payload guard. */
 const NUMERIC_STATE_FIELDS = [
   'latitude',

@@ -137,4 +137,13 @@ export const TABS: readonly TabDefinition[] = [
         default: m.PushbackPanel,
       })),
   },
+  {
+    id: 'cockpit',
+    label: 'Cockpit',
+    gated: true,
+    load: () =>
+      import('../features/cockpit/CockpitPanel').then((m) => ({
+        default: m.CockpitPanel,
+      })),
+  },
 ];
