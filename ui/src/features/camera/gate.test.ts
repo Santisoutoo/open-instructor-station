@@ -18,6 +18,7 @@ function capabilities(overrides: Partial<Capabilities> = {}): Capabilities {
     can_set_fuel_payload: false,
     can_control_camera: true,
     can_pushback: false,
+    can_control_cockpit: false,
     ...overrides,
   };
 }

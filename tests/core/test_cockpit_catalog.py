@@ -34,6 +34,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+
 from core.cockpit.catalog import (
     CockpitCatalogLoadError,
     discover_catalog_dirs,

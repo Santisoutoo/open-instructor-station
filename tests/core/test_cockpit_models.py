@@ -10,12 +10,13 @@ from __future__ import annotations
 import datetime
 
 import pytest
+from pydantic import ValidationError
+
 from core.cockpit.models import (
     CockpitActuation,
     CockpitControlSpec,
     SelectorOption,
 )
-from pydantic import ValidationError
 
 VERIFIED_ON = datetime.date(2026, 9, 2)
 

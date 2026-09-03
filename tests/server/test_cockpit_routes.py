@@ -21,12 +21,12 @@ from collections.abc import Iterator
 from typing import NoReturn
 
 import pytest
-from core.cockpit.errors import CockpitWriteRejected
-from core.cockpit.models import CockpitActuation, CockpitActuationResult
 from fastapi.testclient import TestClient
 
 import server.deps
 from adapters.fake import FakeSimAdapter
+from core.cockpit.errors import CockpitWriteRejected
+from core.cockpit.models import CockpitActuation, CockpitActuationResult
 from core.sim_adapter import Capabilities
 from server.app import create_app
 from server.deps import reset_adapter

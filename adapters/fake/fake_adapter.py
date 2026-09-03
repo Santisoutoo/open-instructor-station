@@ -11,12 +11,13 @@ It performs no I/O whatsoever and is safe to import and construct anywhere.
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Sequence
 from dataclasses import dataclass
 from time import monotonic
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from adapters.fake.cockpit_catalog import FAKE_COCKPIT_CATALOG, FAKE_COCKPIT_INITIAL_VALUES
 from core.camera.models import (
     CAMERA_VIEW_CATALOGUE,
     CameraOffset,
@@ -24,6 +25,23 @@ from core.camera.models import (
     CameraViewId,
     CameraViewSupport,
 )
+from core.cockpit.actuation import toggle_needs_press, validate_actuation
+from core.cockpit.catalog import publish
+from core.cockpit.errors import (
+    CockpitCatalogInactive,
+    CockpitControlUnknown,
+    CockpitPreconditionUnmet,
+)
+from core.cockpit.models import (
+    CockpitActuation,
+    CockpitActuationResult,
+    CockpitCatalog,
+    CockpitCatalogDocument,
+    CockpitControlState,
+    CockpitStateSnapshot,
+    CockpitValue,
+)
+from core.cockpit.preconditions import referenced_control_ids, unmet_preconditions
 from core.failures import (
     FAILURE_CATALOGUE,
     FAILURE_IDS,
@@ -106,6 +124,7 @@ _ALL_CAPABILITIES = Capabilities(
     can_set_fuel_payload=True,
     can_control_camera=True,
     can_pushback=True,
+    can_control_cockpit=True,
 )
 
 _SECONDS_PER_MINUTE = 60.0
@@ -173,6 +192,14 @@ class FakeSimAdapter:
         # other, because the view alone does not imply a pose.
         self._camera_view: CameraViewId | None = None
         self._camera_offset: CameraOffset | None = None
+        # The cockpit control catalog (D12, §4.1): a Python constant, not a
+        # YAML read. `_cockpit_document is None` is "no catalog active for
+        # the loaded aircraft" — the `load_cockpit_catalog` test affordance
+        # is the CI-visible surface of an aircraft swap.
+        self._cockpit_document: CockpitCatalogDocument | None = FAKE_COCKPIT_CATALOG
+        self._cockpit_values: dict[str, CockpitValue] = dict(FAKE_COCKPIT_INITIAL_VALUES)
+        self._cockpit_revision: int = 1
+        self._cockpit_presses: list[str] = []
 
     # -- Identity ---------------------------------------------------------
 
@@ -425,6 +452,209 @@ class FakeSimAdapter:
             raise CapabilityNotSupported(self.name, "can_control_camera")
         self._camera_offset = offset
         self._camera_view = "drone"
+
+    # -- Cockpit control catalog ------------------------------------------
+
+    @property
+    def cockpit_presses(self) -> tuple[str, ...]:
+        """Every ``press``/``toggle`` binding fired so far, in order.
+
+        Not part of the ``SimAdapter`` protocol — the ``applied_setup``
+        precedent: a test affordance letting the contract suite see what a
+        press "did" without a flight model to observe.
+        """
+        return tuple(self._cockpit_presses)
+
+    def load_cockpit_catalog(self, document: CockpitCatalogDocument | None) -> None:
+        """Swap the active catalog — the CI-visible surface of "the aircraft was swapped".
+
+        Reseeds every readable control's value from :data:`FAKE_COCKPIT_INITIAL_VALUES`
+        when it names the id, otherwise from the document's own dial/selector
+        defaults (``min_value`` / first option / ``False`` / ``0.0``). Always
+        bumps the revision, even to clear the catalog to ``None``.
+        """
+        self._cockpit_document = document
+        self._cockpit_presses = []
+        self._cockpit_revision += 1
+        if document is None:
+            self._cockpit_values = {}
+            return
+
+        values: dict[str, CockpitValue] = {}
+        for control in document.controls:
+            if not control.readable:
+                continue
+            if control.control_id in FAKE_COCKPIT_INITIAL_VALUES:
+                values[control.control_id] = FAKE_COCKPIT_INITIAL_VALUES[control.control_id]
+            elif control.kind == "dial":
+                assert control.min_value is not None
+                values[control.control_id] = control.min_value
+            elif control.kind == "selector":
+                assert control.options
+                values[control.control_id] = control.options[0].value
+            elif control.kind == "encoder":
+                values[control.control_id] = 0.0
+            else:  # toggle
+                values[control.control_id] = False
+        self._cockpit_values = values
+
+    def _parked_reason(self, control_id: str) -> str | None:
+        if self._cockpit_document is None:
+            return None
+        for entry in self._cockpit_document.parked:
+            if entry.control_id == control_id:
+                return entry.reason
+        return None
+
+    async def get_cockpit_catalog(self) -> CockpitCatalog:
+        """The active synthetic catalog, or an honest "unsupported"/"no aircraft" answer.
+
+        Capability-free (D1): "no" is an answer, never an exception.
+        """
+        if not self.capabilities.can_control_cockpit:
+            return CockpitCatalog(
+                supported=False,
+                reason=f"{self.name!r} does not declare can_control_cockpit.",
+                aircraft=None,
+                revision=0,
+                detection_note=None,
+                panels=[],
+                controls=[],
+                parked=[],
+            )
+        if self._cockpit_document is None:
+            return CockpitCatalog(
+                supported=True,
+                reason="No cockpit catalog is active for the loaded aircraft.",
+                aircraft=None,
+                revision=self._cockpit_revision,
+                detection_note=None,
+                panels=[],
+                controls=[],
+                parked=[],
+            )
+        return publish(
+            self._cockpit_document,
+            revision=self._cockpit_revision,
+            detection_note="Synthetic catalog; nothing was probed.",
+        )
+
+    async def refresh_cockpit_catalog(self) -> CockpitCatalog:
+        """Bump the revision and re-report the same (synthetic) catalog. Idempotent."""
+        if not self.capabilities.can_control_cockpit:
+            raise CapabilityNotSupported(self.name, "can_control_cockpit")
+        self._cockpit_revision += 1
+        return await self.get_cockpit_catalog()
+
+    async def read_cockpit_states(
+        self, control_ids: Sequence[str] | None = None
+    ) -> CockpitStateSnapshot:
+        """Confirmed values from the in-memory value ledger — no physics."""
+        if not self.capabilities.can_control_cockpit:
+            raise CapabilityNotSupported(self.name, "can_control_cockpit")
+        document = self._cockpit_document
+        if document is None:
+            return CockpitStateSnapshot(catalog_id=None, revision=self._cockpit_revision, states=[])
+
+        by_id = {control.control_id: control for control in document.controls}
+        if control_ids is None:
+            ids: list[str] = [
+                control.control_id for control in document.controls if control.readable
+            ]
+        else:
+            ids = list(control_ids)
+            for control_id in ids:
+                if control_id not in by_id:
+                    raise CockpitControlUnknown(control_id, self._parked_reason(control_id))
+
+        states = [
+            CockpitControlState(
+                control_id=control_id,
+                value=self._cockpit_values.get(control_id) if by_id[control_id].readable else None,
+            )
+            for control_id in ids
+        ]
+        return CockpitStateSnapshot(
+            catalog_id=document.aircraft.catalog_id, revision=self._cockpit_revision, states=states
+        )
+
+    async def actuate_cockpit_control(self, actuation: CockpitActuation) -> CockpitActuationResult:
+        """Actuate by kind against the in-memory value ledger (D8's rules, no I/O).
+
+        Order (§4.1): capability gate -> active catalog -> lookup (parked-aware)
+        -> shape validation -> preconditions -> act.
+        """
+        if not self.capabilities.can_control_cockpit:
+            raise CapabilityNotSupported(self.name, "can_control_cockpit")
+        document = self._cockpit_document
+        if document is None:
+            raise CockpitCatalogInactive("No cockpit catalog is active for the loaded aircraft.")
+
+        by_id = {control.control_id: control for control in document.controls}
+        control = by_id.get(actuation.control_id)
+        if control is None:
+            raise CockpitControlUnknown(
+                actuation.control_id, self._parked_reason(actuation.control_id)
+            )
+        spec = control.spec
+        validate_actuation(spec, actuation)
+
+        referenced = referenced_control_ids(spec)
+        current_values = {
+            control_id: self._cockpit_values.get(control_id) for control_id in referenced
+        }
+        unmet = unmet_preconditions(spec, current_values)
+        if unmet:
+            raise CockpitPreconditionUnmet(
+                actuation.control_id, tuple(group.hint for group in unmet)
+            )
+
+        actions_taken = 0
+        value: CockpitValue | None
+
+        if spec.kind == "toggle":
+            current = self._cockpit_values.get(control.control_id)
+            requested = bool(actuation.value)
+            if toggle_needs_press(current, requested, control.binding.on_value):
+                self._cockpit_presses.append(control.binding.press or control.control_id)
+                self._cockpit_values[control.control_id] = requested
+                actions_taken = 1
+            value = self._cockpit_values.get(control.control_id)
+        elif spec.kind == "press":
+            self._cockpit_presses.append(control.binding.press or control.control_id)
+            actions_taken = 1
+            value = None
+        elif spec.kind == "dial":
+            assert actuation.value is not None
+            written = float(actuation.value)
+            self._cockpit_values[control.control_id] = written
+            actions_taken = 1
+            value = written
+        elif spec.kind == "encoder":
+            assert actuation.delta is not None
+            assert spec.step is not None
+            if spec.readable:
+                current_encoder = self._cockpit_values.get(control.control_id)
+                base = float(current_encoder) if isinstance(current_encoder, (int, float)) else 0.0
+                moved = base + actuation.delta * spec.step
+                self._cockpit_values[control.control_id] = moved
+                value = moved
+            else:
+                value = None
+            actions_taken = 1
+        else:  # selector
+            assert actuation.value is not None
+            self._cockpit_values[control.control_id] = actuation.value
+            actions_taken = 1
+            value = actuation.value
+
+        return CockpitActuationResult(
+            requested=actuation,
+            state=CockpitControlState(control_id=control.control_id, value=value),
+            actions_taken=actions_taken,
+            catalog_id=document.aircraft.catalog_id,
+            revision=self._cockpit_revision,
+        )
 
     async def apply_setup(self, setup: AircraftSetup) -> None:
         """Apply every field of ``setup`` that is set, leaving the rest untouched.

@@ -19,6 +19,7 @@ import datetime
 from pathlib import Path
 
 import pytest
+
 from core.cockpit.actuation import (
     dial_confirmed,
     is_on,
@@ -35,7 +36,6 @@ from core.cockpit.models import (
     CockpitControlSpec,
     SelectorOption,
 )
-
 from core.models import AircraftSetup
 
 FIXTURE_DIR = Path(__file__).parent / "fixtures" / "cockpit"

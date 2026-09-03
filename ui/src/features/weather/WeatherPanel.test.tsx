@@ -48,6 +48,7 @@ const CAPABLE: Capabilities = {
   can_set_fuel_payload: false,
   can_control_camera: false,
   can_pushback: false,
+  can_control_cockpit: false,
 };
 
 const CURRENT: WeatherState = {

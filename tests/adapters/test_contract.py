@@ -28,6 +28,15 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import pytest
+from pydantic import ValidationError
+
+from adapters.fake import FakeSimAdapter
+from core.camera.models import (
+    CAMERA_VIEW_IDS,
+    CameraOffset,
+    CameraSupportManifest,
+    CameraViewId,
+)
 from core.cockpit.errors import (
     CockpitCatalogInactive,
     CockpitControlUnknown,
@@ -44,15 +53,6 @@ from core.cockpit.models import (
     CockpitDetection,
     CockpitPanel,
     CockpitValue,
-)
-from pydantic import ValidationError
-
-from adapters.fake import FakeSimAdapter
-from core.camera.models import (
-    CAMERA_VIEW_IDS,
-    CameraOffset,
-    CameraSupportManifest,
-    CameraViewId,
 )
 from core.failures import FAILURE_IDS, ActiveFailure, FailureRef
 from core.geodesy import (
@@ -2136,6 +2136,7 @@ async def test_actuate_selector_round_trips(adapter: SimAdapter) -> None:
     values = [option.value for option in spec.options]
 
     original = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
+    assert isinstance(original, (int, str))  # narrows CockpitValue for list.index(); not a bool.
     current_index = values.index(original)
     target = values[(current_index + 1) % len(values)]
     try:

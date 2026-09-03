@@ -12,6 +12,7 @@ import datetime
 from pathlib import Path
 
 import pytest
+
 from core.cockpit.catalog import CockpitCatalogLoadError, load_catalog_dir
 from core.cockpit.models import (
     CockpitCatalogDocument,

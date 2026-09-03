@@ -90,7 +90,7 @@ import asyncio
 import base64
 import binascii
 import math
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import pairwise
@@ -125,6 +125,12 @@ from core.camera.models import (
     CameraSupportManifest,
     CameraViewId,
     CameraViewSupport,
+)
+from core.cockpit.models import (
+    CockpitActuation,
+    CockpitActuationResult,
+    CockpitCatalog,
+    CockpitStateSnapshot,
 )
 from core.failures import (
     FAILURE_CATALOGUE,
@@ -424,6 +430,14 @@ _CAPABILITIES = Capabilities(
     #
     # Said plainly: this asserts the code is right, not that it has been flown.
     can_pushback=True,
+    # Foundation-only stub (docs/designs/cockpit-control-catalog.md §9.1, Wave
+    # 1 Track A): the camera-manager precedent for a capability whose real
+    # implementation is a separate, later track. The four cockpit methods on
+    # this adapter refuse (get_cockpit_catalog answers supported=False with a
+    # reason; the other three raise CapabilityNotSupported) until Track B
+    # wires the real detection probe, lazy binding resolution and per-kind
+    # executors and flips this to True.
+    can_control_cockpit=False,
 )
 
 #: §5.4 — rendered once in the Failures panel, verbatim. Study-level add-ons
@@ -2982,6 +2996,39 @@ class XPlaneSimAdapter:
             raise CapabilityNotSupported(self.name, "can_spawn_traffic")
         await self._bridge.send_command({"op": "clear_all"})
         self._traffic_meta.clear()
+
+    # -- Cockpit control catalog (foundation stub; Track B implements) ----
+    #
+    # docs/designs/cockpit-control-catalog.md §9.1: the foundation ships only
+    # refusing stubs here, exactly the camera-manager precedent — required
+    # because `_CONFORMS: SimAdapter = XPlaneSimAdapter()` and the
+    # runtime_checkable Protocol break otherwise. `can_control_cockpit=False`
+    # above means `get_cockpit_catalog` is the only one of the four a caller
+    # may reach without tripping `CapabilityNotSupported` first.
+
+    async def get_cockpit_catalog(self) -> CockpitCatalog:
+        """Capability-free (D1): "unsupported" with a reason, never an exception."""
+        return CockpitCatalog(
+            supported=False,
+            reason=f"{self.name!r} does not declare can_control_cockpit.",
+            aircraft=None,
+            revision=0,
+            detection_note=None,
+            panels=[],
+            controls=[],
+            parked=[],
+        )
+
+    async def refresh_cockpit_catalog(self) -> CockpitCatalog:
+        raise CapabilityNotSupported(self.name, "can_control_cockpit")
+
+    async def read_cockpit_states(
+        self, control_ids: Sequence[str] | None = None
+    ) -> CockpitStateSnapshot:
+        raise CapabilityNotSupported(self.name, "can_control_cockpit")
+
+    async def actuate_cockpit_control(self, actuation: CockpitActuation) -> CockpitActuationResult:
+        raise CapabilityNotSupported(self.name, "can_control_cockpit")
 
     # -- Streaming --------------------------------------------------------
 
