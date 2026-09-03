@@ -1,0 +1,227 @@
+# Zibo Mod B737-800X — MCP / autopilot panel.
+#
+# Wave 2, issue #222 (docs/designs/cockpit-control-catalog.md §5.7's worked
+# example, transcribed from the read-back-confirmed findings in
+# docs/research/zibo-737-autopilot-dataref-mapping.md).
+#
+# Every binding here replaces a generic X-Plane autopilot dataref/command that
+# is a confirmed no-op on the Zibo (research doc headline result): the
+# altitude/heading/VS dials silently reject the generic write, the airspeed
+# dial accepts-but-ignores it, the master/FD ladder dataref never moves, and
+# none of the three generic lateral "on" commands reach Zibo's mode logic.
+#
+# Ordering precondition (research §2): the master/FD toggles below (fd_capt,
+# fd_fo, cmd_a, cmd_b) must be applied BEFORE any lateral-mode press
+# (hdg_sel, vorloc, app) — those presses are inert with every one of the four
+# off. This is encoded as a `preconditions: [{any_of: [...]}]` group on each
+# lateral-mode control (D9), never as file/declaration order — the loader and
+# core.cockpit.preconditions.precondition_order() derive the actual apply
+# order from this graph (core.cockpit.actuation.plan_setup_actuations, used
+# by _write_autopilot's setup_overrides hook).
+#
+# settle_s (live-discovered while authoring #222, not in the research doc):
+# cmd_a/cmd_b/hdg_sel/vorloc/app ARE genuine bidirectional toggles — pressing
+# again while armed does disengage — but the OFF transition specifically can
+# take up to ~0.5s to read back on this install, longer than the ON
+# transition and longer than the adapter's default read-back window. A
+# single fast read shortly after the press can observe a false "still on".
+# 0.3s of settle before the first read-back attempt clears this reliably
+# (measured worst case ~0.48s across 4 consecutive on/off cycles).
+controls:
+  # --- Master / flight director — guarded momentary presses (research §1) --
+  - control_id: fd_capt
+    label: Flight director (captain)
+    panel_id: mcp
+    kind: toggle
+    verified_on: 2026-09-03
+    binding:
+      press: laminar/B738/autopilot/flight_director_toggle
+      read: laminar/B738/autopilot/flight_director_pos
+
+  - control_id: fd_fo
+    label: Flight director (F/O)
+    panel_id: mcp
+    kind: toggle
+    verified_on: 2026-09-03
+    binding:
+      press: laminar/B738/autopilot/flight_director_fo_toggle
+      read: laminar/B738/autopilot/flight_director_fo_pos
+
+  - control_id: cmd_a
+    label: CMD A
+    panel_id: mcp
+    kind: toggle
+    on_label: Engaged
+    verified_on: 2026-09-03
+    binding:
+      press: laminar/B738/autopilot/cmd_a_press
+      read: laminar/B738/autopilot/cmd_a_status
+      settle_s: 0.3
+
+  - control_id: cmd_b
+    label: CMD B
+    panel_id: mcp
+    kind: toggle
+    on_label: Engaged
+    verified_on: 2026-09-03
+    binding:
+      press: laminar/B738/autopilot/cmd_b_press
+      read: laminar/B738/autopilot/cmd_b_status
+      settle_s: 0.3
+
+  - control_id: ap_disconnect
+    label: A/P disengage
+    panel_id: mcp
+    kind: press
+    hint: "Fires the disconnect bar. Drops both CMD A and CMD B to off at once."
+    verified_on: 2026-09-03
+    binding:
+      press: laminar/B738/autopilot/disconnect_button
+
+  # --- Lateral modes — inert unless a FD/master toggle above is on ---------
+  - control_id: hdg_sel
+    label: HDG SEL
+    panel_id: mcp
+    kind: toggle
+    on_label: Armed
+    verified_on: 2026-09-03
+    preconditions:
+      - any_of:
+          - {control_id: fd_capt, equals: true}
+          - {control_id: fd_fo, equals: true}
+          - {control_id: cmd_a, equals: true}
+          - {control_id: cmd_b, equals: true}
+        hint: HDG SEL needs a flight director or CMD engaged (the press is inert otherwise).
+    binding:
+      press: laminar/B738/autopilot/hdg_sel_press
+      read: laminar/B738/autopilot/hdg_sel_status
+      settle_s: 0.3
+
+  - control_id: vorloc
+    label: VOR LOC
+    panel_id: mcp
+    kind: toggle
+    on_label: Armed
+    verified_on: 2026-09-03
+    hint: Read back shares the LNAV capture annunciator, not a separate vorloc_status (research §2).
+    preconditions:
+      - any_of:
+          - {control_id: fd_capt, equals: true}
+          - {control_id: fd_fo, equals: true}
+          - {control_id: cmd_a, equals: true}
+          - {control_id: cmd_b, equals: true}
+        hint: VOR LOC needs a flight director or CMD engaged (the press is inert otherwise).
+    binding:
+      press: laminar/B738/autopilot/vorloc_press
+      read: "laminar/B738/ap/nav_status[0]"
+      settle_s: 0.3
+
+  - control_id: app
+    label: APP
+    panel_id: mcp
+    kind: toggle
+    on_label: Armed
+    verified_on: 2026-09-03
+    preconditions:
+      - any_of:
+          - {control_id: fd_capt, equals: true}
+          - {control_id: fd_fo, equals: true}
+          - {control_id: cmd_a, equals: true}
+          - {control_id: cmd_b, equals: true}
+        hint: APP needs a flight director or CMD engaged (the press is inert otherwise).
+    binding:
+      press: laminar/B738/autopilot/app_press
+      read: laminar/B738/autopilot/app_status
+      settle_s: 0.3
+
+  # --- MCP dials -------------------------------------------------------------
+  - control_id: mcp_alt
+    label: Altitude
+    panel_id: mcp
+    kind: dial
+    unit: ft
+    min_value: 0
+    max_value: 50000
+    step: 100
+    readback_tolerance: 0
+    verified_on: 2026-09-03
+    binding:
+      # read defaults to write — the research confirms either dataref reads
+      # back the commanded value (Zibo syncs its own dial into the generic
+      # dataref one-way, but the write must target the Zibo dial: §3).
+      write: laminar/B738/autopilot/mcp_alt_dial
+
+  - control_id: mcp_hdg
+    label: Heading
+    panel_id: mcp
+    kind: dial
+    unit: deg
+    min_value: 0
+    max_value: 360
+    step: 1
+    readback_tolerance: 0
+    verified_on: 2026-09-03
+    binding:
+      write: laminar/B738/autopilot/mcp_hdg_dial
+
+  - control_id: mcp_speed
+    label: IAS
+    panel_id: mcp
+    kind: dial
+    unit: kt
+    min_value: 100
+    max_value: 340
+    step: 1
+    readback_tolerance: 0
+    verified_on: 2026-09-03
+    binding:
+      write: laminar/B738/autopilot/mcp_speed_dial_kts
+      # Explicit and REQUIRED (§5): read must name mcp_speed_dial_kts itself,
+      # never mcp_speed_dial_kts2 / mcp_speed_dial_kts_mach. Those two are
+      # slow, separately-updating drum-animation echoes (100 -> 104 within
+      # 0.4s of a 60kt change, full convergence only after ~0.8s) — reading
+      # them for an immediate write confirmation would falsely reject a
+      # correct write.
+      read: laminar/B738/autopilot/mcp_speed_dial_kts
+
+parked:
+  - control_id: mcp_vs
+    label: Vertical speed
+    panel_id: mcp
+    since: 2026-09-03
+    reason: >-
+      No settable V/S dataref exists on the Zibo — every laminar/B738/*vvi*
+      dataref is read-only, and vs_press selects VS mode, not a value
+      (reconfirmed with VS armed, research §6).
+
+  - control_id: ias_mach_changeover
+    label: C/O (IAS/Mach)
+    panel_id: mcp
+    since: 2026-09-03
+    reason: >-
+      change_over_press produced no observable change in airspeed_is_mach in
+      one session — inconclusive, unrelated to the FD precondition; needs a
+      retest before this enters the catalog (research §5).
+
+  - control_id: lnav
+    label: LNAV
+    panel_id: mcp
+    since: 2026-09-03
+    reason: >-
+      lnav_press did not arm LNAV even with FD on — no active FMC route was
+      loaded, and LNAV cannot capture without one (confirmed precondition,
+      not exercised with a route loaded — research §2, #215).
+
+setup_overrides:
+  flight_director: fd_capt
+  autopilot_master: cmd_a
+  autopilot_hdg: hdg_sel
+  autopilot_nav: vorloc
+  autopilot_app: app
+  target_altitude_ft: mcp_alt
+  target_heading_deg: mcp_hdg
+  target_ias_kt: mcp_speed
+  # target_vertical_speed_fpm deliberately absent: parked (mcp_vs above). The
+  # generic write is a no-op on the Zibo too (research §6) — the honest
+  # outcome is that this field does nothing on this aircraft; the UI's typed
+  # Aircraft panel already says "not wired" when a field has no mapped path.
