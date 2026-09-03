@@ -992,8 +992,19 @@ class XPlaneSimAdapter:
         does. "This build does not publish that command" is answered with
         ``None``, never an exception: whether that is fatal is the caller's
         decision (:data:`COMMANDS` says yes, :data:`OPTIONAL_COMMANDS` no).
+
+        A ``filter[name]`` miss on ``/api/v2/commands`` is not always an
+        empty ``{"data": []}`` — X-Plane's real Web API answers a name it
+        does not recognise with a bare **404**, confirmed live with the Zibo
+        737 loaded (docs/research/zibo-737-autopilot-dataref-mapping.md §7
+        shows the same shape for the dataref sibling of this lookup). That
+        404 means exactly the same thing an empty ``data`` list would, so it
+        is handled here rather than left to fail :meth:`connect`. Any other
+        error status (5xx, …) is a real failure and still propagates.
         """
         response = await client.get("/api/v2/commands", params={"filter[name]": path})
+        if response.status_code == 404:
+            return None
         response.raise_for_status()
         entries = response.json().get("data", [])
         if not entries:
