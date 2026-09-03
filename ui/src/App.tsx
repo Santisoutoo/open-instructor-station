@@ -7,6 +7,8 @@ import { StatusBar } from './components/StatusBar';
 import { TabBar } from './components/TabBar';
 import { ThemeToggle } from './components/ThemeToggle';
 import { TABS } from './components/tabs';
+import { SUPPORT_URL } from './config/support';
+import { AirportGate } from './features/startup/AirportGate';
 import { useMockTelemetryFeed } from './features/telemetry/useMockTelemetryFeed';
 import { useTelemetrySocket } from './features/telemetry/useTelemetrySocket';
 import { useTrafficSocket } from './features/traffic/useTrafficSocket';
@@ -45,6 +47,11 @@ export default function App() {
   const visitedTabs = useAppSelector((state) => state.ui.visitedTabs);
   const drawerOpen = useAppSelector((state) => state.ui.drawerOpen);
 
+  // The startup airport-selection gate blocks the whole shell — header, body, status bar —
+  // until an airport has actually resolved. Mounted in place of the shell, never as an
+  // overlay on top of it, so nothing underneath ever mounts a second navdata poller.
+  const gateOpen = useAppSelector((state) => state.startup.status !== 'ready');
+
   // The Position screen v3 replica owns the full viewport: no shell header, drawer or
   // status bar around it. The map tab stays mounted (hidden) regardless — see the
   // `TABS.map` loop below, which is never early-returned out of.
@@ -52,7 +59,9 @@ export default function App() {
 
   return (
     <div className={fullBleed ? 'app app--fullbleed' : 'app'}>
-      {!fullBleed && (
+      {gateOpen && <AirportGate />}
+
+      {!gateOpen && !fullBleed && (
         <header className="app__header">
           <div className="app__title">
             <h1>Open Instructor Station</h1>
@@ -69,46 +78,57 @@ export default function App() {
               Context
             </button>
             <ConnectionBadge />
+            <a
+              className="ghost-button"
+              href={SUPPORT_URL}
+              target="_blank"
+              rel="noreferrer"
+              aria-label="Support the project — Buy Me a Coffee"
+            >
+              Support
+            </a>
           </div>
         </header>
       )}
 
-      <div className="app__body">
-        <main className="app__panelhost">
-          {TABS.map((tab) => {
-            const active = tab.id === activeTab;
-            const mounted =
-              active || (tab.keepMounted === true && visitedTabs.includes(tab.id));
-            if (!mounted) {
-              return null;
-            }
-            const Panel = LAZY_PANELS.get(tab.id);
-            return (
-              <section
-                key={tab.id}
-                id={`tabpanel-${tab.id}`}
-                className="app__tabpanel"
-                role="tabpanel"
-                aria-labelledby={fullBleed && active ? undefined : `tab-${tab.id}`}
-                hidden={!active}
-              >
-                {tab.gated ? (
-                  <GateDelayedPanel label={tab.label} />
-                ) : Panel === undefined ? (
-                  <ComingSoonPanel label={tab.label} />
-                ) : (
-                  <Suspense fallback={<p className="app__loading">Loading module…</p>}>
-                    <Panel />
-                  </Suspense>
-                )}
-              </section>
-            );
-          })}
-        </main>
-        {!fullBleed && drawerOpen && <ContextDrawer />}
-      </div>
+      {!gateOpen && (
+        <div className="app__body">
+          <main className="app__panelhost">
+            {TABS.map((tab) => {
+              const active = tab.id === activeTab;
+              const mounted =
+                active || (tab.keepMounted === true && visitedTabs.includes(tab.id));
+              if (!mounted) {
+                return null;
+              }
+              const Panel = LAZY_PANELS.get(tab.id);
+              return (
+                <section
+                  key={tab.id}
+                  id={`tabpanel-${tab.id}`}
+                  className="app__tabpanel"
+                  role="tabpanel"
+                  aria-labelledby={fullBleed && active ? undefined : `tab-${tab.id}`}
+                  hidden={!active}
+                >
+                  {tab.gated ? (
+                    <GateDelayedPanel label={tab.label} />
+                  ) : Panel === undefined ? (
+                    <ComingSoonPanel label={tab.label} />
+                  ) : (
+                    <Suspense fallback={<p className="app__loading">Loading module…</p>}>
+                      <Panel />
+                    </Suspense>
+                  )}
+                </section>
+              );
+            })}
+          </main>
+          {!fullBleed && drawerOpen && <ContextDrawer />}
+        </div>
+      )}
 
-      {!fullBleed && <StatusBar />}
+      {!gateOpen && !fullBleed && <StatusBar />}
     </div>
   );
 }

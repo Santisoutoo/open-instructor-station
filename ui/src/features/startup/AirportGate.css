@@ -1,0 +1,167 @@
+/**
+ * The startup gate: centred dialog card filling the `.app` flex column it replaces (never a
+ * fixed overlay — `App.tsx` renders it in place of the header/body/status bar, not on top of
+ * them). Tokens only, both `data-theme` values (`index.css`), no new custom properties.
+ */
+
+.startup-gate {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.startup-gate__card {
+  width: 100%;
+  max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 32px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.startup-gate__card h1 {
+  margin: 0;
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.startup-gate__card > p {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.startup-gate__remembered {
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+
+.startup-gate__remembered:hover {
+  border-color: var(--focus);
+}
+
+.startup-gate__remembered:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.startup-gate input[role='combobox'] {
+  min-height: 44px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.startup-gate input[role='combobox']:focus-visible {
+  outline: 2px solid var(--focus);
+}
+
+.startup-gate input[role='combobox']:disabled {
+  opacity: 0.6;
+}
+
+.startup-gate__hint,
+.startup-gate__loading {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.startup-gate__error {
+  margin: 0;
+  color: var(--text);
+}
+
+.startup-gate__listbox {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 352px;
+  overflow-y: auto;
+}
+
+.startup-gate__option {
+  width: 100%;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.startup-gate__option:hover {
+  background: var(--bg-raised);
+}
+
+.startup-gate__option[aria-selected='true'] {
+  border-color: var(--focus);
+  background: var(--bg-raised);
+}
+
+.startup-gate__option-icao {
+  font-family: var(--font-mono);
+  color: var(--text);
+}
+
+.startup-gate__option-name {
+  color: var(--text-dim);
+}
+
+.startup-gate__navdata {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.startup-gate__navdata-reason {
+  margin: 0;
+  color: var(--text-dim);
+}
+
+.startup-gate__navdata-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+  overflow: hidden;
+}
+
+.startup-gate__navdata-bar span {
+  display: block;
+  height: 100%;
+  background: var(--focus);
+}
+
+.startup-gate__navdata-build {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.startup-gate__navdata-build:disabled {
+  opacity: 0.6;
+  cursor: default;
+}

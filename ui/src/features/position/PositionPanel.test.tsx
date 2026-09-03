@@ -278,7 +278,9 @@ describe('choosing a start position', () => {
     await screen.findByRole('tab', { name: '04R' });
     expect(store.getState().positionDesign.selectedRunway).toBe('04R');
 
-    await userEvent.click(screen.getByRole('button', { name: /^Start at/ }));
+    // Scoped to the header's own label ("Start at Runway 04R") rather than a bare
+    // `/^Start at/`, which now also matches the bottom bar's "Start at position" (#229).
+    await userEvent.click(screen.getByRole('button', { name: /^Start at Runway/ }));
     await userEvent.click(await screen.findByRole('button', { name: 'Stand A1' }));
 
     expect(store.getState().positionDesign.selectedStand).toBe('A1');

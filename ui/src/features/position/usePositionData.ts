@@ -43,9 +43,13 @@ export function useLoadedIcao(): string {
 /**
  * The loaded airport itself, resolved through the type-ahead endpoint.
  *
- * There is no `GET /api/navdata/airports/{icao}`; the search is the lookup, and an exact
- * ICAO is the narrowest query it takes. Anything that is not an exact match is discarded,
- * so a partially typed code never silently loads a neighbouring field.
+ * `GET /api/navdata/airports/{icao}` does exist (`server/navdata_routes.py:203`, consumed
+ * elsewhere as `getAirport` in `features/map/mapApi.ts` and by the startup gate,
+ * `features/startup/AirportGate.tsx`) — this hook still goes through the search endpoint
+ * rather than that one, left unchanged here since switching it is outside this change's
+ * scope. An exact ICAO is the narrowest query the search takes, and anything that is not an
+ * exact match is discarded, so a partially typed code never silently loads a neighbouring
+ * field.
  */
 export function useAirport(): {
   readonly airport: AirportSummary | undefined;

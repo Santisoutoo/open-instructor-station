@@ -221,8 +221,14 @@ h2 {
 
 /* ----------------------------------------------------------- ghost button */
 
-/* Quiet chrome actions (theme, drawer, demo feed): visible on hover, never loud. */
+/* Quiet chrome actions (theme, drawer, demo feed, the support link): visible on hover,
+   never loud. Class-scoped rather than element-scoped so an <a> (the support link) picks
+   up identical chrome to the <button>s beside it — inline-flex/align-items centres its
+   text the way a native <button> already centres its own, and text-decoration: none drops
+   the link underline the browser would otherwise add. */
 .ghost-button {
+  display: inline-flex;
+  align-items: center;
   min-height: 44px;
   padding: 0 0.8rem;
   background: transparent;
@@ -231,6 +237,7 @@ h2 {
   color: var(--text-dim);
   font-size: 0.85rem;
   font-weight: 600;
+  text-decoration: none;
   white-space: nowrap;
   cursor: pointer;
 }

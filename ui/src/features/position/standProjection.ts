@@ -1,5 +1,5 @@
 /**
- * Fitting an airport's real stands and runways into the Start-at popover's 340×262 box.
+ * Fitting an airport's real stands and runways into the Start-at popover's 380×300 box.
  *
  * This is **drawing, not geodesy**. Nothing here produces a position: no result of this
  * module is ever sent to the server, and the only thing that reaches it from the diagram is
@@ -26,8 +26,8 @@
  * below a pixel.
  */
 
-export const DIAGRAM_WIDTH = 340;
-export const DIAGRAM_HEIGHT = 262;
+export const DIAGRAM_WIDTH = 380;
+export const DIAGRAM_HEIGHT = 300;
 
 /** Space kept clear inside the box so a marker near the edge is not clipped. */
 export const DIAGRAM_MARGIN = 16;

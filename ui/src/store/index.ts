@@ -13,6 +13,7 @@ import positionReducer from '../features/position/positionSlice';
 import profilesReducer from '../features/profiles/profilesSlice';
 import pushbackReducer from '../features/pushback/pushbackSlice';
 import scenariosReducer from '../features/scenarios/scenariosSlice';
+import startupReducer from '../features/startup/startupSlice';
 import telemetryReducer from '../features/telemetry/telemetrySlice';
 import trafficReducer from '../features/traffic/trafficSlice';
 import weatherReducer from '../features/weather/weatherSlice';
@@ -25,6 +26,7 @@ import uiReducer from './uiSlice';
  * `middleware` callback being used together (RTK 2.12 / TS 5.9).
  */
 const reducerMap = {
+  startup: startupReducer,
   connection: connectionReducer,
   ui: uiReducer,
   telemetry: telemetryReducer,
