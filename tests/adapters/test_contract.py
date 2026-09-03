@@ -37,6 +37,7 @@ from core.camera.models import (
     CameraSupportManifest,
     CameraViewId,
 )
+from core.cockpit.actuation import is_on, selector_index
 from core.cockpit.errors import (
     CockpitCatalogInactive,
     CockpitControlUnknown,
@@ -2136,8 +2137,17 @@ async def test_actuate_selector_round_trips(adapter: SimAdapter) -> None:
     values = [option.value for option in spec.options]
 
     original = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
-    assert isinstance(original, (int, str))  # narrows CockpitValue for list.index(); not a bool.
-    current_index = values.index(original)
+    # A live adapter's Web API reports every numeric dataref as a JSON float,
+    # never a Python int — the same disease #247/#248 fixed in core.cockpit
+    # (preconditions._condition_satisfied / actuation.selector_index). Reuse
+    # selector_index itself rather than re-deriving its tolerant match here,
+    # so this still genuinely proves "the read-back is one of the declared
+    # options", not a loosened re-implementation of that check.
+    current_index = selector_index(spec, original)
+    assert current_index is not None, (
+        f"{adapter.name}: read-back {original!r} for {spec.control_id!r} is not "
+        f"among its declared options {values!r}"
+    )
     target = values[(current_index + 1) % len(values)]
     try:
         result = await adapter.actuate_cockpit_control(
@@ -2259,12 +2269,19 @@ async def test_actuate_refuses_unmet_precondition(adapter: SimAdapter) -> None:
         # restored from, so it must go back BEFORE the referenced controls
         # that satisfy it — restoring fd_capt/cmd_a first would make turning
         # hdg_sel back off raise the very error this test exists to prove.
+        #
+        # A live adapter reports every toggle read-back as a JSON float (e.g.
+        # 1.0/0.0), never a Python bool, while validate_actuation's toggle
+        # branch (§2.2) requires an actual bool — the identical #247/#248
+        # disease, here in this test's own restore step (own_before and every
+        # referenced_originals value are both raw toggle read-backs). Restore
+        # with the coerced value, using is_on's own tolerant convention.
         await adapter.actuate_cockpit_control(
-            CockpitActuation(control_id=spec.control_id, value=own_before)
+            CockpitActuation(control_id=spec.control_id, value=is_on(own_before, on_value=1.0))
         )
         for control_id, original_value in referenced_originals.items():
             await adapter.actuate_cockpit_control(
-                CockpitActuation(control_id=control_id, value=original_value)
+                CockpitActuation(control_id=control_id, value=is_on(original_value, on_value=1.0))
             )
 
 
