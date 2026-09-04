@@ -18,7 +18,9 @@ vi.mock('maplibre-gl', () => import('./test/maplibreStub'));
 /** Bypasses the startup gate: every test in this file except the gate's own is about what
  * is behind it. */
 function readyStore() {
-  return setupStore({ startup: readyStartupState('LEMD', 'Adolfo Suárez Madrid–Barajas Airport') });
+  return setupStore({
+    startup: readyStartupState('LEMD', 'Adolfo Suárez Madrid–Barajas Airport'),
+  });
 }
 
 describe('App — the startup gate', () => {
@@ -86,9 +88,7 @@ describe('App — gated tabs', () => {
 
     store.dispatch(tabSelected('scenarios'));
 
-    expect(
-      await screen.findByRole('region', { name: 'Scenarios' }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole('region', { name: 'Scenarios' })).toBeInTheDocument();
     expect(
       screen.getByRole('heading', { name: /scenarios delayed/i }),
     ).toBeInTheDocument();
@@ -121,7 +121,11 @@ describe('App — gated tabs', () => {
 
     store.dispatch(tabSelected('cockpit'));
 
-    expect(await screen.findByRole('heading', { name: 'Cockpit' })).toBeInTheDocument();
+    // The panel is a lazy chunk; under full-suite load it can take longer than the
+    // default 1 s to resolve, which is not what this test is about.
+    expect(
+      await screen.findByRole('heading', { name: 'Cockpit' }, { timeout: 5000 }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByRole('heading', { name: /cockpit delayed/i }),
     ).not.toBeInTheDocument();

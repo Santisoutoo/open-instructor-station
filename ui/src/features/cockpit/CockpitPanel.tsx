@@ -23,7 +23,7 @@
  * List mode, or an aircraft without a layout all fall back to the flat list unchanged.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useGetCapabilitiesQuery } from '../../api/instructorApi';
 import type { CockpitActuation, CockpitControlSpec } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
@@ -133,6 +133,18 @@ export function CockpitPanel() {
   // so a notch on the diagram shows up in the field and Set writes exactly that.
   const draft = useRotaryDraft();
 
+  // Focus moving away from the draft's control abandons the draft: a panel switch, the
+  // List toggle or a lost link must never leave a stale value a slot could still commit.
+  // A wheel notch on an unfocused knob focuses and nudges it in the same event, so the
+  // two land together and nothing is reset.
+  const draftControlId = draft.draft.controlId;
+  const resetDraft = draft.reset;
+  useEffect(() => {
+    if (draftControlId !== null && draftControlId !== focusedControlId) {
+      resetDraft(draftControlId);
+    }
+  }, [draftControlId, focusedControlId, resetDraft]);
+
   const focused: TrayFocus | null = useMemo(() => {
     if (focusedControlId === null) {
       return null;
@@ -152,12 +164,14 @@ export function CockpitPanel() {
     return typeof value === 'number' ? value : null;
   };
 
-  const write = async (controlId: string, body: ActuationBody) => {
+  /** One write. Resolves `true` on a confirmed read-back, `false` on any failure. */
+  const write = async (controlId: string, body: ActuationBody): Promise<boolean> => {
     dispatch(actuationStarted(controlId));
     const actuation: CockpitActuation = { control_id: controlId, ...body };
     try {
       await actuate(actuation).unwrap();
       dispatch(actuationSettled({ controlId }));
+      return true;
     } catch (error) {
       dispatch(
         actuationSettled({
@@ -165,14 +179,20 @@ export function CockpitPanel() {
           error: cockpitErrorDetail(error, 'The control could not be actuated.'),
         }),
       );
+      return false;
     }
   };
 
   const commitDraft = (spec: CockpitControlSpec, slot: LayoutSlot | undefined) => {
     const body = draft.body(spec, slot);
     if (body !== null) {
-      void write(spec.control_id, body);
-      draft.reset();
+      // The draft survives a failed write (the instructor retries) and clears on success —
+      // scoped to this control, so a draft started elsewhere meanwhile is untouched.
+      void write(spec.control_id, body).then((ok) => {
+        if (ok) {
+          draft.reset(spec.control_id);
+        }
+      });
     }
   };
 
@@ -270,9 +290,7 @@ export function CockpitPanel() {
                     onFocus={(controlId) => {
                       dispatch(slotFocused(controlId));
                     }}
-                    onCommit={(controlId, body) => {
-                      void write(controlId, body);
-                    }}
+                    onCommit={write}
                     onNudge={(spec, slot, sign, count) => {
                       draft.nudge(spec, slot, confirmedNumber(spec), sign, count);
                     }}
@@ -280,8 +298,8 @@ export function CockpitPanel() {
                       draft.setText(spec, text);
                     }}
                     onCommitDraft={commitDraft}
-                    onDiscardDraft={() => {
-                      draft.reset();
+                    onDiscardDraft={(spec) => {
+                      draft.reset(spec.control_id);
                     }}
                   />
                   <SchematicTray
@@ -301,11 +319,11 @@ export function CockpitPanel() {
                       'spec' in focused &&
                       pending[focused.spec.control_id] === true
                     }
-                    onCommit={(body) => {
-                      if (focused !== null && 'spec' in focused) {
-                        void write(focused.spec.control_id, body);
-                      }
-                    }}
+                    onCommit={(body) =>
+                      focused !== null && 'spec' in focused
+                        ? write(focused.spec.control_id, body)
+                        : undefined
+                    }
                     draft={draft}
                   />
                 </>
@@ -316,9 +334,7 @@ export function CockpitPanel() {
                   states={states}
                   pending={pending}
                   emptyMessage={emptyMessage}
-                  onCommit={(controlId, body) => {
-                    void write(controlId, body);
-                  }}
+                  onCommit={write}
                 />
               )}
             </>

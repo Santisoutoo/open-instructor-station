@@ -42,7 +42,7 @@ export interface SchematicPanelProps {
   draft: RotaryDraft;
   onFocus: (controlId: string | null) => void;
   /** Taps: toggles, presses and two-position selectors commit straight from the slot. */
-  onCommit: (controlId: string, body: ActuationBody) => void;
+  onCommit: (controlId: string, body: ActuationBody) => void | Promise<boolean>;
   /** Wheel notches / arrow keys on a rotary slot edit the draft. */
   onNudge: (
     spec: CockpitControlSpec,
@@ -55,7 +55,7 @@ export interface SchematicPanelProps {
   /** `Enter` on a rotary slot. */
   onCommitDraft: (spec: CockpitControlSpec, slot: LayoutSlot) => void;
   /** `Escape`. */
-  onDiscardDraft: () => void;
+  onDiscardDraft: (spec: CockpitControlSpec) => void;
 }
 
 /** Everything one slot needs, computed once per render and shared by both layers. */
@@ -134,8 +134,16 @@ function slotState(
   switch (entry.spec.kind) {
     case 'toggle':
       return value === true ? 'on' : value === false ? 'off' : 'unknown';
-    case 'selector':
-      return optionIndex >= 0 ? 'off' : 'unknown';
+    case 'selector': {
+      // A two-position switch lights by option **index** — the second option is "on"
+      // whatever its value (0/1 lights, OFF/ARM, DISCONNECT/CONNECT). Wider selectors
+      // show their position through the pointer, not a lit half.
+      if (optionIndex < 0) {
+        return 'unknown';
+      }
+      const twoWay = (entry.spec.options?.length ?? 0) === 2;
+      return twoWay && optionIndex === 1 ? 'on' : 'off';
+    }
     case 'dial':
     case 'encoder':
       return typeof value === 'number' ? 'off' : 'unknown';

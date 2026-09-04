@@ -3,8 +3,9 @@ import type { CockpitControlSpec } from '../../../api/models';
 import type { LayoutSlot } from '../layouts';
 import {
   dialDraftValue,
+  encoderDraftText,
   formatValue,
-  predictedEncoderValue,
+  rotaryKeyAction,
   type RotaryDraftHandle,
 } from './rotary';
 import { useRepeatPress } from './useRepeatPress';
@@ -18,7 +19,11 @@ export interface RotaryControlProps {
   value: number | null;
   pending: boolean;
   /** Dial → `{ value }` clamped / wrapped / snapped; encoder → `{ delta }` in clicks. */
-  onCommit: (body: { value: number } | { delta: number }) => void;
+  /**
+   * A caller that returns the write's outcome keeps the draft for a retry on failure and
+   * clears it on success; one that returns nothing (the plain list) clears it at once.
+   */
+  onCommit: (body: { value: number } | { delta: number }) => void | Promise<boolean>;
   /**
    * A parent-owned draft — the schematic tray passes `CockpitPanel`'s, so a wheel notch
    * on the diagram and a keystroke in the tray edit the same text. Omitted → the widget
@@ -28,9 +33,6 @@ export interface RotaryControlProps {
   /** Drawing hints for the slot: `wrap`, `detents`, `format`. */
   layout?: LayoutSlot;
 }
-
-/** Keys `PageUp`/`PageDown` move this many steps (design §3). */
-const PAGE_STEPS = 10;
 
 /**
  * The one rotary widget (issue #253, design §2/§3): a dial edits a number-field draft, an
@@ -66,20 +68,26 @@ export function RotaryControl({
   };
 
   const commit = () => {
-    // The draft clears on commit, like the former `DialControl`. A failed write surfaces
-    // through the panel's error banner — the widget never sees the outcome, so it cannot
-    // keep the draft for a retry; the confirmed readout simply stays where it was.
-    if (body !== null) {
-      onCommit(body);
-      handle.reset();
+    if (body === null) {
+      return;
+    }
+    const outcome = onCommit(body);
+    if (outcome instanceof Promise) {
+      // Issue #253: the draft survives a failed write and clears on success. The reset
+      // is scoped to this control so a draft started elsewhere meanwhile is untouched.
+      void outcome.then((ok) => {
+        if (ok) {
+          handle.reset(spec.control_id);
+        }
+      });
+    } else {
+      handle.reset(spec.control_id);
     }
   };
 
   const discard = () => {
     // Never wipe another control's draft through a parent-owned handle.
-    if (mine) {
-      handle.reset();
-    }
+    handle.reset(spec.control_id);
   };
 
   const rowRef = useRef<HTMLDivElement>(null);
@@ -104,59 +112,31 @@ export function RotaryControl({
   );
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
-    switch (event.key) {
-      // Prevented so a `type="number"` field's own spinner does not step a second time.
-      case 'ArrowUp':
-        event.preventDefault();
-        nudge(1);
+    const action = rotaryKeyAction(event.key, spec, layout);
+    if (action === null) {
+      return;
+    }
+    // Prevented so a `type="number"` field's own spinner does not step a second time and
+    // the form's implicit submission does not commit a second time.
+    event.preventDefault();
+    switch (action.kind) {
+      case 'nudge':
+        nudge(action.sign, action.count);
         return;
-      case 'ArrowDown':
-        event.preventDefault();
-        nudge(-1);
+      case 'text':
+        handle.setText(spec, action.text);
         return;
-      case 'PageUp':
-        event.preventDefault();
-        nudge(1, PAGE_STEPS);
-        return;
-      case 'PageDown':
-        event.preventDefault();
-        nudge(-1, PAGE_STEPS);
-        return;
-      case 'Home':
-        if (!isEncoder && spec.min_value != null) {
-          event.preventDefault();
-          handle.setText(spec, String(spec.min_value));
-        }
-        return;
-      case 'End':
-        if (!isEncoder && spec.max_value != null) {
-          event.preventDefault();
-          // A wrapped range excludes `max` itself (`[min, max)`): 360° is 0°.
-          handle.setText(
-            spec,
-            String(layout?.wrap ? spec.max_value - step : spec.max_value),
-          );
-        }
-        return;
-      // Prevented so the form's implicit submission does not commit a second time.
-      case 'Enter':
-        event.preventDefault();
+      case 'commit':
         commit();
         return;
-      case 'Escape':
-        event.preventDefault();
+      case 'discard':
         discard();
-        return;
-      default:
         return;
     }
   };
 
   const draftValue = isEncoder ? null : dialDraftValue(spec, layout, text);
-  const predicted = isEncoder ? predictedEncoderValue(value, clicks, step) : null;
-  const clicksText = `${clicks >= 0 ? '+' : ''}${clicks} clicks${
-    predicted === null ? '' : ` ≈ ${formatValue(predicted, spec.unit, layout?.format)}`
-  }`;
+  const clicksText = encoderDraftText(value, clicks, spec, layout?.format);
 
   return (
     <form

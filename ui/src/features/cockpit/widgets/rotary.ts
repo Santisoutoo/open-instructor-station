@@ -54,8 +54,8 @@ export interface RotaryDraftHandle {
     sign: 1 | -1,
     count?: number,
   ): void;
-  /** Discard (Escape). */
-  reset(): void;
+  /** Discard (Escape). With `controlId`, only when the draft belongs to that control. */
+  reset(controlId?: string): void;
   /**
    * What a commit would send: `{ value }` for a valid dial draft, `{ delta: clicks }` for
    * an encoder with clicks ≠ 0, `null` when there is nothing valid to commit.
@@ -291,4 +291,68 @@ export function wheelNotches(
     notches: -direction * magnitude || 0,
     carry: total - direction * magnitude * threshold || 0,
   };
+}
+
+/** `PageUp`/`PageDown` move this many steps (design §3). */
+export const PAGE_STEPS = 10;
+
+/** What one key on a rotary field or slot means — shared by the slot and the widget. */
+export type RotaryKeyAction =
+  | { readonly kind: 'nudge'; readonly sign: 1 | -1; readonly count: number }
+  | { readonly kind: 'text'; readonly text: string }
+  | { readonly kind: 'commit' }
+  | { readonly kind: 'discard' };
+
+/**
+ * The design §3 keyboard map. `Home`/`End` are dial-only and go to the range ends — `End`
+ * on a wrapped range is `max − step`, since `[min, max)` excludes `max` (360° is 0°).
+ * `null` for any other key, so callers leave it to the browser.
+ */
+export function rotaryKeyAction(
+  key: string,
+  spec: CockpitControlSpec,
+  slot?: LayoutSlot,
+): RotaryKeyAction | null {
+  switch (key) {
+    case 'ArrowUp':
+      return { kind: 'nudge', sign: 1, count: 1 };
+    case 'ArrowDown':
+      return { kind: 'nudge', sign: -1, count: 1 };
+    case 'PageUp':
+      return { kind: 'nudge', sign: 1, count: PAGE_STEPS };
+    case 'PageDown':
+      return { kind: 'nudge', sign: -1, count: PAGE_STEPS };
+    case 'Home':
+      return spec.kind === 'dial' && spec.min_value != null
+        ? { kind: 'text', text: String(spec.min_value) }
+        : null;
+    case 'End': {
+      if (spec.kind !== 'dial' || spec.max_value == null) {
+        return null;
+      }
+      const top =
+        slot?.wrap === true ? spec.max_value - (spec.step ?? 1) : spec.max_value;
+      return { kind: 'text', text: String(top) };
+    }
+    case 'Enter':
+      return { kind: 'commit' };
+    case 'Escape':
+      return { kind: 'discard' };
+    default:
+      return null;
+  }
+}
+
+/** The encoder draft line: `+5 clicks · ≈ 6.5 units`, or the clicks alone without a read-back. */
+export function encoderDraftText(
+  confirmed: number | null,
+  clicks: number,
+  spec: CockpitControlSpec,
+  format?: ValueFormat,
+): string {
+  const clicksText = `${clicks >= 0 ? '+' : ''}${String(clicks)} clicks`;
+  const predicted = predictedEncoderValue(confirmed, clicks, spec.step ?? 1);
+  return predicted === null
+    ? clicksText
+    : `${clicksText} · ≈ ${formatValue(predicted, spec.unit, format)}`;
 }

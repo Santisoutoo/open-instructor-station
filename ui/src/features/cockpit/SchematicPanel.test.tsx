@@ -514,3 +514,27 @@ describe('SchematicTray', () => {
     expect(screen.getByText('ALIGN springs back')).toBeInTheDocument();
   });
 });
+
+describe('SchematicPanel — two-position selectors', () => {
+  it('lights a two-option selector by option index, never by value', () => {
+    const irs = MANIFEST.controls.find((control) => control.control_id === 'irs_l');
+    if (irs === undefined) {
+      throw new Error('fixture has no irs_l');
+    }
+    const twoWay: CockpitControlSpec = {
+      ...irs,
+      options: [
+        { value: -1, label: 'Off' },
+        { value: 0, label: 'Position' },
+      ],
+    };
+    const { container } = renderPanel('overhead', {
+      controls: [twoWay],
+      states: { ...STATES, irs_l: 0 },
+    });
+    const glyph = container.querySelector(
+      '.schematic__glyph[data-shape="rotary-selector"]',
+    );
+    expect(glyph).toHaveAttribute('data-state', 'on');
+  });
+});

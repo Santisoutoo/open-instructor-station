@@ -33,7 +33,10 @@ export function ViewModeToggle({ mode, onChange, disabledReason }: ViewModeToggl
             disabled={disabled}
             {...(disabled ? { title: disabledReason } : {})}
             onClick={() => {
-              onChange(option.mode);
+              // A tap on the checked option is not a change — it must not clear the focus.
+              if (mode !== option.mode) {
+                onChange(option.mode);
+              }
             }}
           >
             {option.label}

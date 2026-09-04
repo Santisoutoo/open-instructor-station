@@ -20,7 +20,7 @@ export interface SchematicTrayProps {
   value: CockpitValue | null | undefined;
   hints: readonly string[];
   pending: boolean;
-  onCommit: (body: ActuationBody) => void;
+  onCommit: (body: ActuationBody) => void | Promise<boolean>;
   /** `CockpitPanel`'s rotary draft, so the tray edits the same draft the slot's wheel does. */
   draft?: RotaryDraftHandle;
 }

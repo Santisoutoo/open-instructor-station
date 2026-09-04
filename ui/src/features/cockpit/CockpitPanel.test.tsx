@@ -193,4 +193,50 @@ describe('CockpitPanel — schematic integration', () => {
     ).toBeGreaterThan(0);
     expect(callsTo(calls, 'POST', 'cockpit/actuate')).toHaveLength(0);
   });
+
+  it('a rejected write keeps the draft for a retry and shows the server detail', async () => {
+    const { calls } = renderPanel({
+      'POST cockpit/actuate': { status: 409, detail: 'HDG SEL needs a flight director.' },
+    });
+    const hit = await screen.findByRole('button', { name: 'Altitude' });
+    await screen.findByText('5,000 ft');
+
+    fireEvent(hit, createEvent.wheel(hit, { deltaY: -100 }));
+    fireEvent.keyDown(hit, { key: 'Enter' });
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'HDG SEL needs a flight director.',
+    );
+    expect(callsTo(calls, 'POST', 'cockpit/actuate')).toHaveLength(1);
+    expect(screen.getByLabelText(/Altitude target/)).toHaveValue(5200);
+  });
+
+  it('switching panel abandons the draft instead of leaving it on the slot', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const hit = await screen.findByRole('button', { name: 'Altitude' });
+    await screen.findByText('5,000 ft');
+
+    fireEvent(hit, createEvent.wheel(hit, { deltaY: -100 }));
+    expect(screen.getByLabelText(/Altitude target/)).toHaveValue(5200);
+
+    await user.click(screen.getByRole('tab', { name: 'Overhead' }));
+    await user.click(screen.getByRole('tab', { name: 'MCP / autopilot' }));
+
+    expect(await screen.findByRole('button', { name: 'Altitude' })).toBeInTheDocument();
+    expect(screen.getByText('Tap a control on the diagram')).toBeInTheDocument();
+    expect(screen.queryByText(/5,200 ft/)).not.toBeInTheDocument();
+  });
+
+  it('a tap on the already-checked view option does not clear the focus', async () => {
+    const user = userEvent.setup();
+    renderPanel();
+    const hit = await screen.findByRole('button', { name: 'Altitude' });
+    await user.click(hit);
+    expect(screen.getByLabelText(/Altitude target/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: 'Schematic' }));
+
+    expect(screen.getByLabelText(/Altitude target/)).toBeInTheDocument();
+  });
 });

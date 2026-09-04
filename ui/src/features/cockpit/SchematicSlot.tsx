@@ -24,8 +24,9 @@ import type { SlotState } from './glyphs';
 import { slotRect, type LayoutSlot, type PanelLayout } from './layouts';
 import {
   dialDraftValue,
+  encoderDraftText,
   formatValue,
-  predictedEncoderValue,
+  rotaryKeyAction,
   type RotaryDraft,
 } from './widgets/rotary';
 import { useWheelNotches } from './widgets/useWheelNotches';
@@ -59,11 +60,8 @@ export interface SchematicSlotProps {
   ) => void;
   onDraftText: (spec: CockpitControlSpec, text: string) => void;
   onCommitDraft: (spec: CockpitControlSpec, slot: LayoutSlot) => void;
-  onDiscardDraft: () => void;
+  onDiscardDraft: (spec: CockpitControlSpec) => void;
 }
-
-/** `PageUp`/`PageDown` move this many steps (design §3). */
-const PAGE_STEPS = 10;
 
 function isRotary(spec: CockpitControlSpec): boolean {
   return spec.kind === 'dial' || spec.kind === 'encoder';
@@ -119,15 +117,12 @@ function draftText(
     return parsed === null ? draft.text : formatValue(parsed, spec.unit, slot.format);
   }
   if (spec.kind === 'encoder') {
-    const predicted = predictedEncoderValue(
+    return encoderDraftText(
       typeof value === 'number' ? value : null,
       draft.clicks,
-      spec.step ?? 1,
+      spec,
+      slot.format,
     );
-    const clicks = `${draft.clicks >= 0 ? '+' : ''}${String(draft.clicks)} clicks`;
-    return predicted === null
-      ? clicks
-      : `${clicks} · ≈ ${formatValue(predicted, spec.unit, slot.format)}`;
   }
   return null;
 }
@@ -207,51 +202,28 @@ export function SchematicSlot({
     if (spec === null || !isRotary(spec)) {
       return;
     }
-    const nudge = (sign: 1 | -1, count: number) => {
-      event.preventDefault();
-      onFocus(controlId);
-      onNudge(spec, slot, sign, count);
-    };
-    switch (event.key) {
-      case 'ArrowUp':
-        nudge(1, 1);
+    const action = rotaryKeyAction(event.key, spec, slot);
+    if (action === null) {
+      return;
+    }
+    // Chrome fires the button's click on Enter *keydown*; preventing every mapped key here
+    // is what keeps a commit from double-firing through `tap` and the page from scrolling
+    // under the arrows.
+    event.preventDefault();
+    switch (action.kind) {
+      case 'nudge':
+        onFocus(controlId);
+        onNudge(spec, slot, action.sign, action.count);
         return;
-      case 'ArrowDown':
-        nudge(-1, 1);
+      case 'text':
+        onFocus(controlId);
+        onDraftText(spec, action.text);
         return;
-      case 'PageUp':
-        nudge(1, PAGE_STEPS);
-        return;
-      case 'PageDown':
-        nudge(-1, PAGE_STEPS);
-        return;
-      case 'Home':
-        if (spec.kind === 'dial' && spec.min_value != null) {
-          event.preventDefault();
-          onFocus(controlId);
-          onDraftText(spec, String(spec.min_value));
-        }
-        return;
-      case 'End':
-        if (spec.kind === 'dial' && spec.max_value != null) {
-          event.preventDefault();
-          onFocus(controlId);
-          const top =
-            slot.wrap === true ? spec.max_value - (spec.step ?? 1) : spec.max_value;
-          onDraftText(spec, String(top));
-        }
-        return;
-      case 'Enter':
-        // Chrome fires the button's click on Enter *keydown*; preventing it here is
-        // what keeps a commit from double-firing through `tap`.
-        event.preventDefault();
+      case 'commit':
         onCommitDraft(spec, slot);
         return;
-      case 'Escape':
-        event.preventDefault();
-        onDiscardDraft();
-        return;
-      default:
+      case 'discard':
+        onDiscardDraft(spec);
         return;
     }
   };

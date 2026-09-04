@@ -52,7 +52,7 @@ export interface LayoutSlot {
   /** Dial-only: wrap around `[min_value, max_value)` instead of clamping (headings). */
   readonly wrap?: boolean;
   readonly format?: ValueFormat;
-  /** Selector-only: option values that spring back (drawn with an arrow, hinted in the tray). */
+  /** Selector-only: option values that spring back. The tray says so; the glyph draws nothing special. */
   readonly momentary?: readonly (number | string)[];
 }
 

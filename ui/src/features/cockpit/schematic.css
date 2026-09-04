@@ -9,7 +9,6 @@
 /* ---------------------------------------------------------------------- board */
 
 .schematic {
-  container-type: inline-size;
   overflow-x: auto;
 }
 

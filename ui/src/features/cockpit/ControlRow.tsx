@@ -20,7 +20,8 @@ export interface ControlRowProps {
   /** Client-computed, informational only — the server's 409 is the actual gate (§7.3). */
   hints: readonly string[];
   pending: boolean;
-  onCommit: (body: ActuationBody) => void;
+  /** May report the write's outcome, which the rotary widget uses to keep or clear its draft. */
+  onCommit: (body: ActuationBody) => void | Promise<boolean>;
   /** Dial/encoder only: a parent-owned draft (the schematic tray passes `CockpitPanel`'s). */
   draft?: RotaryDraftHandle;
   /** Dial/encoder only: the slot's `wrap` / `detents` / `format` hints. */
@@ -63,7 +64,7 @@ function renderWidget(
   spec: CockpitControlSpec,
   value: CockpitValue | null | undefined,
   pending: boolean,
-  onCommit: (body: ActuationBody) => void,
+  onCommit: (body: ActuationBody) => void | Promise<boolean>,
   draft: RotaryDraftHandle | undefined,
   layout: LayoutSlot | undefined,
 ) {

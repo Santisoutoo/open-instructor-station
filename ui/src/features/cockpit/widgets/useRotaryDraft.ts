@@ -66,8 +66,12 @@ export function useRotaryDraft(): RotaryDraftHandle {
     [],
   );
 
-  const reset = useCallback(() => {
-    setDraft(EMPTY_ROTARY_DRAFT);
+  const reset = useCallback((controlId?: string) => {
+    setDraft((current) =>
+      controlId === undefined || current.controlId === controlId
+        ? EMPTY_ROTARY_DRAFT
+        : current,
+    );
   }, []);
 
   const isFor = useCallback(

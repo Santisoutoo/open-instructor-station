@@ -5,7 +5,7 @@
  * these tests only check that the widget routes each gesture to them.
  */
 
-import { createEvent, fireEvent, render, screen } from '@testing-library/react';
+import { createEvent, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import type { CockpitControlSpec } from '../../../api/models';
@@ -242,7 +242,7 @@ describe('RotaryControl (encoder)', () => {
       await user.click(button('+'));
     }
     expect(onCommit).not.toHaveBeenCalled();
-    expect(screen.getByRole('textbox')).toHaveValue('+5 clicks ≈ 6.5 units');
+    expect(screen.getByRole('textbox')).toHaveValue('+5 clicks · ≈ 6.5 units');
 
     await user.click(button('Set'));
 
@@ -260,7 +260,7 @@ describe('RotaryControl (encoder)', () => {
       fireEvent.pointerDown(button('+'));
       fireEvent.pointerUp(button('+'));
     }
-    expect(screen.getByRole('textbox')).toHaveValue('+20 clicks ≈ 14 units');
+    expect(screen.getByRole('textbox')).toHaveValue('+20 clicks · ≈ 14 units');
 
     await user.click(button('Set'));
 
@@ -289,13 +289,13 @@ describe('RotaryControl (encoder)', () => {
     await user.click(button('+'));
     rerender(<RotaryControl spec={trim} value={4} pending={true} onCommit={onCommit} />);
 
-    expect(screen.getByRole('textbox')).toHaveValue('+1 clicks ≈ 4.5 units');
+    expect(screen.getByRole('textbox')).toHaveValue('+1 clicks · ≈ 4.5 units');
     expect(button('+')).toBeDisabled();
     expect(button('−')).toBeDisabled();
     expect(button('Setting…')).toBeDisabled();
 
     fireEvent.pointerDown(button('+'));
-    expect(screen.getByRole('textbox')).toHaveValue('+1 clicks ≈ 4.5 units');
+    expect(screen.getByRole('textbox')).toHaveValue('+1 clicks · ≈ 4.5 units');
   });
 });
 
@@ -362,5 +362,36 @@ describe('RotaryControl with a parent-owned draft', () => {
     await user.click(field());
     await user.keyboard('{Escape}');
     expect(screen.getByTestId('parent-draft')).toHaveTextContent('mcp_hdg:270');
+  });
+});
+
+describe('RotaryControl (write outcome)', () => {
+  it('keeps the draft when the caller reports a failed write, clears it on success', async () => {
+    const user = userEvent.setup();
+    let outcome = false;
+    const onCommit = vi.fn(() => Promise.resolve(outcome));
+    render(
+      <RotaryControl
+        spec={specFor('mcp_alt')}
+        value={5000}
+        pending={false}
+        onCommit={onCommit}
+      />,
+    );
+    const field = screen.getByLabelText(/Altitude target/);
+
+    await user.type(field, '4000');
+    await user.click(screen.getByRole('button', { name: 'Set' }));
+    await waitFor(() => {
+      expect(onCommit).toHaveBeenCalledTimes(1);
+    });
+    expect(field).toHaveValue(4000);
+
+    outcome = true;
+    await user.click(screen.getByRole('button', { name: 'Set' }));
+    await waitFor(() => {
+      expect(field).toHaveValue(null);
+    });
+    expect(onCommit).toHaveBeenCalledTimes(2);
   });
 });
