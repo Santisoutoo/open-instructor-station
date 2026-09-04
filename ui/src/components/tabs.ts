@@ -89,8 +89,7 @@ export const TABS: readonly TabDefinition[] = [
     label: 'Map',
     keepMounted: true,
     gated: true,
-    load: () =>
-      import('../features/map/MapPanel').then((m) => ({ default: m.MapPanel })),
+    load: () => import('../features/map/MapPanel').then((m) => ({ default: m.MapPanel })),
   },
   {
     id: 'aircraft',
@@ -140,7 +139,6 @@ export const TABS: readonly TabDefinition[] = [
   {
     id: 'cockpit',
     label: 'Cockpit',
-    gated: true,
     load: () =>
       import('../features/cockpit/CockpitPanel').then((m) => ({
         default: m.CockpitPanel,

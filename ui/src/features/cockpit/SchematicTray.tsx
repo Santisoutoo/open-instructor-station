@@ -9,6 +9,7 @@ import type { CockpitControlSpec, CockpitValue, ParkedControl } from '../../api/
 import { ControlRow, type ActuationBody } from './ControlRow';
 import type { LayoutSlot } from './layouts';
 import { ParkedRow } from './ParkedRow';
+import type { RotaryDraftHandle } from './widgets/rotary';
 
 export type TrayFocus =
   | { readonly spec: CockpitControlSpec; readonly slot: LayoutSlot | undefined }
@@ -20,6 +21,8 @@ export interface SchematicTrayProps {
   hints: readonly string[];
   pending: boolean;
   onCommit: (body: ActuationBody) => void;
+  /** `CockpitPanel`'s rotary draft, so the tray edits the same draft the slot's wheel does. */
+  draft?: RotaryDraftHandle;
 }
 
 /** Labels of the slot's spring-back positions, resolved through the spec's options. */
@@ -40,6 +43,7 @@ export function SchematicTray({
   hints,
   pending,
   onCommit,
+  draft,
 }: SchematicTrayProps) {
   if (focused === null) {
     return (
@@ -66,6 +70,8 @@ export function SchematicTray({
         hints={hints}
         pending={pending}
         onCommit={onCommit}
+        {...(draft !== undefined ? { draft } : {})}
+        {...(focused.slot !== undefined ? { layout: focused.slot } : {})}
       />
       {springs.length > 0 && (
         <p className="schematic__tray-note">{springs.join(', ')} springs back</p>

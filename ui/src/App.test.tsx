@@ -111,6 +111,22 @@ describe('App — gated tabs', () => {
     });
   });
 
+  it('does not gate Cockpit — the real panel mounts with its own heading (#253)', async () => {
+    const store = readyStore();
+    render(
+      <Provider store={store}>
+        <App />
+      </Provider>,
+    );
+
+    store.dispatch(tabSelected('cockpit'));
+
+    expect(await screen.findByRole('heading', { name: 'Cockpit' })).toBeInTheDocument();
+    expect(
+      screen.queryByRole('heading', { name: /cockpit delayed/i }),
+    ).not.toBeInTheDocument();
+  });
+
   it('"Back to home" on a gated panel returns to Position', async () => {
     const store = readyStore();
     render(
