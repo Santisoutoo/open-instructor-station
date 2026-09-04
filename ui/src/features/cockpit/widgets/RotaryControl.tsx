@@ -4,7 +4,7 @@ import type { LayoutSlot } from '../layouts';
 import {
   dialDraftValue,
   encoderDraftText,
-  formatValue,
+  formatReadout,
   rotaryKeyAction,
   type RotaryDraftHandle,
 } from './rotary';
@@ -60,7 +60,7 @@ export function RotaryControl({
   const isEncoder = spec.kind === 'encoder';
   const step = spec.step ?? 1;
   const unitSuffix = spec.unit === null || spec.unit === undefined ? '' : ` ${spec.unit}`;
-  const readout = formatValue(value, spec.unit, layout?.format);
+  const readout = formatReadout(value, spec, layout);
   const body = handle.body(spec, layout);
 
   const nudge = (sign: 1 | -1, count = 1) => {
@@ -154,7 +154,7 @@ export function RotaryControl({
       <output className="control__value">{readout}</output>
       {!isEncoder && dirty && (
         <p className="control__hint cockpit-rotary__draft">
-          → {formatValue(draftValue, spec.unit, layout?.format)}
+          → {formatReadout(draftValue, spec, layout)}
         </p>
       )}
       <div ref={rowRef} className="control__row">

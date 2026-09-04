@@ -6,6 +6,7 @@ import {
   EMPTY_ROTARY_DRAFT,
   clampOrWrap,
   dialDraftValue,
+  formatReadout,
   formatValue,
   nudgeDial,
   nudgeEncoder,
@@ -321,5 +322,32 @@ describe('wheelNotches', () => {
   it('ignores a zero delta', () => {
     expect(wheelNotches(30, 0, 0)).toEqual({ notches: 0, carry: 30 });
     expect(wheelNotches(0, 0, 0)).toEqual({ notches: 0, carry: 0 });
+  });
+});
+
+describe('formatReadout', () => {
+  const flaps: LayoutSlot = {
+    control_id: 'flaps_lever',
+    x: 0,
+    y: 0,
+    w: 60,
+    h: 60,
+    shape: 'lever',
+    detents: [
+      { value: 0, label: 'UP' },
+      { value: 0.375, label: '5' },
+    ],
+  };
+  const spec = { unit: 'ratio', kind: 'dial' } as unknown as CockpitControlSpec;
+
+  it('reads the detent label when the value sits on one', () => {
+    expect(formatReadout(0.375, spec, flaps)).toBe('5');
+    expect(formatReadout(0, spec, flaps)).toBe('UP');
+  });
+
+  it('falls back to the formatted value off a detent, without detents, and when unknown', () => {
+    expect(formatReadout(0.2, spec, flaps)).toBe('0.2 ratio');
+    expect(formatReadout(0.375, spec, undefined)).toBe('0.375 ratio');
+    expect(formatReadout(null, spec, flaps)).toBe('—');
   });
 });

@@ -25,7 +25,7 @@ import { slotRect, type LayoutSlot, type PanelLayout } from './layouts';
 import {
   dialDraftValue,
   encoderDraftText,
-  formatValue,
+  formatReadout,
   rotaryKeyAction,
   type RotaryDraft,
 } from './widgets/rotary';
@@ -85,11 +85,7 @@ function readoutText(
       return spec.options?.[optionIndex]?.label ?? 'Unknown';
     case 'dial':
     case 'encoder':
-      return formatValue(
-        typeof value === 'number' ? value : null,
-        spec.unit,
-        slot.format,
-      );
+      return formatReadout(typeof value === 'number' ? value : null, spec, slot);
     case 'press':
       return null;
     default: {
@@ -114,7 +110,7 @@ function draftText(
       return null;
     }
     const parsed = dialDraftValue(spec, slot, draft.text);
-    return parsed === null ? draft.text : formatValue(parsed, spec.unit, slot.format);
+    return parsed === null ? draft.text : formatReadout(parsed, spec, slot);
   }
   if (spec.kind === 'encoder') {
     return encoderDraftText(

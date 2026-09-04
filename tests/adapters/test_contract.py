@@ -2072,12 +2072,17 @@ async def test_actuate_toggle_round_trips(adapter: SimAdapter) -> None:
         )
 
     before = (await adapter.read_cockpit_states([spec.control_id])).states[0].value
-    original = bool(before)
+    # A toggle is *published* as a bool, on every adapter — the X-Plane read binding is
+    # a float dataref (`1.0`), and `1.0 == True` is how this assertion passed silently
+    # while the generic Cockpit panel showed "Unknown" for every live toggle (#253).
+    assert isinstance(before, bool), f"{spec.control_id} read back {before!r}, not a bool"
+    original = before
     target = not original
     try:
         flipped = await adapter.actuate_cockpit_control(
             CockpitActuation(control_id=spec.control_id, value=target)
         )
+        assert isinstance(flipped.state.value, bool)
         assert flipped.state.value == target
         assert flipped.actions_taken == 1
 

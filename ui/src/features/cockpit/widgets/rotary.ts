@@ -356,3 +356,29 @@ export function encoderDraftText(
     ? clicksText
     : `${clicksText} · ≈ ${formatValue(predicted, spec.unit, format)}`;
 }
+
+/** The label of the detent `value` sits on, or `null` when the slot has none or none matches. */
+export function detentLabel(
+  slot: LayoutSlot | undefined,
+  value: number | null,
+): string | null {
+  if (value === null || slot?.detents === undefined) {
+    return null;
+  }
+  const hit = slot.detents.find((detent) => Math.abs(detent.value - value) < 1e-6);
+  return hit === undefined ? null : hit.label;
+}
+
+/**
+ * The readout for a rotary control: the detent's own label when the slot has detents and
+ * the value sits on one (a flap lever reads "5", not "0.375 ratio"), else
+ * {@link formatValue}. Live check of #253: a ratio is what the wire says, not what the
+ * instructor reads off the quadrant.
+ */
+export function formatReadout(
+  value: number | null,
+  spec: CockpitControlSpec,
+  slot: LayoutSlot | undefined,
+): string {
+  return detentLabel(slot, value) ?? formatValue(value, spec.unit, slot?.format);
+}

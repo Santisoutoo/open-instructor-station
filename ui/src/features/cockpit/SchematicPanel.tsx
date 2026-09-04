@@ -260,6 +260,11 @@ export function SchematicPanel({
         style={{
           aspectRatio: `${String(w)} / ${String(h)}`,
           minWidth: layout.minWidthPx,
+          // The largest box of this aspect that fits the container's width AND most of the
+          // viewport's height (the `.pos-circuit` rule): a portrait overhead at full width
+          // would otherwise be twice the screen tall. `min-width` still wins on a narrow
+          // tablet, where the board scrolls sideways instead of shrinking its hit targets.
+          width: `min(100%, calc(80vh * ${String(w)} / ${String(h)}))`,
         }}
       >
         <SchematicSvg layout={layout} glyphs={rendered.map((item) => item.glyph)} />

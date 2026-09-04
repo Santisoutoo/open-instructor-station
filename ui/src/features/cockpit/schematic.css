@@ -14,7 +14,8 @@
 
 .schematic__board {
   position: relative;
-  width: 100%;
+  /* `width` is inline: the fitted-box rule needs the panel's own aspect ratio. */
+  margin: 0 auto;
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 8px;
