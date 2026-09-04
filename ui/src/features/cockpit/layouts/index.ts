@@ -9,6 +9,7 @@
  */
 
 import { FAKE_TRAINER_LAYOUT } from './fake-trainer';
+import { ZIBO_B738_LAYOUT } from './zibo-b738';
 import type { CatalogLayout, LayoutSlot, PanelLayout } from './types';
 
 export type {
@@ -22,9 +23,9 @@ export type {
   ValueFormat,
 } from './types';
 
-// `zibo-b738` is added by the layout tasks that follow (issue #253, work breakdown D1–D4).
 const LAYOUTS: Readonly<Record<string, CatalogLayout>> = {
   [FAKE_TRAINER_LAYOUT.catalog_id]: FAKE_TRAINER_LAYOUT,
+  [ZIBO_B738_LAYOUT.catalog_id]: ZIBO_B738_LAYOUT,
 };
 
 /** The layout for a catalog id, or `null` when no schematic exists for it. */
