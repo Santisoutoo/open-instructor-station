@@ -981,7 +981,8 @@ Everything in §3.
 
 `ui/src/features/cockpit/` — a new tab of the Instructor Panel, id `cockpit`, label "Cockpit".
 Adding it touches the four shared registry files every manager touches and nothing else:
-`ui/src/components/tabs.ts` (one entry, `gated: true` like every recent tab), `ui/src/store/index.ts`
+`ui/src/components/tabs.ts` (one entry — shipped `gated: true` like every recent tab, lifted by
+#253 once the schematic view landed), `ui/src/store/index.ts`
 (one reducer), `ui/src/store/uiSlice.ts` (`TabId` union), and the `tagTypes` list in
 `ui/src/api/instructorApi.ts` (two tags — the file itself records that `injectEndpoints` cannot
 add one). The foundation PR already adds the type aliases to `ui/src/api/models.ts`.
@@ -990,26 +991,33 @@ add one). The foundation PR already adds the type aliases to `ui/src/api/models.
 
 | File | Role |
 |---|---|
-| `CockpitPanel.tsx` | The tab: gate → aircraft banner → panel picker → search → control list → parked list. |
+| `CockpitPanel.tsx` | The tab: gate → aircraft banner → search → panel picker → Schematic / List toggle → either the schematic board + tray or the flat control list (+ parked rows). Owns the one `useRotaryDraft` shared by the slot under the wheel and the tray's editor, and the one write (#253). |
 | `AircraftBanner.tsx` | `aircraft.label` + `detection_note`, or the manifest `reason` with a "Re-detect aircraft" button (`refreshCockpitCatalog`). Shows the revision as a small stale-state indicator when a snapshot's revision disagrees with the catalog's. |
 | `PanelPicker.tsx` | Horizontal segmented buttons from `panels` (sorted by `order`), ≥ 44 px, scrollable on narrow tablets. Selection is client state. |
 | `ControlSearch.tsx` | One text input filtering by label/id across **all** panels; a non-empty search flattens the picker into "Search results". |
 | `ControlList.tsx` | Rows for the selected panel (or the search hits), each a `ControlRow`. Virtualisation is not needed at a few hundred rows of simple DOM; revisit only if measured. |
 | `ControlRow.tsx` | Label, hint, unmet-precondition hint (client-computed from the snapshot with the same `any_of` rule, informational — the server's 409 is the gate), and the kind widget. |
+| `ViewModeToggle.tsx` | Schematic / List radio group (≥ 44 px per option). Hidden while a search is active — hits span panels, only the list can show them; disabled with "No schematic for {aircraft}" when the catalog id has no layout (#253). |
+| `layouts/` | Position-only tables keyed by `control_id` (`types.ts` contract, `index.ts` registry with `layoutFor(catalog_id)` / `slotIndex` / `slotRect`, `fake-trainer.ts`, `zibo-b738/{mcp,overhead,pedestal,lights}.ts`). Detents, readout formats (`khz` = MHz×100, `octal` squawk) and spring-back positions are checked-in table data — never parsed from a catalog `hint` or `unit`. `zibo-b738/ids.ts` pins the 73 + 20 catalog ids; a control the layout does not place still renders in a "Not on the diagram" strip, a slot the catalog no longer publishes is simply not drawn (#253). |
+| `SchematicPanel.tsx` | One panel as a board: `splitByLayout` → one glyph + one HTML overlay per placed control, the unplaced strip as a plain `ControlList`. Owns no state. |
+| `SchematicSvg.tsx`, `glyphs.tsx` | The `aria-hidden` `<svg viewBox>`: decorations plus one glyph per slot (`Pushbutton`, `Knob`, `Rocker`, `RotarySelector` — pointer at the **option index**, never the value —, `Lever`, `Display`) with `data-state="on\|off\|unknown\|parked\|pending\|unmet"`. No SVG `<text>`: labels are HTML overlays with `clamp()` sizes (the `CircuitDiagram` lesson). |
+| `SchematicSlot.tsx` | The HTML overlay at the slot's `%` box: caption, `<output>` with the **confirmed** value, a draft line only while this control's draft is dirty, and the 44 px transparent hit target (`touch-action: none`). Toggles, presses and two-position selectors commit on tap; rotaries and wider selectors focus the tray; the wheel and `ArrowUp/Down`, `PageUp/Down`, `Home/End` edit the shared draft, `Enter` commits it, `Escape` discards. Parked → `aria-disabled` + the reason as `title`. |
+| `SchematicTray.tsx` | Sticky under the board: the full `ControlRow` for the focused control (this is where the rotary `[−][field][+] Set` editor lives — it cannot fit inside a knob slot on a tablet), `ParkedRow` with the reason for a parked one, "Tap a control on the diagram" otherwise. |
 | `widgets/ToggleControl.tsx` | A two-state switch showing the **confirmed** value; locked with a spinner while pending; the optimistic value is never shown as confirmed (#221's acceptance). |
 | `widgets/PressControl.tsx` | One button; brief "sent" flash on success. |
-| `widgets/DialControl.tsx` | Numeric input + `±step` buttons + explicit "Set" (the Aircraft panel's stepper discipline: no drag ever moves the student); unit suffix; clamps to `[min_value, max_value]`. |
-| `widgets/EncoderControl.tsx` | `−` / `+` buttons (one click = `delta ±1`), a long-press repeat capped at `max_delta`, and the read-back value when `readable`. |
+| `widgets/RotaryControl.tsx` | Dial **and** encoder (replaced `DialControl`/`EncoderControl` in #253). `<output>` with the confirmed value, a `[−step][field][+step]` row, `Set` and `Discard`. The mouse wheel (native non-passive listener, 50 px per notch, scroll-up = increase), the arrow/Page/Home/End keys and the `±` buttons only ever edit a **draft**; exactly one write leaves on `Enter`/`Set` — the Aircraft panel's stepper discipline extended to the wheel: no notch ever moves the student. Dial: clamped or wrapped into range, snapped to the layout's detents. Encoder: notches accumulate into one `{ delta }` saturating at `±max_delta` (hold-to-repeat via `useRepeatPress` on the draft only), so a trim change is one request instead of one per tick — a deliberate change from the original one-POST-per-click design. The draft clears on commit; a failed write surfaces through the panel's error banner. |
+| `widgets/useRotaryDraft.ts`, `widgets/rotary.ts`, `widgets/useWheelNotches.ts` | The draft hook (`RotaryDraftHandle`: every mutation carries its `spec`, a different `control_id` starts a fresh draft so a notch on an unfocused knob lands on that knob), the pure maths (`clampOrWrap`, `snapToDetent`, `nudgeDial`, `nudgeEncoder`, `formatValue`, `wheelNotches`) and the wheel listener. |
 | `widgets/SelectorControl.tsx` | A segmented control of `options`; the confirmed option highlighted. |
 | `ParkedRow.tsx` | Disabled row with the `reason` inline — never hidden (hard rule 3, the Failures panel's disabled-with-reason pattern). |
 | `gate.ts` | `cockpitGate(capabilities, isError)` — fail-closed, the `cameraGate` pattern verbatim. |
-| `filter.ts` | Pure: `visibleControls(catalog, panelId, search)`, `unmetHints(spec, snapshot)`. |
+| `filter.ts` | Pure: `visibleControls(catalog, panelId, search)`, `unmetHints(spec, snapshot)`, `splitByLayout(controls, parked, slots)`, `selectedOptionIndex(spec, value)` (numeric tolerance shared with the precondition rule, so a float read-back never leaves the glyph and the selector pointing at different stops). |
 | `fixtures.ts` | Deterministic catalog/snapshot fixtures mirroring the Fake's synthetic catalog (§4.1), typed from `schema.d.ts`. |
 | `cockpitSlice.ts`, `cockpitApi.ts` | Below. |
-| `cockpit.css` | Tablet-first: rows ≥ 48 px, two-column control grid ≥ 900 px, sticky picker + search. |
+| `cockpit.css`, `schematic.css` | Tablet-first: rows ≥ 48 px, sticky picker + search; the board is a container-query fitted box with `aspect-ratio` and a `minWidthPx` below which it scrolls horizontally rather than shrinking hit targets under 44 px. Custom properties only — both themes are a value swap. |
 
 Tablet-first: "engage CMD A" is picker tap + one switch tap; "set MCP altitude 4000" is picker tap
-+ type + Set — inside the feature spec's two-tap budget for the common actions.
++ knob tap + type (or wheel) + Set — inside the feature spec's two-tap budget for the common
+actions. Search, List mode and an aircraft without a layout all fall back to the flat list.
 
 ### 7.2 State — one RTK slice + injected endpoints
 
@@ -1029,16 +1037,20 @@ Tablet-first: "engage CMD A" is picker tap + one switch tap; "set MCP altitude 4
 ```ts
 interface CockpitState {
   selectedPanelId: string | null;          // null = first panel by order
+  viewMode: 'schematic' | 'list';          // how the instructor likes the cockpit drawn (#253)
+  focusedControlId: string | null;         // the slot the schematic tray is editing (#253)
   search: string;
   pending: Record<string, true>;           // control_id -> a write is in flight (locks the widget)
   lastError: string | null;                // the last 409/422/502 detail, shown once at the top
 }
 ```
 
-Reducers: `panelSelected`, `searchChanged`, `actuationStarted`, `actuationSettled` (success or
-failure — both unlock), `errorDismissed`, and an `extraReducers` case on `telemetryCleared`
-resetting to the initial state (the `aircraftSlice` precedent: a lost link makes every belief
-stale).
+Reducers: `panelSelected` (also clears the focus), `viewModeSet` (also clears the focus),
+`slotFocused`, `searchChanged`, `actuationStarted`, `actuationSettled` (success or failure — both
+unlock), `errorDismissed`, and an `extraReducers` case on `telemetryCleared` resetting everything
+**except `viewMode`** (the `aircraftSlice` precedent: a lost link makes every belief stale — the
+view mode is a preference, not a belief about the sim). The rotary draft is deliberately not in
+the store: it is transient text tied to one widget's lifetime (`useRotaryDraft`).
 
 All API types come from the regenerated `ui/src/api/schema.d.ts`; `CockpitControlKind` and
 `CockpitUnit` arrive as closed unions.

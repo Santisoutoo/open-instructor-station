@@ -170,6 +170,27 @@ def _coerce_value(raw: Any) -> CockpitValue | None:
     return None
 
 
+def published_value(
+    control: CockpitControlDefinition, value: CockpitValue | None
+) -> CockpitValue | None:
+    """The value the catalog *publishes* for a control, from what the sim read.
+
+    A toggle's read binding is a dataref, and the Web API reports every numeric
+    dataref as a float — ``1.0`` for a flight director that is on. Inside the
+    adapter that is fine (:func:`core.cockpit.actuation.is_on` compares it to
+    the binding's ``on_value``), but the binding never leaves the adapter (D3),
+    so a client cannot make that comparison: the generic Cockpit panel showed
+    "Unknown" for every live toggle and judged every ``fd_capt == true``
+    precondition unmet (issue #253's live pass, 2026-09-04). A toggle's
+    published state is therefore the ``bool`` :func:`is_on` yields — the same
+    shape ``CockpitActuation`` demands on the way in. Every other kind passes
+    through untouched; ``None`` stays "unknown".
+    """
+    if value is None or control.kind != "toggle":
+        return value
+    return is_on(value, control.binding.on_value)
+
+
 def _is_stale_binding_error(exc: httpx.HTTPStatusError) -> bool:
     if exc.response.status_code != 404:
         return False
@@ -400,7 +421,10 @@ class CockpitRuntime:
                         )
             states = [
                 CockpitControlState(
-                    control_id=control_id, value=await self._read_soft(host, by_id[control_id])
+                    control_id=control_id,
+                    value=published_value(
+                        by_id[control_id], await self._read_soft(host, by_id[control_id])
+                    ),
                 )
                 for control_id in ids
             ]
@@ -463,7 +487,9 @@ class CockpitRuntime:
 
             return CockpitActuationResult(
                 requested=actuation,
-                state=CockpitControlState(control_id=control.control_id, value=value),
+                state=CockpitControlState(
+                    control_id=control.control_id, value=published_value(control, value)
+                ),
                 actions_taken=actions_taken,
                 catalog_id=document.aircraft.catalog_id,
                 revision=self._revision,

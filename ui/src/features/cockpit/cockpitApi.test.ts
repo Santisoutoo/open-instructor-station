@@ -54,7 +54,9 @@ describe('cockpitApi', () => {
       const scoped = cockpitApi.endpoints.getCockpitState.select({ panel: 'mcp' })(
         store.getState(),
       ).data;
-      const unscoped = cockpitApi.endpoints.getCockpitState.select({})(store.getState()).data;
+      const unscoped = cockpitApi.endpoints.getCockpitState.select({})(
+        store.getState(),
+      ).data;
       expect(scoped?.states.find((s) => s.control_id === 'fd_capt')?.value).toBe(true);
       expect(unscoped?.states.find((s) => s.control_id === 'fd_capt')?.value).toBe(true);
     });
@@ -63,7 +65,9 @@ describe('cockpitApi', () => {
   it('adds a new row when the actuated control was not in the cached snapshot yet', async () => {
     const catalog = cockpitCatalogManifestFixture();
     stubApi({
-      'GET cockpit/state': { body: { catalog_id: 'fake-trainer', revision: 1, states: [] } },
+      'GET cockpit/state': {
+        body: { catalog_id: 'fake-trainer', revision: 1, states: [] },
+      },
       'POST cockpit/actuate': {
         body: {
           requested: { control_id: 'landing_lights', value: true },
@@ -85,8 +89,12 @@ describe('cockpitApi', () => {
     );
 
     await waitFor(() => {
-      const cached = cockpitApi.endpoints.getCockpitState.select({})(store.getState()).data;
-      expect(cached?.states.find((s) => s.control_id === 'landing_lights')?.value).toBe(true);
+      const cached = cockpitApi.endpoints.getCockpitState.select({})(
+        store.getState(),
+      ).data;
+      expect(cached?.states.find((s) => s.control_id === 'landing_lights')?.value).toBe(
+        true,
+      );
     });
   });
 
@@ -179,5 +187,31 @@ describe('cockpitApi', () => {
         ).length,
       ).toBe(2);
     });
+  });
+
+  it('leaves the cached state untouched on a refused write and rejects only through unwrap', async () => {
+    const snapshot = cockpitStateSnapshotFixture();
+    stubApi({
+      'GET cockpit/state?panel=mcp': { body: snapshot },
+      'POST cockpit/actuate': { status: 409, detail: 'HDG SEL needs a flight director.' },
+    });
+    const store = setupStore();
+    await store.dispatch(cockpitApi.endpoints.getCockpitState.initiate({ panel: 'mcp' }));
+
+    // The lifecycle must swallow its own `queryFulfilled` rejection: an uncaught one
+    // surfaces as an unhandled rejection in the console on every refused actuation
+    // (Vitest fails the run on it), while the caller still sees the 409 via `unwrap()`.
+    const result = await store.dispatch(
+      cockpitApi.endpoints.actuateCockpitControl.initiate({
+        control_id: 'hdg_sel',
+        value: true,
+      }),
+    );
+    expect('error' in result).toBe(true);
+
+    const scoped = cockpitApi.endpoints.getCockpitState.select({ panel: 'mcp' })(
+      store.getState(),
+    ).data;
+    expect(scoped?.states.find((s) => s.control_id === 'hdg_sel')?.value).toBe(false);
   });
 });

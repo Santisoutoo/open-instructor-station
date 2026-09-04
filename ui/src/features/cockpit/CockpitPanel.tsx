@@ -1,5 +1,6 @@
 /**
- * The Cockpit Controls tab — Wave 1 Track C (design §7, issue #221).
+ * The Cockpit Controls tab — Wave 1 Track C (design §7, issue #221), drawn as a
+ * schematic cockpit since issue #253.
  *
  * Renders whatever catalog `GET /api/cockpit/catalog` reports: no control is named
  * anywhere in this feature folder. Gated on `can_control_cockpit` (`gate.ts`, fail-closed,
@@ -14,11 +15,17 @@
  * /cockpit/actuate` is one write; `cockpitApi.ts` patches the state cache and reconciles
  * the revision straight from the response (its own module docstring) — this component
  * only owns the pending lock and the error banner around that call.
+ *
+ * The schematic (issue #253) adds one panel-at-a-time drawing keyed by the catalog id
+ * (`layouts/`), a Schematic / List toggle, and the one rotary **draft** shared by the
+ * slot under the wheel and the tray's editor: the wheel, the keys and the `±` buttons
+ * only ever edit that draft, and a single write leaves on Enter / Set. A search, the
+ * List mode, or an aircraft without a layout all fall back to the flat list unchanged.
  */
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { useGetCapabilitiesQuery } from '../../api/instructorApi';
-import type { CockpitActuation } from '../../api/models';
+import type { CockpitActuation, CockpitControlSpec } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { AircraftBanner } from './AircraftBanner';
 import {
@@ -36,11 +43,18 @@ import {
   errorDismissed,
   panelSelected,
   searchChanged,
+  slotFocused,
+  viewModeSet,
 } from './cockpitSlice';
 import { cockpitErrorDetail } from './errors';
-import { controlStateMap, visibleControls, visibleParked } from './filter';
+import { controlStateMap, unmetHints, visibleControls, visibleParked } from './filter';
 import { cockpitGate } from './gate';
+import { layoutFor, slotIndex, type LayoutSlot } from './layouts';
 import { PanelPicker } from './PanelPicker';
+import { SchematicPanel } from './SchematicPanel';
+import { SchematicTray, type TrayFocus } from './SchematicTray';
+import { ViewModeToggle } from './ViewModeToggle';
+import { useRotaryDraft } from './widgets/useRotaryDraft';
 import './cockpit.css';
 
 /** How often `/state` is re-read while the tab is mounted, gated open and a catalog is active. */
@@ -52,9 +66,8 @@ export function CockpitPanel() {
   const capabilitiesQuery = useGetCapabilitiesQuery();
   const gate = cockpitGate(capabilitiesQuery.data, capabilitiesQuery.isError);
 
-  const { selectedPanelId, search, pending, lastError } = useAppSelector(
-    (state) => state.cockpit,
-  );
+  const { selectedPanelId, viewMode, focusedControlId, search, pending, lastError } =
+    useAppSelector((state) => state.cockpit);
 
   const catalogQuery = useGetCockpitCatalogQuery(undefined, { skip: !gate.open });
   const catalog = catalogQuery.data;
@@ -71,14 +84,11 @@ export function CockpitPanel() {
   // request must omit the key entirely, not carry it with an `undefined` value.
   const stateQueryArg = stateArg === undefined ? {} : { panel: stateArg };
 
-  const stateQuery = useGetCockpitStateQuery(
-    stateQueryArg,
-    {
-      skip: !gate.open || !hasAircraft,
-      pollingInterval: gate.open && hasAircraft ? STATE_POLL_MS : 0,
-      skipPollingIfUnfocused: true,
-    },
-  );
+  const stateQuery = useGetCockpitStateQuery(stateQueryArg, {
+    skip: !gate.open || !hasAircraft,
+    pollingInterval: gate.open && hasAircraft ? STATE_POLL_MS : 0,
+    skipPollingIfUnfocused: true,
+  });
 
   const [actuate] = useActuateCockpitControlMutation();
   const [refresh, refreshMutation] = useRefreshCockpitCatalogMutation();
@@ -100,12 +110,68 @@ export function CockpitPanel() {
     catalog !== undefined &&
     stateQuery.data.revision !== catalog.revision;
 
-  const write = async (controlId: string, body: ActuationBody) => {
+  // --- schematic -----------------------------------------------------------------
+  const layout = layoutFor(catalog?.aircraft?.catalog_id);
+  const panelLayout =
+    layout !== null && activePanelId !== null
+      ? (layout.panels[activePanelId] ?? null)
+      : null;
+  const schematicReason =
+    layout === null
+      ? `No schematic for ${catalog?.aircraft?.label ?? 'this aircraft'}`
+      : panelLayout === null
+        ? 'No schematic for this panel'
+        : undefined;
+  const schematic = !searching && viewMode === 'schematic' && panelLayout !== null;
+
+  const slots = useMemo(
+    () => (panelLayout === null ? new Map<string, LayoutSlot>() : slotIndex(panelLayout)),
+    [panelLayout],
+  );
+
+  // One draft for the whole tab: the slot under the wheel and the tray's editor share it,
+  // so a notch on the diagram shows up in the field and Set writes exactly that.
+  const draft = useRotaryDraft();
+
+  // Focus moving away from the draft's control abandons the draft: a panel switch, the
+  // List toggle or a lost link must never leave a stale value a slot could still commit.
+  // A wheel notch on an unfocused knob focuses and nudges it in the same event, so the
+  // two land together and nothing is reset.
+  const draftControlId = draft.draft.controlId;
+  const resetDraft = draft.reset;
+  useEffect(() => {
+    if (draftControlId !== null && draftControlId !== focusedControlId) {
+      resetDraft(draftControlId);
+    }
+  }, [draftControlId, focusedControlId, resetDraft]);
+
+  const focused: TrayFocus | null = useMemo(() => {
+    if (focusedControlId === null) {
+      return null;
+    }
+    const spec = visible.controls.find(
+      (control) => control.control_id === focusedControlId,
+    );
+    if (spec !== undefined) {
+      return { spec, slot: slots.get(focusedControlId) };
+    }
+    const parked = visible.parked.find((entry) => entry.control_id === focusedControlId);
+    return parked === undefined ? null : { parked };
+  }, [focusedControlId, visible, slots]);
+
+  const confirmedNumber = (spec: CockpitControlSpec): number | null => {
+    const value = states[spec.control_id];
+    return typeof value === 'number' ? value : null;
+  };
+
+  /** One write. Resolves `true` on a confirmed read-back, `false` on any failure. */
+  const write = async (controlId: string, body: ActuationBody): Promise<boolean> => {
     dispatch(actuationStarted(controlId));
     const actuation: CockpitActuation = { control_id: controlId, ...body };
     try {
       await actuate(actuation).unwrap();
       dispatch(actuationSettled({ controlId }));
+      return true;
     } catch (error) {
       dispatch(
         actuationSettled({
@@ -113,6 +179,20 @@ export function CockpitPanel() {
           error: cockpitErrorDetail(error, 'The control could not be actuated.'),
         }),
       );
+      return false;
+    }
+  };
+
+  const commitDraft = (spec: CockpitControlSpec, slot: LayoutSlot | undefined) => {
+    const body = draft.body(spec, slot);
+    if (body !== null) {
+      // The draft survives a failed write (the instructor retries) and clears on success —
+      // scoped to this control, so a draft started elsewhere meanwhile is untouched.
+      void write(spec.control_id, body).then((ok) => {
+        if (ok) {
+          draft.reset(spec.control_id);
+        }
+      });
     }
   };
 
@@ -173,29 +253,90 @@ export function CockpitPanel() {
                 }}
               />
               {!searching && (
-                <PanelPicker
-                  panels={sortedPanels}
-                  activePanelId={activePanelId}
-                  onSelect={(panelId) => {
-                    dispatch(panelSelected(panelId));
-                  }}
-                />
+                <>
+                  <PanelPicker
+                    panels={sortedPanels}
+                    activePanelId={activePanelId}
+                    onSelect={(panelId) => {
+                      dispatch(panelSelected(panelId));
+                    }}
+                  />
+                  <ViewModeToggle
+                    mode={schematic ? 'schematic' : 'list'}
+                    onChange={(mode) => {
+                      dispatch(viewModeSet(mode));
+                    }}
+                    {...(schematicReason !== undefined
+                      ? { disabledReason: schematicReason }
+                      : {})}
+                  />
+                </>
               )}
               {stateQuery.isError && (
                 <p className="panel__error">
                   The control states could not be read — values below may be stale.
                 </p>
               )}
-              <ControlList
-                controls={visible.controls}
-                parked={visible.parked}
-                states={states}
-                pending={pending}
-                emptyMessage={emptyMessage}
-                onCommit={(controlId, body) => {
-                  void write(controlId, body);
-                }}
-              />
+              {schematic && panelLayout !== null ? (
+                <>
+                  <SchematicPanel
+                    layout={panelLayout}
+                    controls={visible.controls}
+                    parked={visible.parked}
+                    states={states}
+                    pending={pending}
+                    focusedId={focusedControlId}
+                    draft={draft.draft}
+                    onFocus={(controlId) => {
+                      dispatch(slotFocused(controlId));
+                    }}
+                    onCommit={write}
+                    onNudge={(spec, slot, sign, count) => {
+                      draft.nudge(spec, slot, confirmedNumber(spec), sign, count);
+                    }}
+                    onDraftText={(spec, text) => {
+                      draft.setText(spec, text);
+                    }}
+                    onCommitDraft={commitDraft}
+                    onDiscardDraft={(spec) => {
+                      draft.reset(spec.control_id);
+                    }}
+                  />
+                  <SchematicTray
+                    focused={focused}
+                    value={
+                      focused !== null && 'spec' in focused
+                        ? states[focused.spec.control_id]
+                        : undefined
+                    }
+                    hints={
+                      focused !== null && 'spec' in focused
+                        ? unmetHints(focused.spec, states)
+                        : []
+                    }
+                    pending={
+                      focused !== null &&
+                      'spec' in focused &&
+                      pending[focused.spec.control_id] === true
+                    }
+                    onCommit={(body) =>
+                      focused !== null && 'spec' in focused
+                        ? write(focused.spec.control_id, body)
+                        : undefined
+                    }
+                    draft={draft}
+                  />
+                </>
+              ) : (
+                <ControlList
+                  controls={visible.controls}
+                  parked={visible.parked}
+                  states={states}
+                  pending={pending}
+                  emptyMessage={emptyMessage}
+                  onCommit={write}
+                />
+              )}
             </>
           )}
         </>

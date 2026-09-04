@@ -6,14 +6,26 @@
  * selected, the search text, which controls have a write in flight, and the last write
  * failure. `pending` is a **lock**, not a value — a control's actual value always comes
  * from the confirmed snapshot (D8: never show the optimistic click as confirmed).
+ *
+ * The schematic view (issue #253) adds two more client-only facts: how the instructor
+ * wants the cockpit drawn (`viewMode`) and which slot the tray is editing
+ * (`focusedControlId`). The rotary *draft* is deliberately not here — it belongs to the
+ * `useRotaryDraft` hook, since it is transient text tied to one widget's lifetime.
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
 import { telemetryCleared } from '../telemetry/telemetrySlice';
 
+/** Schematic diagram, or the flat list the tab shipped with (issue #253, design §4). */
+export type CockpitViewMode = 'schematic' | 'list';
+
 export interface CockpitUiState {
   /** `null` means "the first panel by order" — resolved by the component. */
   selectedPanelId: string | null;
+  /** Diagram or list. Survives a lost link — it is a preference, not a belief about the sim. */
+  viewMode: CockpitViewMode;
+  /** The slot whose widget the schematic tray shows; `null` shows the "tap a control" hint. */
+  focusedControlId: string | null;
   /** Non-empty flattens the panel picker into cross-panel search results. */
   search: string;
   /** Control ids with a write in flight. The widget locks while its id is a key here. */
@@ -24,6 +36,8 @@ export interface CockpitUiState {
 
 export const initialCockpitUiState: CockpitUiState = {
   selectedPanelId: null,
+  viewMode: 'schematic',
+  focusedControlId: null,
   search: '',
   pending: {},
   lastError: null,
@@ -36,6 +50,16 @@ const cockpitSlice = createSlice({
     /** Tap on the panel picker. */
     panelSelected(state, action: PayloadAction<string>) {
       state.selectedPanelId = action.payload;
+      state.focusedControlId = null;
+    },
+    /** Schematic / List toggle. The focused slot belongs to the diagram, so it goes too. */
+    viewModeSet(state, action: PayloadAction<CockpitViewMode>) {
+      state.viewMode = action.payload;
+      state.focusedControlId = null;
+    },
+    /** Tap on a diagram slot (`null` clears the tray). */
+    slotFocused(state, action: PayloadAction<string | null>) {
+      state.focusedControlId = action.payload;
     },
     /** Edit of the search field. */
     searchChanged(state, action: PayloadAction<string>) {
@@ -51,7 +75,10 @@ const cockpitSlice = createSlice({
      * failure; a success clears any previous error so a stale banner never lingers next
      * to a control that just worked.
      */
-    actuationSettled(state, action: PayloadAction<{ controlId: string; error?: string }>) {
+    actuationSettled(
+      state,
+      action: PayloadAction<{ controlId: string; error?: string }>,
+    ) {
       delete state.pending[action.payload.controlId];
       state.lastError = action.payload.error ?? null;
     },
@@ -62,13 +89,19 @@ const cockpitSlice = createSlice({
   },
   extraReducers: (builder) => {
     // The `aircraftSlice` precedent: a lost link makes every belief stale, including
-    // which writes were still in flight.
-    builder.addCase(telemetryCleared, () => initialCockpitUiState);
+    // which writes were still in flight. `viewMode` is not a belief about the sim but
+    // how the instructor likes to look at the cockpit, so it is the one thing kept.
+    builder.addCase(telemetryCleared, (state) => ({
+      ...initialCockpitUiState,
+      viewMode: state.viewMode,
+    }));
   },
 });
 
 export const {
   panelSelected,
+  viewModeSet,
+  slotFocused,
   searchChanged,
   actuationStarted,
   actuationSettled,

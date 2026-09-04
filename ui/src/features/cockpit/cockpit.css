@@ -213,10 +213,9 @@
 
 /* ------------------------------------------------------------------------ widgets */
 
-/* Dial/encoder share the base `.control` box from index.css; only their own layout
+/* The rotary widget shares the base `.control` box from index.css; only its own layout
    quirks live here. */
-.cockpit-dial,
-.cockpit-encoder {
+.cockpit-rotary {
   min-width: 220px;
 }
 
@@ -257,4 +256,48 @@
 .cockpit-selector__option:focus-visible {
   outline: 2px solid var(--focus);
   outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- view mode toggle */
+
+.cockpit-viewmode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  margin-bottom: 0.75rem;
+}
+
+.cockpit-viewmode__option {
+  min-height: 44px;
+  padding: 0 1rem;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.cockpit-viewmode__option[aria-checked='true'] {
+  background: var(--bg-panel);
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.cockpit-viewmode__option:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+.cockpit-viewmode__option:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.cockpit-viewmode__reason {
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--text-dim);
 }

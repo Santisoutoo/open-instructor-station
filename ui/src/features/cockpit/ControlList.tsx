@@ -10,7 +10,7 @@ export interface ControlListProps {
   states: ControlStateMap;
   pending: Readonly<Record<string, true>>;
   emptyMessage: string;
-  onCommit: (controlId: string, body: ActuationBody) => void;
+  onCommit: (controlId: string, body: ActuationBody) => void | Promise<boolean>;
 }
 
 /**

@@ -46,7 +46,15 @@ export const cockpitApi = instructorApi.injectEndpoints({
     actuateCockpitControl: builder.mutation<CockpitActuationResult, CockpitActuation>({
       query: (body) => ({ url: 'cockpit/actuate', method: 'POST', body }),
       async onQueryStarted(actuation, { dispatch, getState, queryFulfilled }) {
-        const { data: result } = await queryFulfilled;
+        let result: CockpitActuationResult;
+        try {
+          ({ data: result } = await queryFulfilled);
+        } catch {
+          // A rejected write (409/422/502) is the caller's to report through `unwrap()`;
+          // nothing is patched, and letting it propagate here would surface as an
+          // unhandled rejection in the console on every refused actuation.
+          return;
+        }
 
         for (const arg of cockpitApi.util.selectCachedArgsForQuery(
           getState(),

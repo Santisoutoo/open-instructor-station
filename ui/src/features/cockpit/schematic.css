@@ -1,0 +1,313 @@
+/*
+ * Schematic cockpit (issue #253, design §2). Custom properties only — both themes are a
+ * value swap away (see index.css). Dual-draw: the SVG carries the drawing, the HTML
+ * overlays carry captions, readouts and the ≥44px hit targets, both positioned at the
+ * same `%` box (the `.pos-circuit` pattern). No SVG `<text>`: caption and readout sizes
+ * are `clamp()`ed on `vw` so they stay legible however small the board is squeezed.
+ */
+
+/* ---------------------------------------------------------------------- board */
+
+.schematic {
+  overflow-x: auto;
+}
+
+.schematic__board {
+  position: relative;
+  /* `width` is inline: the fitted-box rule needs the panel's own aspect ratio. */
+  margin: 0 auto;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.schematic__svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.schematic__deco-box {
+  fill: none;
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.schematic__deco-line {
+  stroke: var(--border);
+  stroke-width: 1.5;
+}
+
+.schematic__deco-caption {
+  position: absolute;
+  pointer-events: none;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: clamp(0.65rem, 1vw, 0.9rem);
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+/* A box caption straddles the box's top edge like a fieldset legend. */
+.schematic__deco-caption--box {
+  padding: 0 0.3em;
+  background: var(--bg-raised);
+  transform: translate(6px, -50%);
+}
+
+/* ---------------------------------------------------------------------- slots */
+
+.schematic__slot {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+
+/* A knob glyph draws its value window along the slot's top edge — the readout sits there. */
+.schematic__slot[data-shape='knob'] {
+  justify-content: flex-start;
+}
+
+.schematic__caption {
+  position: absolute;
+  left: 50%;
+  bottom: 100%;
+  transform: translate(-50%, -2px);
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: clamp(0.65rem, 1vw, 0.9rem);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+
+.schematic__slot[data-label-side='below'] .schematic__caption {
+  top: 100%;
+  bottom: auto;
+  transform: translate(-50%, 2px);
+}
+
+.schematic__slot[data-label-side='left'] .schematic__caption {
+  left: auto;
+  right: 100%;
+  top: 50%;
+  bottom: auto;
+  transform: translate(-6px, -50%);
+}
+
+.schematic__slot[data-label-side='right'] .schematic__caption {
+  left: 100%;
+  top: 50%;
+  bottom: auto;
+  transform: translate(6px, -50%);
+}
+
+.schematic__readout {
+  position: relative;
+  z-index: 1;
+  padding: 0 0.3em;
+  background: var(--bg-raised);
+  border-radius: 4px;
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(0.7rem, 1.1vw, 1rem);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.schematic__draft {
+  position: relative;
+  z-index: 1;
+  padding: 0 0.3em;
+  background: var(--bg-raised);
+  border-radius: 4px;
+  color: var(--accent);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: clamp(0.7rem, 1.1vw, 1rem);
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.schematic__slot[data-state='parked'] .schematic__caption {
+  opacity: 0.6;
+}
+
+.schematic__slot[data-state='unmet'] .schematic__readout {
+  color: var(--warn);
+}
+
+.schematic__slot--focused .schematic__caption {
+  color: var(--accent);
+}
+
+/* The hit target: transparent, never smaller than 44px on either axis, centred on the slot. */
+.schematic__hit {
+  pointer-events: auto;
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: max(100%, 44px);
+  height: max(100%, 44px);
+  padding: 0;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.schematic__hit:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.schematic__hit[aria-disabled='true'] {
+  cursor: not-allowed;
+}
+
+.schematic__hit:disabled {
+  cursor: wait;
+}
+
+/* --------------------------------------------------------------------- glyphs */
+
+.schematic__glyph .glyph-body,
+.schematic__glyph .glyph-window,
+.schematic__glyph .glyph-display,
+.schematic__glyph .glyph-track {
+  fill: var(--bg-panel);
+  stroke: var(--text-dim);
+  stroke-width: 2;
+}
+
+.schematic__glyph .glyph-window,
+.schematic__glyph .glyph-display {
+  fill: var(--bg);
+}
+
+.schematic__glyph .glyph-lit,
+.schematic__glyph .glyph-lit-off {
+  fill: var(--bg);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+
+.schematic__glyph .glyph-pointer,
+.schematic__glyph .glyph-tick {
+  stroke: var(--text);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.schematic__glyph .glyph-tick {
+  stroke: var(--text-dim);
+  stroke-width: 2;
+}
+
+.schematic__glyph .glyph-centre {
+  fill: var(--text-dim);
+}
+
+.schematic__glyph .glyph-handle {
+  fill: var(--text);
+  stroke: var(--bg-panel);
+  stroke-width: 1;
+}
+
+.schematic__glyph[data-state='on'] .glyph-lit {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+
+.schematic__glyph[data-state='off'] .glyph-lit-off {
+  fill: var(--text-dim);
+  stroke: var(--text-dim);
+}
+
+.schematic__glyph[data-state='unmet'] .glyph-body,
+.schematic__glyph[data-state='unmet'] .glyph-track,
+.schematic__glyph[data-state='unmet'] .glyph-display {
+  stroke: var(--warn);
+}
+
+.schematic__glyph[data-state='parked'] {
+  opacity: 0.45;
+}
+
+.schematic__glyph[data-state='unknown'] .glyph-body,
+.schematic__glyph[data-state='unknown'] .glyph-track,
+.schematic__glyph[data-state='unknown'] .glyph-display {
+  stroke-dasharray: 4 3;
+}
+
+.schematic__glyph[data-state='pending'] {
+  opacity: 0.7;
+}
+
+.schematic__glyph[data-focused='true'] .glyph-body,
+.schematic__glyph[data-focused='true'] .glyph-track,
+.schematic__glyph[data-focused='true'] .glyph-display {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
+.schematic__glyph[data-focused='true'] .glyph-pointer,
+.schematic__glyph[data-focused='true'] .glyph-handle {
+  stroke: var(--accent);
+}
+
+.schematic__glyph[data-focused='true'] .glyph-handle {
+  fill: var(--accent);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .schematic__glyph .glyph-pointer {
+    transition: transform 120ms ease-out;
+  }
+}
+
+/* ----------------------------------------------------------------------- tray */
+
+.schematic__tray {
+  position: sticky;
+  bottom: 0;
+  z-index: 2;
+  margin-top: 0.75rem;
+  padding: 0.6rem;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.schematic__tray-hint {
+  margin: 0;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.schematic__tray-note {
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  font-style: italic;
+  color: var(--text-dim);
+}
+
+/* ------------------------------------------------------------------- unplaced */
+
+.schematic__unplaced {
+  margin-top: 0.75rem;
+}
+
+.schematic__unplaced-heading {
+  margin: 0 0 0.5rem;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.06em;
+}
