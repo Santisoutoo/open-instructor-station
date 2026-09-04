@@ -114,7 +114,7 @@ describe('ControlRow', () => {
     expect(onCommit).toHaveBeenCalledWith({ value: 4000 });
   });
 
-  it('encoder: a tap on "+" commits delta: 1', async () => {
+  it('encoder: "+" then "Set" issues exactly one commit with delta: 1', async () => {
     const user = userEvent.setup();
     const onCommit = vi.fn();
     render(
@@ -128,7 +128,11 @@ describe('ControlRow', () => {
     );
 
     await user.click(screen.getByRole('button', { name: '+' }));
+    expect(onCommit).not.toHaveBeenCalled();
 
+    await user.click(screen.getByRole('button', { name: 'Set' }));
+
+    expect(onCommit).toHaveBeenCalledTimes(1);
     expect(onCommit).toHaveBeenCalledWith({ delta: 1 });
   });
 

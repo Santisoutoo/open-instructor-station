@@ -1,7 +1,12 @@
-import type { CockpitActuation, CockpitControlSpec, CockpitValue } from '../../api/models';
-import { DialControl } from './widgets/DialControl';
-import { EncoderControl } from './widgets/EncoderControl';
+import type {
+  CockpitActuation,
+  CockpitControlSpec,
+  CockpitValue,
+} from '../../api/models';
+import type { LayoutSlot } from './layouts';
 import { PressControl } from './widgets/PressControl';
+import type { RotaryDraftHandle } from './widgets/rotary';
+import { RotaryControl } from './widgets/RotaryControl';
 import { SelectorControl } from './widgets/SelectorControl';
 import { ToggleControl } from './widgets/ToggleControl';
 
@@ -16,6 +21,10 @@ export interface ControlRowProps {
   hints: readonly string[];
   pending: boolean;
   onCommit: (body: ActuationBody) => void;
+  /** Dial/encoder only: a parent-owned draft (the schematic tray passes `CockpitPanel`'s). */
+  draft?: RotaryDraftHandle;
+  /** Dial/encoder only: the slot's `wrap` / `detents` / `format` hints. */
+  layout?: LayoutSlot;
 }
 
 /**
@@ -23,7 +32,15 @@ export interface ControlRowProps {
  * and the kind-appropriate widget. Never disabled by an unmet precondition — the row
  * stays live so an instructor mid-way through satisfying it can keep going (design §7.3).
  */
-export function ControlRow({ spec, value, hints, pending, onCommit }: ControlRowProps) {
+export function ControlRow({
+  spec,
+  value,
+  hints,
+  pending,
+  onCommit,
+  draft,
+  layout,
+}: ControlRowProps) {
   return (
     <div className={`cockpit-row${hints.length > 0 ? ' cockpit-row--unmet' : ''}`}>
       <div className="cockpit-row__main">
@@ -35,7 +52,9 @@ export function ControlRow({ spec, value, hints, pending, onCommit }: ControlRow
           </p>
         ))}
       </div>
-      <div className="cockpit-row__widget">{renderWidget(spec, value, pending, onCommit)}</div>
+      <div className="cockpit-row__widget">
+        {renderWidget(spec, value, pending, onCommit, draft, layout)}
+      </div>
     </div>
   );
 }
@@ -45,6 +64,8 @@ function renderWidget(
   value: CockpitValue | null | undefined,
   pending: boolean,
   onCommit: (body: ActuationBody) => void,
+  draft: RotaryDraftHandle | undefined,
+  layout: LayoutSlot | undefined,
 ) {
   switch (spec.kind) {
     case 'toggle':
@@ -68,25 +89,17 @@ function renderWidget(
         />
       );
     case 'dial':
-      return (
-        <DialControl
-          spec={spec}
-          value={typeof value === 'number' ? value : null}
-          pending={pending}
-          onCommit={(next) => {
-            onCommit({ value: next });
-          }}
-        />
-      );
     case 'encoder':
+      // `RotaryControl` already speaks in bodies (`{ value }` / `{ delta }`), so they go
+      // onward as they are.
       return (
-        <EncoderControl
+        <RotaryControl
           spec={spec}
           value={typeof value === 'number' ? value : null}
           pending={pending}
-          onCommit={(delta) => {
-            onCommit({ delta });
-          }}
+          onCommit={onCommit}
+          {...(draft !== undefined ? { draft } : {})}
+          {...(layout !== undefined ? { layout } : {})}
         />
       );
     case 'selector':
