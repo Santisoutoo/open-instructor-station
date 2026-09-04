@@ -8,6 +8,8 @@ import reducer, {
   panelSelected,
   searchChanged,
   selectIsPending,
+  slotFocused,
+  viewModeSet,
 } from './cockpitSlice';
 
 describe('cockpitSlice', () => {
@@ -34,7 +36,10 @@ describe('cockpitSlice', () => {
 
     const settled = reducer(
       started,
-      actuationSettled({ controlId: 'hdg_sel', error: 'HDG SEL needs a flight director.' }),
+      actuationSettled({
+        controlId: 'hdg_sel',
+        error: 'HDG SEL needs a flight director.',
+      }),
     );
 
     expect(selectIsPending(settled, 'hdg_sel')).toBe(false);
@@ -61,14 +66,61 @@ describe('cockpitSlice', () => {
     expect(state.search).toBe('light');
   });
 
-  it('resets everything on telemetryCleared — a lost link makes every belief stale', () => {
+  it('starts in the schematic view with nothing focused', () => {
+    expect(initialCockpitUiState.viewMode).toBe('schematic');
+    expect(initialCockpitUiState.focusedControlId).toBeNull();
+  });
+
+  it('focuses and clears a slot', () => {
+    let state = reducer(initialCockpitUiState, slotFocused('mcp_hdg'));
+    expect(state.focusedControlId).toBe('mcp_hdg');
+
+    state = reducer(state, slotFocused(null));
+    expect(state.focusedControlId).toBeNull();
+  });
+
+  it('switches the view mode and drops the focused slot with it', () => {
+    const focused = reducer(initialCockpitUiState, slotFocused('mcp_hdg'));
+
+    const listed = reducer(focused, viewModeSet('list'));
+
+    expect(listed.viewMode).toBe('list');
+    expect(listed.focusedControlId).toBeNull();
+  });
+
+  it('drops the focused slot when another panel is selected', () => {
+    const focused = reducer(initialCockpitUiState, slotFocused('mcp_hdg'));
+
+    const switched = reducer(focused, panelSelected('overhead'));
+
+    expect(switched.selectedPanelId).toBe('overhead');
+    expect(switched.focusedControlId).toBeNull();
+  });
+
+  it('keeps the focused slot across a search edit and an actuation', () => {
+    let state = reducer(initialCockpitUiState, slotFocused('mcp_alt'));
+    state = reducer(state, searchChanged('alt'));
+    state = reducer(state, actuationStarted('mcp_alt'));
+    state = reducer(state, actuationSettled({ controlId: 'mcp_alt' }));
+
+    expect(state.focusedControlId).toBe('mcp_alt');
+  });
+
+  it('resets everything except the view mode on telemetryCleared', () => {
+    // A lost link makes every belief about the sim stale; how the instructor likes to
+    // look at the cockpit is not a belief about the sim.
     const dirty = {
       selectedPanelId: 'lights',
+      viewMode: 'list' as const,
+      focusedControlId: 'landing_lights',
       search: 'land',
       pending: { landing_lights: true as const },
       lastError: 'boom',
     };
 
-    expect(reducer(dirty, telemetryCleared())).toEqual(initialCockpitUiState);
+    expect(reducer(dirty, telemetryCleared())).toEqual({
+      ...initialCockpitUiState,
+      viewMode: 'list',
+    });
   });
 });
