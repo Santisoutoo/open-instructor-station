@@ -1,7 +1,6 @@
 /*
  * Atmosphere profile — a vertical MSL scale with cloud bands and wind barbs, drag-editable.
- * Own file, not weather.css: this component is delivered unmounted (#183) and imports its
- * own stylesheet so mounting it later (#185) is a one-line addition, not a weather.css merge.
+ * The profile imports its own stylesheet so it can also be rendered in isolation.
  *
  * Uses the app-wide tokens from index.css (--text/--bg/--accent/...), the same ones
  * weather.css uses — NOT position.css's `.pos-*` tokens, which only exist inside `.pos` and

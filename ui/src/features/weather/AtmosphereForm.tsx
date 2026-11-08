@@ -2,17 +2,21 @@
  * The scalar half of the staged weather: QNH, visibility, temperature, dewpoint,
  * precipitation and runway contamination.
  *
- * The dewpoint can never exceed the temperature. The input's own max moves with the
- * resolved temperature and the write clamps to it; lowering the temperature under the
- * dewpoint is resolved by `resolve.mergeForDisplay`, which clamps on every read — so the
- * invariant holds whatever order the edits arrive in.
+ * Numeric inputs retain unfinished entries; the container validates the complete
+ * resolved instruction, including the temperature/dewpoint relationship.
  */
 
 import { formatContamination } from './format';
 import { NumberField } from './NumberField';
 import type { RunwayContamination, WeatherSetup, WeatherState } from '../../api/models';
 
-const CONTAMINATIONS: readonly RunwayContamination[] = ['dry', 'wet', 'puddles', 'snow', 'ice'];
+const CONTAMINATIONS: readonly RunwayContamination[] = [
+  'dry',
+  'wet',
+  'puddles',
+  'snow',
+  'ice',
+];
 
 interface AtmosphereFormProps {
   /** The resolved staged weather — current weather with the setup's touched fields replacing it. */
@@ -36,8 +40,8 @@ export function AtmosphereForm({
           label="QNH"
           unit="hPa"
           value={resolved.qnh_hpa}
-          min={940}
-          max={1080}
+          min={900}
+          max={1100}
           step={1}
           disabled={disabled}
           onChange={(value) => {
@@ -49,7 +53,7 @@ export function AtmosphereForm({
           unit="m"
           value={resolved.visibility_m}
           min={0}
-          max={10000}
+          max={Infinity}
           step={50}
           disabled={disabled}
           onChange={(value) => {
@@ -60,8 +64,8 @@ export function AtmosphereForm({
           label="Temperature"
           unit="°C"
           value={resolved.temperature_c}
-          min={-40}
-          max={50}
+          min={-60}
+          max={60}
           step={1}
           disabled={disabled}
           onChange={(value) => {
@@ -72,18 +76,19 @@ export function AtmosphereForm({
           label="Dewpoint"
           unit="°C"
           value={resolved.dewpoint_c}
-          min={-40}
-          max={resolved.temperature_c}
+          min={-60}
+          max={Math.min(60, resolved.temperature_c)}
+          rangeError="Dewpoint must not exceed temperature."
           step={1}
           disabled={disabled}
           onChange={(value) => {
-            onField('dewpoint_c', Math.min(value, resolved.temperature_c));
+            onField('dewpoint_c', value);
           }}
         />
         <NumberField
           label="Precipitation"
           unit="%"
-          value={Math.round(resolved.precipitation_ratio * 100)}
+          value={resolved.precipitation_ratio * 100}
           min={0}
           max={100}
           step={5}

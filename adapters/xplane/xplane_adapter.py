@@ -840,12 +840,13 @@ class _TrafficMeta:
 class XPlaneWeatherRejected(WeatherRejected):
     """X-Plane refused to hold the commanded weather, or this build does not expose it.
 
-    Two distinct causes share this exception (weather-manager.md §2.2's 502
+    Three distinct causes share this exception (weather-manager.md §2.2's 502
     mapping, §7.1 step 4): the sim would not switch — or would not stay in —
     manual weather mode, so writing values it has announced it will overwrite
     would be dishonest; or the region weather datarefs this build needs are
     not in the dataref index at all (they are declared OPTIONAL on this
-    adapter, see :data:`OPTIONAL_DATAREFS`). Either way, ``set_weather``/
+    adapter, see :data:`OPTIONAL_DATAREFS`); or cloud layers did not confirm
+    within the bounded settling interval. In each case, ``set_weather``/
     ``get_weather`` must refuse rather than proceed on a guess.
 
     Subclasses :class:`core.sim_adapter.WeatherRejected`, the adapter-agnostic
@@ -1526,7 +1527,7 @@ class XPlaneSimAdapter:
         await self._await_cloud_layers_settled(layers)
 
     async def _await_cloud_layers_settled(self, layers: list[CloudLayer]) -> None:
-        """Best-effort wait for every touched slot's commanded base/coverage to land.
+        """Wait for active layers and cleared slots to match, or reject the write.
 
         **Confirmed against a live X-Plane 12.4.3 install, and a stranger
         shape than "gradual transition" this docstring originally guessed**:
@@ -1536,10 +1537,8 @@ class XPlaneSimAdapter:
         write — for up to ~55s, then every slot snaps to its own correct,
         distinct commanded value in the same instant. See
         :data:`_CLOUD_SETTLE_TIMEOUT_S`'s own docstring for the full
-        measurement. This method waits, but never raises, even once the
-        timeout passes — a caller wanting the fully-settled value should
-        treat the first `get_weather()` after a cloud-bearing `set_weather()`
-        as provisional if it returns before the observed ~55s cycle boundary.
+        measurement. A timeout raises ``WeatherRejected`` so the apply route
+        cannot report success while the simulator still holds stale weather.
 
         **Checks every slot this write touched, not only slot 0** — an
         earlier version of this method checked slot 0 alone, so a
@@ -1548,27 +1547,44 @@ class XPlaneSimAdapter:
         length) was declared "settled" the instant slot 0 landed, without
         ever confirming the omitted slot actually reached zero.
         """
-        count = len(layers)
-        targets: list[tuple[float, float]] = [
-            (
-                (layers[slot].base_ft * _METRES_PER_FOOT, layers[slot].coverage_ratio)
-                if slot < count
-                else (0.0, 0.0)
-            )
-            for slot in range(_WEATHER_CLOUD_LAYERS)
-        ]
         deadline = asyncio.get_running_loop().time() + _CLOUD_SETTLE_TIMEOUT_S
         while asyncio.get_running_loop().time() < deadline:
-            base_array = await self._read("cloud_base_msl_m")
-            coverage_array = await self._read("cloud_coverage_percent")
-            if all(
-                abs(float(base_array[slot]) - target_base_m) <= _CLOUD_SETTLE_BASE_TOLERANCE_M
-                and abs(float(coverage_array[slot]) - target_coverage)
-                <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
-                for slot, (target_base_m, target_coverage) in enumerate(targets)
-            ):
+            bases, tops, coverages, types = await asyncio.gather(
+                self._read("cloud_base_msl_m"),
+                self._read("cloud_tops_msl_m"),
+                self._read("cloud_coverage_percent"),
+                self._read("cloud_type"),
+            )
+            settled = True
+            for slot in range(_WEATHER_CLOUD_LAYERS):
+                layer = layers[slot] if slot < len(layers) else None
+                coverage = float(coverages[slot])
+                if layer is None or layer.coverage_ratio == 0:
+                    # The reader hides exactly zero-coverage slots. Retained base,
+                    # tops and type in an inactive slot do not describe a cloud.
+                    settled = settled and coverage <= 0.0
+                    continue
+                # Match the reader's interpretation of X-Plane's blendable enum;
+                # the raw float need not equal an integer for its type to agree.
+                type_index = max(
+                    0, min(round(float(types[slot])), len(_CLOUD_TYPE_FROM_XPLANE) - 1)
+                )
+                settled = (
+                    settled
+                    and abs(float(bases[slot]) - layer.base_ft * _METRES_PER_FOOT)
+                    <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                    and abs(float(tops[slot]) - layer.tops_ft * _METRES_PER_FOOT)
+                    <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                    and abs(coverage - layer.coverage_ratio) <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
+                    and _CLOUD_TYPE_FROM_XPLANE[type_index] == layer.cloud_type
+                )
+            if settled:
                 return
             await asyncio.sleep(_CLOUD_SETTLE_POLL_INTERVAL_S)
+        raise XPlaneWeatherRejected(
+            "X-Plane did not confirm the requested cloud layers "
+            "before the weather update timed out."
+        )
 
     async def _read_wind_level_altitudes_ft(self) -> list[float]:
         """The 13 region wind levels' altitudes, in feet MSL."""

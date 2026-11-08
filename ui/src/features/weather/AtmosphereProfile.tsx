@@ -2,7 +2,7 @@
  * The atmosphere profile: a vertical MSL scale with cloud bands and wind barbs, drag-editable.
  * Pure props → SVG, no store access — `CircuitDiagram`/`ProcedureDiagram`'s rule.
  *
- * Delivered exported but unmounted (#183); #185 wires it into `WeatherPanel.tsx`.
+ * Mounted by `WeatherPanel.tsx`, with selection shared by the layer editors.
  *
  * Every draggable edge is drawn twice, `CircuitDiagram`'s dual-draw rule: an `aria-hidden` SVG
  * shape at its projected y, and a real, transparent `<button>` positioned in **container
@@ -21,6 +21,7 @@ import type { KeyboardEvent, PointerEvent } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CloudLayer, WeatherState, WindLayer } from '../../api/models';
 import { coverageGroup, formatWind } from './format';
+import { cloudBaseBounds, windAltitudeBounds } from './layerOperations';
 import {
   PLOT_X0,
   PLOT_X1,
@@ -118,7 +119,11 @@ export function AtmosphereProfile({
           i === drag.index
             ? drag.kind === 'cloud-tops'
               ? moveCloudTops(layer, drag.draftAltFt)
-              : moveCloudBase(layer, drag.draftAltFt)
+              : moveCloudBase(
+                  layer,
+                  drag.draftAltFt,
+                  cloudBaseBounds(state.cloud_layers, i),
+                )
             : layer,
         )
       : state.cloud_layers;
@@ -126,7 +131,13 @@ export function AtmosphereProfile({
   const effectiveWindLayers =
     drag !== null && drag.kind === 'wind'
       ? state.wind_layers.map((layer, i) =>
-          i === drag.index ? moveWindAltitude(layer, drag.draftAltFt) : layer,
+          i === drag.index
+            ? moveWindAltitude(
+                layer,
+                drag.draftAltFt,
+                windAltitudeBounds(state.wind_layers, i),
+              )
+            : layer,
         )
       : state.wind_layers;
 
@@ -139,19 +150,28 @@ export function AtmosphereProfile({
     if (!finished.moved) {
       return;
     }
-    const { state: latestState, onWindLayersChange: onWind, onCloudLayersChange: onCloud } =
-      latestRef.current;
+    const {
+      state: latestState,
+      onWindLayersChange: onWind,
+      onCloudLayersChange: onCloud,
+    } = latestRef.current;
 
     if (finished.kind === 'wind') {
       const original = latestState.wind_layers[finished.index];
       if (original === undefined) {
         return;
       }
-      const next = moveWindAltitude(original, finished.draftAltFt);
+      const next = moveWindAltitude(
+        original,
+        finished.draftAltFt,
+        windAltitudeBounds(latestState.wind_layers, finished.index),
+      );
       if (next.altitude_ft === original.altitude_ft) {
         return;
       }
-      onWind(latestState.wind_layers.map((layer, i) => (i === finished.index ? next : layer)));
+      onWind(
+        latestState.wind_layers.map((layer, i) => (i === finished.index ? next : layer)),
+      );
       return;
     }
 
@@ -162,7 +182,11 @@ export function AtmosphereProfile({
     const next =
       finished.kind === 'cloud-tops'
         ? moveCloudTops(original, finished.draftAltFt)
-        : moveCloudBase(original, finished.draftAltFt);
+        : moveCloudBase(
+            original,
+            finished.draftAltFt,
+            cloudBaseBounds(latestState.cloud_layers, finished.index),
+          );
     const changed =
       finished.kind === 'cloud-tops'
         ? next.tops_ft !== original.tops_ft
@@ -170,7 +194,9 @@ export function AtmosphereProfile({
     if (!changed) {
       return;
     }
-    onCloud(latestState.cloud_layers.map((layer, i) => (i === finished.index ? next : layer)));
+    onCloud(
+      latestState.cloud_layers.map((layer, i) => (i === finished.index ? next : layer)),
+    );
   }, []);
 
   const isDragging = drag !== null;
@@ -208,7 +234,12 @@ export function AtmosphereProfile({
     };
   }, [isDragging, commit]);
 
-  const startDrag = (kind: DragKind, index: number, startAltFt: number, event: PointerEvent) => {
+  const startDrag = (
+    kind: DragKind,
+    index: number,
+    startAltFt: number,
+    event: PointerEvent,
+  ) => {
     event.preventDefault();
     onSelect({ kind: kind === 'wind' ? 'wind' : 'cloud', index });
     const rect = svgRef.current?.getBoundingClientRect();
@@ -232,6 +263,7 @@ export function AtmosphereProfile({
     index: number,
     currentAltFt: number,
   ) => {
+    onSelect({ kind: kind === 'wind' ? 'wind' : 'cloud', index });
     if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') {
       return;
     }
@@ -242,8 +274,14 @@ export function AtmosphereProfile({
       if (original === undefined) {
         return;
       }
-      const next = moveWindAltitude(original, targetAltFt);
-      onWindLayersChange(state.wind_layers.map((layer, i) => (i === index ? next : layer)));
+      const next = moveWindAltitude(
+        original,
+        targetAltFt,
+        windAltitudeBounds(state.wind_layers, index),
+      );
+      onWindLayersChange(
+        state.wind_layers.map((layer, i) => (i === index ? next : layer)),
+      );
       return;
     }
     const original = state.cloud_layers[index];
@@ -251,8 +289,16 @@ export function AtmosphereProfile({
       return;
     }
     const next =
-      kind === 'cloud-tops' ? moveCloudTops(original, targetAltFt) : moveCloudBase(original, targetAltFt);
-    onCloudLayersChange(state.cloud_layers.map((layer, i) => (i === index ? next : layer)));
+      kind === 'cloud-tops'
+        ? moveCloudTops(original, targetAltFt)
+        : moveCloudBase(
+            original,
+            targetAltFt,
+            cloudBaseBounds(state.cloud_layers, index),
+          );
+    onCloudLayersChange(
+      state.cloud_layers.map((layer, i) => (i === index ? next : layer)),
+    );
   };
 
   return (
@@ -282,7 +328,12 @@ export function AtmosphereProfile({
                   {INTEGER.format(tick)}
                 </text>
                 {agl !== null && (
-                  <text className="atmo__agl" x={PLOT_X1 + 6} y={y + 3} textAnchor="start">
+                  <text
+                    className="atmo__agl"
+                    x={PLOT_X1 + 6}
+                    y={y + 3}
+                    textAnchor="start"
+                  >
                     {agl}
                   </text>
                 )}
@@ -346,7 +397,10 @@ export function AtmosphereProfile({
                     transform={`rotate(${String(layer.direction_deg)} ${String(WIND_GUTTER_CX)} ${String(y)})`}
                     className="atmo__barb"
                   >
-                    <path d={path} transform={`translate(${String(WIND_GUTTER_CX)} ${String(y)})`} />
+                    <path
+                      d={path}
+                      transform={`translate(${String(WIND_GUTTER_CX)} ${String(y)})`}
+                    />
                   </g>
                 )}
                 <text className="atmo__wind-label" x={WIND_GUTTER_CX} y={y + 16}>
@@ -435,9 +489,7 @@ export function AtmosphereProfile({
             style={{ left: leftPercent(WIND_GUTTER_CX), top: topPercent(y) }}
             aria-pressed={selected}
             onClick={() => {
-              if (readOnly) {
-                onSelect({ kind: 'wind', index });
-              }
+              onSelect({ kind: 'wind', index });
             }}
             onPointerDown={(event) => {
               if (!readOnly) {

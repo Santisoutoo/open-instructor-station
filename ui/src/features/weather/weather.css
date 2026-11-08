@@ -381,3 +381,168 @@
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+/* Station composition retains the application's surfaces, type and theme tokens. */
+.weather-station-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(320px, 2fr);
+  align-items: start;
+  gap: 1rem;
+}
+.weather-station-profile {
+  min-width: 0;
+}
+.weather-station-profile .atmo {
+  max-width: 100%;
+}
+.station-editors {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.weather-layer-selector {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+.weather-layer-selector button {
+  min-height: 44px;
+  padding: 0.4rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text-dim);
+  font: inherit;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+.weather-layer-selector button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.weather-layer-selector button:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.weather-field__error {
+  font-size: 0.75rem;
+  color: var(--warn);
+}
+.weather-field__input[aria-invalid='true'] {
+  border-color: var(--warn);
+}
+.weather-compass {
+  display: grid;
+  width: 120px;
+  flex: 0 0 120px;
+  margin-inline: auto;
+}
+.weather-compass svg {
+  width: 120px;
+  height: 120px;
+  overflow: visible;
+}
+.weather-compass circle {
+  stroke: var(--border);
+  fill: var(--bg);
+}
+.weather-compass path {
+  stroke: var(--text);
+  stroke-width: 2;
+  fill: none;
+}
+.weather-compass text {
+  fill: var(--text-dim);
+  text-anchor: middle;
+  font: 11px var(--font-mono);
+}
+.weather-compass input {
+  width: 120px;
+  min-height: 44px;
+  accent-color: var(--accent);
+}
+.weather-compass input:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.station-editors .weather-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.station-editors .weather-field {
+  min-width: 0;
+}
+.station-editors .weather-field__label {
+  white-space: normal;
+}
+.station-editors .weather-group__title {
+  text-transform: none;
+  letter-spacing: normal;
+  font-size: 0.85rem;
+}
+.station-editors .weather-chip {
+  min-width: 44px;
+}
+.weather-panel button:disabled {
+  cursor: not-allowed;
+}
+@media (max-width: 950px) {
+  .weather-station-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .weather-station-profile .atmo {
+    max-width: 600px;
+    margin-inline: auto;
+  }
+}
+@media (max-width: 420px) {
+  .station-editors .weather-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .weather-staging__actions {
+    width: 100%;
+  }
+  .weather-staging__actions button {
+    flex: 1;
+  }
+}
+
+.weather-group:has(> [data-layer-index='0'] input[aria-invalid='true'])
+  .weather-layer-selector
+  button[data-layer-index='0']::after,
+.weather-group:has(> [data-layer-index='1'] input[aria-invalid='true'])
+  .weather-layer-selector
+  button[data-layer-index='1']::after,
+.weather-group:has(> [data-layer-index='2'] input[aria-invalid='true'])
+  .weather-layer-selector
+  button[data-layer-index='2']::after {
+  content: ' - check values';
+  color: var(--warn);
+}
+
+.weather-station-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+.weather-station-header p {
+  margin-top: 0.35rem;
+}
+.weather-station-controls {
+  display: grid;
+  min-width: 0;
+  gap: 0.75rem;
+}
+.weather-station-profile {
+  padding: 1rem;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.weather-station-profile .atmo {
+  width: 100%;
+  max-width: 640px;
+  margin-inline: auto;
+}

@@ -53,16 +53,27 @@ export function computeAltitudeScale(
     ...windLayers.map((layer) => layer.altitude_ft),
     ...cloudLayers.map((layer) => layer.tops_ft),
   );
-  return { topFt: Math.max(MIN_SCALE_TOP_FT, highest + SCALE_TOP_MARGIN_FT), bottomFt: 0 };
+  return {
+    topFt: Math.max(MIN_SCALE_TOP_FT, highest + SCALE_TOP_MARGIN_FT),
+    bottomFt: 0,
+  };
 }
 
 /** MSL feet → SVG y (0 ft at the bottom of the viewBox, `scale.topFt` at the top). */
-export function altitudeToY(altitudeFt: number, scale: AltitudeScale, viewboxHeightPx: number): number {
+export function altitudeToY(
+  altitudeFt: number,
+  scale: AltitudeScale,
+  viewboxHeightPx: number,
+): number {
   return viewboxHeightPx * (1 - altitudeFt / scale.topFt);
 }
 
 /** The exact inverse of {@link altitudeToY} — what a drag reads the pointer position back as. */
-export function yToAltitude(yPx: number, scale: AltitudeScale, viewboxHeightPx: number): number {
+export function yToAltitude(
+  yPx: number,
+  scale: AltitudeScale,
+  viewboxHeightPx: number,
+): number {
   return scale.topFt * (1 - yPx / viewboxHeightPx);
 }
 
@@ -86,7 +97,10 @@ export function tickAltitudes(scale: AltitudeScale): readonly number[] {
  * fabricated 0-ft ground reference. Also `null` for a tick below the field (an "underground"
  * MSL value has no meaningful AGL reading).
  */
-export function aglLabel(altitudeFt: number, fieldElevationFt: number | null): string | null {
+export function aglLabel(
+  altitudeFt: number,
+  fieldElevationFt: number | null,
+): string | null {
   if (fieldElevationFt === null || altitudeFt < fieldElevationFt) {
     return null;
   }
@@ -156,23 +170,35 @@ export function projectWindLayers(
 }
 
 /** Snap + clamp a dragged cloud base: never below 0, never within `MIN_CLOUD_THICKNESS_FT` of tops. */
-export function moveCloudBase(layer: CloudLayer, rawBaseFt: number): CloudLayer {
-  const base = Math.min(
-    Math.max(0, snapAltitudeFt(rawBaseFt)),
-    layer.tops_ft - MIN_CLOUD_THICKNESS_FT,
+export function moveCloudBase(
+  layer: CloudLayer,
+  rawBaseFt: number,
+  bounds = { min: 0, max: Infinity },
+): CloudLayer {
+  const maximum = Math.max(
+    bounds.min,
+    Math.min(bounds.max, layer.tops_ft - MIN_CLOUD_THICKNESS_FT),
   );
+  const base = Math.max(bounds.min, Math.min(maximum, snapAltitudeFt(rawBaseFt)));
   return { ...layer, base_ft: base };
 }
 
 /** Snap + clamp a dragged cloud tops: never within `MIN_CLOUD_THICKNESS_FT` of base. */
 export function moveCloudTops(layer: CloudLayer, rawTopsFt: number): CloudLayer {
-  const tops = Math.max(snapAltitudeFt(rawTopsFt), layer.base_ft + MIN_CLOUD_THICKNESS_FT);
+  const tops = Math.max(
+    snapAltitudeFt(rawTopsFt),
+    layer.base_ft + MIN_CLOUD_THICKNESS_FT,
+  );
   return { ...layer, tops_ft: tops };
 }
 
 /** Snap + clamp a dragged wind layer's altitude: never below 0. */
-export function moveWindAltitude(layer: WindLayer, rawAltFt: number): WindLayer {
-  const alt = Math.max(0, snapAltitudeFt(rawAltFt));
+export function moveWindAltitude(
+  layer: WindLayer,
+  rawAltFt: number,
+  bounds = { min: 0, max: Infinity },
+): WindLayer {
+  const alt = Math.max(bounds.min, Math.min(bounds.max, snapAltitudeFt(rawAltFt)));
   return { ...layer, altitude_ft: alt };
 }
 

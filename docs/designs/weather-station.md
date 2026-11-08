@@ -912,3 +912,30 @@ whole layer list correctly replaced → save the current weather as a named pres
 saved-presets list, reapply it (confirm the request hits `/api/weather/apply`, nothing else) → tap
 CAT I on the ILS-minima control, confirm the staged cloud layer's base sits at field elevation +
 250 ft → console clean throughout.
+## 13. Weather station delivery (2026-11-08)
+
+This delivery implements the integrated station from the ESAV-inspired scope, retaining the
+existing themes, fonts, units and all seven built-in presets. It mounts the existing atmosphere
+profile beside selected-layer editors, a wind compass and the atmosphere form. The profile and
+form share selection and neighbor bounds. Both layer types support up to three ascending layers,
+with 100 ft separation; removing the last layer sends an empty list.
+
+The weather draft remains a sparse Redux overlay; current/applied weather and preset resolution
+remain in RTK Query. Manual edits never preview or write until Apply. Refresh on entry and the
+explicit refresh action preserve pending changes. Unfinished numeric entries stay visible with
+associated errors and block Apply, including when their layer detail is hidden. Validation uses
+backend ranges and checks the actual temperature/dewpoint relationship without silently changing
+the display. Apply locks editors, presets and duplicate submissions. Discard writes nothing.
+Successful Apply displays the returned adapter readback. A failed Apply preserves the draft,
+shows structured server validation details, and refreshes actual weather in case writes partially
+succeeded. Unsupported capabilities and preset context requirements remain explicit.
+
+X-Plane confirmation now checks active cloud bases, tops, coverage and normalized type, plus
+zero coverage in removed slots. The existing bounded wait raises WeatherRejected on timeout,
+using the existing 502 response. No endpoint, adapter interface, WebSocket or generated API
+contract changes are introduced.
+
+Personal presets, METAR import and new ILS-minima controls remain deferred. Earlier sections of
+this design describe the broader roadmap; those sections are not all implemented by this delivery.
+Verification results and any live simulator limitations are recorded in the working validation
+report under reports/.

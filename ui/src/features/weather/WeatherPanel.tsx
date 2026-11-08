@@ -1,6 +1,6 @@
 /**
- * The Weather Manager panel: the current environment, the preset grid, and — once a preset
- * is staged — the layer editors and the staging bar.
+ * The weather station: current environment, editable atmosphere profile, presets,
+ * selected-layer controls and a draft applied only through the staging bar.
  *
  * Staging is client state (the slice): which preset, and the instructor's edits on top of
  * it. The current weather and the resolved *preset* are both **server state** — the former
@@ -12,12 +12,13 @@
  * sends them onward. The panel reads the Position panel's airport and runway to resolve
  * relative presets, and only reads: it never dispatches into position.
  */
-
+import { useRef, useState } from 'react';
 import { useGetCapabilitiesQuery } from '../../api/instructorApi';
-import type { RunwayContamination, WeatherSetup, WeatherState } from '../../api/models';
+import type { WeatherSetup, WeatherState } from '../../api/models';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { AtmosphereForm } from './AtmosphereForm';
-import { CloudLayerEditor } from './CloudLayerEditor';
+import { AtmosphereProfile, type AtmosphereSelection } from './AtmosphereProfile';
+import { StationEditors } from './StationEditors';
+import { weatherValidationError } from './validation';
 import { errorMessage } from './errors';
 import {
   formatCloudSummary,
@@ -30,18 +31,21 @@ import {
 } from './format';
 import { weatherGate } from './gate';
 import { PresetGrid } from './PresetGrid';
-import { buildManualWeatherRequest, buildWeatherRequest, mergeForDisplay } from './resolve';
+import {
+  buildManualWeatherRequest,
+  buildWeatherRequest,
+  mergeForDisplay,
+} from './resolve';
 import {
   useApplyWeatherMutation,
   useGetWeatherManifestQuery,
+  useGetWeatherAirportQuery,
   useGetWeatherStateQuery,
   usePreviewWeatherQuery,
 } from './weatherApi';
 import { overrideSet, stagingCleared, weatherSource } from './weatherSlice';
 import { WeatherStagingBar } from './WeatherStagingBar';
-import { WindLayerEditor } from './WindLayerEditor';
 import './weather.css';
-
 function CurrentWeather({ current }: { current: WeatherState }) {
   const surface = current.wind_layers[0];
   const readouts = [
@@ -67,9 +71,12 @@ function CurrentWeather({ current }: { current: WeatherState }) {
     </dl>
   );
 }
-
 export function WeatherPanel() {
   const dispatch = useAppDispatch();
+  const [selection, setSelection] = useState<AtmosphereSelection | null>(null);
+  const [invalidFields, setInvalidFields] = useState(false);
+  const [editorRevision, setEditorRevision] = useState(0);
+  const applyingRef = useRef(false);
   const { selectedPresetId, overrides, staged } = useAppSelector(
     (state) => state.weather,
   );
@@ -79,17 +86,22 @@ export function WeatherPanel() {
   const selectedRunwayIdent = useAppSelector(
     (state) => state.position.selectedRunwayIdent,
   );
-
   const { data: capabilities, isError: capabilitiesFailed } = useGetCapabilitiesQuery();
-  const { data: current, isError: currentFailed } = useGetWeatherStateQuery();
+  const {
+    data: current,
+    isError: currentFailed,
+    isFetching: refreshing,
+    refetch,
+  } = useGetWeatherStateQuery(undefined, { refetchOnMountOrArgChange: true });
+  const { data: airport } = useGetWeatherAirportQuery(selectedIcao ?? '', {
+    skip: selectedIcao === null,
+  });
   const { data: manifest } = useGetWeatherManifestQuery();
   const gate = weatherGate(capabilities, capabilitiesFailed, current, currentFailed);
-
   const preset =
     selectedPresetId === null
       ? undefined
       : manifest?.presets.find((candidate) => candidate.id === selectedPresetId);
-
   // Depends only on the staged preset and the runway context — never on `overrides`.
   // Mirrors `features/position/StagingBar.tsx`: the instructor's own edits are merged
   // client-side (below) rather than round-tripped through the server on every keystroke,
@@ -101,16 +113,14 @@ export function WeatherPanel() {
       ? buildWeatherRequest(preset.id, {}, selectedIcao, selectedRunwayIdent)
       : null;
   const {
-    data: preview,
+    currentData: preview,
     isFetching: previewFetching,
     isError: previewFailed,
     error: previewError,
   } = usePreviewWeatherQuery(previewRequest ?? ({} as never), {
     skip: previewRequest === null,
   });
-
   const [applyWeather, applyState] = useApplyWeatherMutation();
-
   // Preset mode: the server's resolved preset over the current weather, then the
   // instructor's own overrides over that. Manual mode and the unstaged case share one path —
   // the current weather with the (possibly empty) overrides replacing whatever they touch,
@@ -125,115 +135,187 @@ export function WeatherPanel() {
           ? mergeForDisplay(mergeForDisplay(current, preview.setup), overrides)
           : null
         : mergeForDisplay(current, overrides);
-
   // WS-1's edge case: an override added then deleted can leave `staged=true, overrides={}` —
   // a manual stage with nothing to send, which the server would refuse (422: neither preset
   // nor setup). Disable Apply and say why, rather than let it 422.
   const manualOverridesEmpty = source === 'manual' && Object.keys(overrides).length === 0;
-
-  const commit = () => {
-    if (source === 'preset') {
-      if (preset === undefined) {
-        return;
-      }
-      void applyWeather(
-        buildWeatherRequest(preset.id, overrides, selectedIcao, selectedRunwayIdent),
-      )
-        .unwrap()
-        .then(() => dispatch(stagingCleared()))
-        .catch(() => {
-          // Rendered from applyState.isError below; nothing to do here.
-        });
+  const validationError = resolved === null ? null : weatherValidationError(resolved);
+  const disabledReason = !gate.open
+    ? gate.reason
+    : manifest?.supported === false
+      ? (manifest.reason ?? 'Weather is not supported.')
+      : previewFailed
+        ? 'Resolve the preset before applying.'
+        : invalidFields
+          ? 'Complete or correct the highlighted fields.'
+          : (validationError ??
+            (manualOverridesEmpty ? 'No changes yet — edit a field to apply.' : null));
+  const resetEditors = () => {
+    setInvalidFields(false);
+    setEditorRevision((revision) => revision + 1);
+    setSelection(null);
+  };
+  const commit = async () => {
+    if (
+      applyingRef.current ||
+      applyState.isLoading ||
+      previewFetching ||
+      disabledReason !== null ||
+      resolved === null ||
+      source === null
+    )
       return;
-    }
-    if (source === 'manual' && !manualOverridesEmpty) {
-      void applyWeather(buildManualWeatherRequest(overrides))
-        .unwrap()
-        .then(() => dispatch(stagingCleared()))
-        .catch(() => {
-          // Rendered from applyState.isError below; nothing to do here.
-        });
+    const request =
+      source === 'preset' && preset !== undefined
+        ? buildWeatherRequest(preset.id, overrides, selectedIcao, selectedRunwayIdent)
+        : source === 'manual' && !manualOverridesEmpty
+          ? buildManualWeatherRequest(overrides)
+          : null;
+    if (request === null) return;
+    applyingRef.current = true;
+    try {
+      await applyWeather(request).unwrap();
+      dispatch(stagingCleared());
+      resetEditors();
+    } catch {
+      // The mutation refreshes actual weather while retaining this draft.
+    } finally {
+      applyingRef.current = false;
     }
   };
-
+  const safeSelection: AtmosphereSelection | null =
+    selection !== null &&
+    resolved !== null &&
+    selection.index <
+      (selection.kind === 'wind' ? resolved.wind_layers : resolved.cloud_layers).length
+      ? selection
+      : resolved !== null && resolved.wind_layers.length > 0
+        ? { kind: 'wind', index: 0 }
+        : resolved !== null && resolved.cloud_layers.length > 0
+          ? { kind: 'cloud', index: 0 }
+          : null;
   const setField = (field: keyof WeatherSetup, value: unknown) => {
     dispatch(overrideSet({ field, value }));
   };
-
   return (
     <section className="panel weather-panel" aria-labelledby="weather-heading">
-      <h2 id="weather-heading">Weather</h2>
-
+      <div className="weather-station-header">
+        <div>
+          <h2 id="weather-heading">Weather</h2>
+          <p className="weather-panel__blocked">
+            {selectedIcao ?? 'No airport selected'}
+            {selectedRunwayIdent === null ? '' : ` · Runway ${selectedRunwayIdent}`}
+            {airport === undefined
+              ? ' · Heights MSL'
+              : ` · Field ${Math.round(airport.elevation_ft)} ft MSL`}
+            {' · '}
+            {staged || invalidFields ? 'Pending changes' : 'Current weather'}
+          </p>
+        </div>
+        <button
+          type="button"
+          className="weather-group__add"
+          disabled={refreshing || applyState.isLoading}
+          onClick={() => {
+            void refetch();
+          }}
+        >
+          {refreshing ? 'Refreshing…' : 'Refresh weather'}
+        </button>
+      </div>
       {current !== undefined && <CurrentWeather current={current} />}
       {!gate.open && <p className="weather-panel__blocked">{gate.reason}</p>}
+      {gate.open && manifest?.supported === false && (
+        <p className="weather-panel__blocked">
+          {manifest.reason ?? 'Weather is not supported.'}
+        </p>
+      )}
       {applyState.isSuccess && !staged && (
         <p className="weather-panel__flash" role="status">
           Weather applied.
         </p>
       )}
-
-      <PresetGrid
-        presets={manifest?.presets ?? []}
-        disabled={!gate.open}
-        selectedIcao={selectedIcao}
-        selectedRunwayIdent={selectedRunwayIdent}
-        onCommit={commit}
-      />
-
-      {source === 'preset' && previewFailed && (
-        <p className="panel__error">
-          {errorMessage(previewError, 'This weather could not be worked out.')}
+      {currentFailed && (
+        <p className="panel__error" role="alert">
+          The current weather could not be refreshed. Pending changes are preserved.
         </p>
       )}
-
-      {source === 'preset' && !previewFailed && resolved === null && (
-        <p className="panel__empty">Working out the weather…</p>
-      )}
-
-      {gate.open && resolved !== null && (
-        <div className="weather-editors">
-          <WindLayerEditor
-            layers={resolved.wind_layers}
-            disabled={applyState.isLoading}
-            onChange={(layers) => {
-              setField('wind_layers', layers);
-            }}
-          />
-          <CloudLayerEditor
-            layers={resolved.cloud_layers}
-            disabled={applyState.isLoading}
-            onChange={(layers) => {
-              setField('cloud_layers', layers);
-            }}
-          />
-          <AtmosphereForm
-            resolved={resolved}
-            disabled={applyState.isLoading}
-            onField={(field, value) => {
-              setField(field, value);
-            }}
-            onContamination={(value: RunwayContamination) => {
-              setField('runway_contamination', value);
-            }}
-          />
+      <div className="weather-station-grid">
+        <div className="weather-station-profile">
+          {resolved !== null && (
+            <AtmosphereProfile
+              state={resolved}
+              fieldElevationFt={airport?.elevation_ft ?? null}
+              selection={safeSelection}
+              readOnly={
+                !gate.open ||
+                manifest?.supported === false ||
+                applyState.isLoading ||
+                previewFetching ||
+                invalidFields
+              }
+              onSelect={setSelection}
+              onWindLayersChange={(layers) => setField('wind_layers', layers)}
+              onCloudLayersChange={(layers) => setField('cloud_layers', layers)}
+            />
+          )}
         </div>
-      )}
-
-      {source !== null && resolved !== null && (
+        <div className="weather-station-controls">
+          <PresetGrid
+            presets={manifest?.presets ?? []}
+            disabled={
+              !gate.open ||
+              manifest?.supported === false ||
+              applyState.isLoading ||
+              invalidFields
+            }
+            selectedIcao={selectedIcao}
+            selectedRunwayIdent={selectedRunwayIdent}
+            onCommit={commit}
+          />
+          {source === 'preset' && previewFailed && (
+            <p className="panel__error">
+              {errorMessage(previewError, 'This weather could not be worked out.')}
+            </p>
+          )}
+          {source === 'preset' && !previewFailed && resolved === null && (
+            <p className="panel__empty">Working out the weather…</p>
+          )}
+          {resolved !== null && (
+            <StationEditors
+              key={`${selectedPresetId ?? 'manual'}:${selectedIcao ?? ''}:${editorRevision}`}
+              resolved={resolved}
+              selection={safeSelection}
+              disabled={
+                !gate.open ||
+                manifest?.supported === false ||
+                applyState.isLoading ||
+                previewFetching
+              }
+              onSelect={setSelection}
+              onField={setField}
+              onInvalidChange={setInvalidFields}
+            />
+          )}
+        </div>
+      </div>
+      {(source !== null || invalidFields) && resolved !== null && (
         <WeatherStagingBar
           {...(preset !== undefined ? { presetLabel: preset.label } : {})}
           resolved={resolved}
           applying={applyState.isLoading || previewFetching}
-          disabledReason={
-            manualOverridesEmpty ? 'No changes yet — edit a field to apply.' : null
-          }
+          disabledReason={disabledReason}
           errorText={
             applyState.isError
               ? errorMessage(applyState.error, 'The weather could not be applied.')
               : null
           }
           onApply={commit}
-          onDismiss={() => dispatch(stagingCleared())}
+          onDismiss={() => {
+            dispatch(stagingCleared());
+            applyState.reset();
+            resetEditors();
+          }}
         />
       )}
     </section>
