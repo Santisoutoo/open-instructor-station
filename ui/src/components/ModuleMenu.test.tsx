@@ -168,4 +168,33 @@ describe('<ModuleMenu />', () => {
     expect(trigger()).toHaveAttribute('aria-expanded', 'false');
     expect(trigger()).toHaveFocus();
   });
+
+  it('focuses the current module on open and moves with the arrow, Home and End keys', async () => {
+    const { store, user } = renderModuleMenu();
+    act(() => {
+      store.dispatch(tabSelected('weather'));
+    });
+
+    await user.click(trigger());
+    const menu = screen.getByRole('menu', { name: 'Modules' });
+    const item = (name: string) => within(menu).getByRole('menuitem', { name });
+    expect(item('Weather')).toHaveFocus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(item('Failures')).toHaveFocus();
+    await user.keyboard('{ArrowUp}{ArrowUp}');
+    expect(item('Scenarios')).toHaveFocus();
+    await user.keyboard('{End}');
+    expect(item(TABS[TABS.length - 1]?.label ?? '')).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(item('Position')).toHaveFocus();
+    await user.keyboard('{ArrowUp}');
+    expect(item(TABS[TABS.length - 1]?.label ?? '')).toHaveFocus();
+    await user.keyboard('{Home}');
+    expect(item('Position')).toHaveFocus();
+
+    await user.keyboard('{ArrowDown}{Enter}');
+    expect(store.getState().ui.activeTab).toBe('scenarios');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
 });

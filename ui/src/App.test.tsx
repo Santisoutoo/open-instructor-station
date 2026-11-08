@@ -116,7 +116,6 @@ describe('App — module menu in the shell header', () => {
     await waitFor(() => {
       expect(document.getElementById('tabpanel-map')).not.toHaveAttribute('hidden');
     });
-    expect(document.getElementById('tabpanel-map')).toHaveAccessibleName('Map');
   });
 });
 
@@ -136,7 +135,6 @@ describe('App — gated tabs', () => {
       expect(el).not.toBeNull();
       return el as HTMLElement;
     });
-    expect(panel).toHaveAccessibleName('Scenarios');
     expect(
       within(panel).getByRole('heading', { name: /scenarios delayed/i }),
     ).toBeInTheDocument();

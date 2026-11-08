@@ -107,7 +107,6 @@ export default function App() {
                   key={tab.id}
                   id={`tabpanel-${tab.id}`}
                   className="app__tabpanel"
-                  aria-label={tab.label}
                   hidden={!active}
                 >
                   {tab.gated ? (

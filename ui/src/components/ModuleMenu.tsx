@@ -1,4 +1,4 @@
-import { useRef } from 'react';
+import { useEffect, useRef, type KeyboardEvent } from 'react';
 import { useAppDispatch, useAppSelector } from '../store';
 import { moduleMenuClosed, moduleMenuToggled, tabSelected } from '../store/uiSlice';
 import { Popover } from './Popover';
@@ -10,12 +10,44 @@ import './ModuleMenu.css';
  * module, one click away. The same component sits in the shell header and in Position's
  * full-bleed header, so every screen navigates the same way. It anchors its own popover
  * (`.modulemenu` is the positioning context), so it works in any header height.
+ *
+ * Keyboard follows the ARIA menu-button pattern, keeping what the old tab bar's arrow keys
+ * offered: opening focuses the current module, ↑/↓ move with wrap-around, Home/End jump
+ * to the ends. Escape and the focus return to the trigger come from `Popover`.
  */
 export function ModuleMenu() {
   const dispatch = useAppDispatch();
   const activeTab = useAppSelector((state) => state.ui.activeTab);
   const open = useAppSelector((state) => state.ui.moduleMenuOpen);
   const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    if (open) {
+      listRef.current?.querySelector<HTMLElement>('[aria-current="page"]')?.focus();
+    }
+  }, [open]);
+
+  const onListKeyDown = (event: KeyboardEvent<HTMLUListElement>) => {
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLElement>('[role="menuitem"]'),
+    );
+    const index = items.indexOf(document.activeElement as HTMLElement);
+    let next: number | null = null;
+    if (event.key === 'ArrowDown') {
+      next = (index + 1) % items.length;
+    } else if (event.key === 'ArrowUp') {
+      next = (index - 1 + items.length) % items.length;
+    } else if (event.key === 'Home') {
+      next = 0;
+    } else if (event.key === 'End') {
+      next = items.length - 1;
+    }
+    if (next !== null) {
+      event.preventDefault();
+      items[next]?.focus();
+    }
+  };
 
   const activeLabel = TABS.find((tab) => tab.id === activeTab)?.label ?? 'Modules';
 
@@ -43,7 +75,13 @@ export function ModuleMenu() {
         triggerRef={triggerRef}
         className="modulemenu__popover"
       >
-        <ul className="modulemenu__list" role="menu" aria-label="Modules">
+        <ul
+          ref={listRef}
+          className="modulemenu__list"
+          role="menu"
+          aria-label="Modules"
+          onKeyDown={onListKeyDown}
+        >
           {TABS.map((tab) => (
             <li key={tab.id} role="none">
               <button
