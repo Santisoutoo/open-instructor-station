@@ -1801,7 +1801,7 @@
 
 /*
  * The navdata gate's card, and the "nothing loaded yet" prompt. Both replace the screen
- * body while the header stays put — this screen is full-bleed, so its screen menu is the
+ * body while the header stays put — this screen is full-bleed, so its module menu is the
  * only way off it and must never be gated away.
  */
 .pos-navdata {

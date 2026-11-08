@@ -1,7 +1,8 @@
 /*
  * The module navigation dropdown: `<Current module> ▾` and a list of every module. A port
  * of Position's header dropdown (.pos-header__menu-trigger + .pos-screenmenu) onto the
- * shell tokens — their values equal Position's --pos-* in both themes, so the menu looks
+ * shell tokens — their values equal Position's --pos-* in both themes (--bg-hover is
+ * --pos-hover), so the menu looks
  * the same in the shell header and in Position's full-bleed header.
  */
 
@@ -27,7 +28,7 @@
 }
 
 .modulemenu__trigger:hover {
-  background: var(--bg-raised);
+  background: var(--bg-hover);
   transition: background-color 80ms ease-out;
 }
 
@@ -77,7 +78,7 @@
 }
 
 .modulemenu__item:hover {
-  background: var(--bg-raised);
+  background: var(--bg-hover);
   transition: background-color 80ms ease-out;
 }
 

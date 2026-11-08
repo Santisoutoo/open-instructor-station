@@ -59,7 +59,7 @@ export function ModuleMenu() {
         className="modulemenu__trigger"
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-controls="module-menu"
+        aria-controls={open ? 'module-menu' : undefined}
         onClick={() => {
           dispatch(moduleMenuToggled());
         }}
@@ -67,7 +67,8 @@ export function ModuleMenu() {
         {activeLabel} <span aria-hidden="true">▾</span>
       </button>
       <Popover
-        id="module-menu"
+        id="module-menu-popover"
+        role="presentation"
         open={open}
         onClose={() => {
           dispatch(moduleMenuClosed());
@@ -77,6 +78,7 @@ export function ModuleMenu() {
       >
         <ul
           ref={listRef}
+          id="module-menu"
           className="modulemenu__list"
           role="menu"
           aria-label="Modules"

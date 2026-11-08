@@ -9,7 +9,7 @@
  *
  * The shell now shares Position's palette and type system (see position.css for the
  * source of truth): cool blue-gray neutrals (oklch hue 250) instead of a warm drift, and
- * a green accent instead of aviation amber — one accent, few placements (active tab, the
+ * a green accent instead of aviation amber — one accent, few placements (current module, the
  * one primary action per panel, focus rings). --ok converges with --accent (Position has
  * no separate success token, its one green already carries both roles); --warn/--danger
  * map to Position's caution/alert tones.
@@ -27,6 +27,7 @@
   --border: oklch(0.31 0.012 250);
   --text: oklch(0.97 0.005 250);
   --text-dim: oklch(0.76 0.008 250);
+  --bg-hover: oklch(0.25 0.013 250);
   --accent: oklch(0.72 0.16 145);
   --accent-strong: oklch(0.8 0.16 145);
   --on-accent: oklch(0.17 0.03 145);
@@ -50,6 +51,7 @@
   --border: oklch(0.84 0.006 250);
   --text: oklch(0.22 0.012 250);
   --text-dim: oklch(0.38 0.012 250);
+  --bg-hover: oklch(0.94 0.005 250);
   --accent: oklch(0.5 0.13 145);
   --accent-strong: oklch(0.42 0.13 145);
   --on-accent: oklch(0.99 0.005 145);

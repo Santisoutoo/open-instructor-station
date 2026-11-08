@@ -31,8 +31,9 @@ export function StatusBar() {
   const scenarioRun = useScenarioRunStatus();
   const scenarioName =
     scenarioRun !== null
-      ? (cachedManifest.data?.scenarios.find((scenario) => scenario.id === scenarioRun.scenario_id)
-          ?.name ?? formatScenarioId(scenarioRun.scenario_id))
+      ? (cachedManifest.data?.scenarios.find(
+          (scenario) => scenario.id === scenarioRun.scenario_id,
+        )?.name ?? formatScenarioId(scenarioRun.scenario_id))
       : null;
 
   const connected = connectionStatus === 'connected';

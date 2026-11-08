@@ -65,7 +65,6 @@ describe('<ModuleMenu />', () => {
     const menu = screen.getByRole('menu', { name: 'Modules' });
     const items = within(menu).getAllByRole('menuitem');
     expect(items.map((item) => item.textContent)).toEqual(TABS.map((tab) => tab.label));
-    expect(items).toHaveLength(13);
     expect(within(menu).getByRole('menuitem', { name: 'Cockpit' })).toBeInTheDocument();
   });
 
@@ -196,5 +195,17 @@ describe('<ModuleMenu />', () => {
     await user.keyboard('{ArrowDown}{Enter}');
     expect(store.getState().ui.activeTab).toBe('scenarios');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+  });
+
+  it('closes when Tab moves focus out of the menu, leaving focus where it went', async () => {
+    const { store, user } = renderModuleMenu();
+
+    await user.click(trigger());
+    await user.keyboard('{End}');
+    await user.tab();
+
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(store.getState().ui.moduleMenuOpen).toBe(false);
+    expect(screen.getByRole('button', { name: 'Outside' })).toHaveFocus();
   });
 });
