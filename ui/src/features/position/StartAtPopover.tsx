@@ -16,7 +16,7 @@ import type { RefObject } from 'react';
 import { useGetParkingQuery } from '../../api/instructorApi';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { AirportDiagram } from './AirportDiagram';
-import { Popover } from './Popover';
+import { Popover } from '../../components/Popover';
 import {
   PARKING_FILTERS,
   parkingFilterSelected,

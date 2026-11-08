@@ -31,7 +31,7 @@ import {
   familyHasApproachType,
 } from './approachTypes';
 import { FactRow } from './FactRow';
-import { Popover } from './Popover';
+import { Popover } from '../../components/Popover';
 import { ProcedureDiagram } from './ProcedureDiagram';
 import { ProcedureViewToggle } from './ProcedureViewToggle';
 import {

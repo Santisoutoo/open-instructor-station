@@ -2,7 +2,7 @@ import type { RefObject } from 'react';
 import { TABS } from '../../components/tabs';
 import { useAppDispatch, useAppSelector } from '../../store';
 import { tabSelected } from '../../store/uiSlice';
-import { Popover } from './Popover';
+import { Popover } from '../../components/Popover';
 import { screenMenuToggled } from './positionDesignSlice';
 
 /** The header's screen-menu popover: every module tab, one click away. */
