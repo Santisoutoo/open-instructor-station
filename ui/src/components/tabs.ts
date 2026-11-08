@@ -13,7 +13,7 @@ import type { TabId } from '../store/uiSlice';
  */
 export interface TabDefinition {
   id: TabId;
-  /** Sentence case — these are the eight module names on the tab bar. */
+  /** Sentence case — these are the module names in the module menu. */
   label: string;
   /** Absent while the module's panel is still being built: the shell shows a stub. */
   load?: () => Promise<{ default: ComponentType }>;

@@ -1,10 +1,11 @@
 /**
- * The shell's full-bleed behaviour when the Position screen is active: no header/tabbar,
- * no status bar — but the map's `keepMounted` panel must survive the round trip, hidden
+ * The shell's full-bleed behaviour when the Position screen is active: no shell header
+ * (and so no shell module menu), no status bar — but the map's `keepMounted` panel must survive the round trip, hidden
  * rather than unmounted, exactly as it does outside full-bleed mode.
  */
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { Provider } from 'react-redux';
 import { describe, expect, it, vi } from 'vitest';
 import App from './App';
@@ -33,15 +34,14 @@ describe('App — the startup gate', () => {
     );
 
     expect(screen.getByRole('dialog', { name: 'Choose an airport' })).toBeInTheDocument();
-    expect(
-      screen.queryByRole('tablist', { name: 'Instructor station modules' }),
-    ).not.toBeInTheDocument();
+    expect(document.querySelector('.app__header')).not.toBeInTheDocument();
+    expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(0);
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 });
 
 describe('App — full-bleed Position screen', () => {
-  it('hides the module tab bar and the status bar while Position is active', () => {
+  it('hides the shell header and the status bar while Position is active', async () => {
     const store = readyStore();
     render(
       <Provider store={store}>
@@ -49,10 +49,16 @@ describe('App — full-bleed Position screen', () => {
       </Provider>,
     );
 
-    expect(
-      screen.queryByRole('tablist', { name: 'Instructor station modules' }),
-    ).not.toBeInTheDocument();
+    expect(document.querySelector('.app__header')).not.toBeInTheDocument();
     expect(screen.queryByRole('status')).not.toBeInTheDocument();
+    // The shell's module menu goes with its header: the only menu trigger left is the
+    // one in Position's own full-bleed header, once its lazy chunk has resolved.
+    await waitFor(
+      () => {
+        expect(document.querySelectorAll('[aria-haspopup="menu"]')).toHaveLength(1);
+      },
+      { timeout: 5000 },
+    );
   });
 
   it('keeps the map tabpanel mounted (hidden) after visiting it and returning to Position', async () => {
@@ -77,6 +83,42 @@ describe('App — full-bleed Position screen', () => {
   });
 });
 
+describe('App — module menu in the shell header', () => {
+  it('navigates between modules from the dropdown, marking the current one', async () => {
+    const user = userEvent.setup();
+    const store = readyStore();
+    render(
+      <Provider store={store}>
+        <App />
+      </Provider>,
+    );
+
+    store.dispatch(tabSelected('weather'));
+    const header = await waitFor(() => {
+      const el = document.querySelector<HTMLElement>('.app__header');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
+
+    await user.click(within(header).getByRole('button', { name: /^Weather/ }));
+    const menu = within(header).getByRole('menu', { name: 'Modules' });
+    expect(within(menu).getByRole('menuitem', { name: 'Weather' })).toHaveAttribute(
+      'aria-current',
+      'page',
+    );
+
+    await user.click(within(menu).getByRole('menuitem', { name: 'Map' }));
+
+    expect(store.getState().ui.activeTab).toBe('map');
+    expect(
+      await within(header).findByRole('button', { name: /^Map/ }),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.getElementById('tabpanel-map')).not.toHaveAttribute('hidden');
+    });
+  });
+});
+
 describe('App — gated tabs', () => {
   it('shows GateDelayedPanel instead of the real panel for a gated tab', async () => {
     const store = readyStore();
@@ -88,9 +130,13 @@ describe('App — gated tabs', () => {
 
     store.dispatch(tabSelected('scenarios'));
 
-    expect(await screen.findByRole('region', { name: 'Scenarios' })).toBeInTheDocument();
+    const panel = await waitFor(() => {
+      const el = document.getElementById('tabpanel-scenarios');
+      expect(el).not.toBeNull();
+      return el as HTMLElement;
+    });
     expect(
-      screen.getByRole('heading', { name: /scenarios delayed/i }),
+      within(panel).getByRole('heading', { name: /scenarios delayed/i }),
     ).toBeInTheDocument();
   });
 

@@ -3,8 +3,8 @@ import { ComingSoonPanel } from './components/ComingSoonPanel';
 import { ConnectionBadge } from './components/ConnectionBadge';
 import { ContextDrawer } from './components/ContextDrawer';
 import { GateDelayedPanel } from './components/GateDelayedPanel';
+import { ModuleMenu } from './components/ModuleMenu';
 import { StatusBar } from './components/StatusBar';
-import { TabBar } from './components/TabBar';
 import { ThemeToggle } from './components/ThemeToggle';
 import { TABS } from './components/tabs';
 import { SUPPORT_URL } from './config/support';
@@ -16,14 +16,14 @@ import { useAppDispatch, useAppSelector } from './store';
 import { drawerToggled, type TabId } from './store/uiSlice';
 
 /**
- * Shell of the instructor station: a module tab bar over one workspace, a context
- * drawer on the right, a persistent status strip along the bottom. Each of the eight
- * managers is one tab; adding a manager adds a feature folder and a `tabs.ts` entry,
- * never an edit to another panel.
+ * Shell of the instructor station: a header with the module menu over one workspace, a
+ * context drawer on the right, a persistent status strip along the bottom. Each of the
+ * eight managers is one module; adding a manager adds a feature folder and a `tabs.ts`
+ * entry, never an edit to another panel.
  *
  * Panels are lazy chunks and only the active one is mounted — except the map, which
  * stays mounted (hidden) after its first visit so its WebGL context and tiles survive
- * tab switches. Staged-but-uncommitted work in other panels survives unmounting anyway,
+ * module switches. Staged-but-uncommitted work in other panels survives unmounting anyway,
  * because every panel keeps its client state in a Redux slice, not in local state.
  */
 
@@ -66,7 +66,7 @@ export default function App() {
           <div className="app__title">
             <h1>Open Instructor Station</h1>
           </div>
-          <TabBar />
+          <ModuleMenu />
           <div className="app__header-actions">
             <ThemeToggle />
             <button
@@ -107,8 +107,6 @@ export default function App() {
                   key={tab.id}
                   id={`tabpanel-${tab.id}`}
                   className="app__tabpanel"
-                  role="tabpanel"
-                  aria-labelledby={fullBleed && active ? undefined : `tab-${tab.id}`}
                   hidden={!active}
                 >
                   {tab.gated ? (

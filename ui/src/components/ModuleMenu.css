@@ -1,0 +1,103 @@
+/*
+ * The module navigation dropdown: `<Current module> ▾` and a list of every module. A port
+ * of Position's header dropdown (.pos-header__menu-trigger + .pos-screenmenu) onto the
+ * shell tokens — their values equal Position's --pos-* in both themes (--bg-hover is
+ * --pos-hover), so the menu looks
+ * the same in the shell header and in Position's full-bleed header.
+ */
+
+/* The positioning context for the popover, so it anchors under the trigger in any header. */
+.modulemenu {
+  position: relative;
+  flex: none;
+}
+
+/* ---------------------------------------------------------------- trigger */
+
+.modulemenu__trigger {
+  min-height: 44px;
+  padding: 0 0.75rem;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.modulemenu__trigger:hover {
+  background: var(--bg-hover);
+  transition: background-color 80ms ease-out;
+}
+
+.modulemenu__trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------- popover */
+
+/* Hangs off the trigger rather than a fixed header offset. Capped to the viewport and
+   scrollable, so all thirteen modules stay reachable on a short tablet screen. */
+.modulemenu__popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 30;
+  width: 220px;
+  max-height: calc(100dvh - 96px);
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  padding: 0.75rem;
+}
+
+.modulemenu__list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.modulemenu__item {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 0.6rem;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.modulemenu__item:hover {
+  background: var(--bg-hover);
+  transition: background-color 80ms ease-out;
+}
+
+.modulemenu__item:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* The current module: a tinted fill that stays distinct from hover, and the accent bar —
+   the accent's only placement in the menu. */
+.modulemenu__item[aria-current='page'] {
+  background: color-mix(in oklch, var(--accent) 12%, var(--bg-raised));
+  box-shadow: inset 3px 0 0 var(--accent);
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .modulemenu__trigger:hover,
+  .modulemenu__item:hover {
+    transition: none;
+  }
+}

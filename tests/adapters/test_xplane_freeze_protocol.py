@@ -450,9 +450,8 @@ async def test_reentrant_freeze_releases_once_and_recovers_after_an_exception(
     next freeze would think it was already nested and never engage.
     """
     with pytest.raises(ZeroDivisionError):
-        async with adapter.frozen_flight_model():
-            async with adapter.frozen_flight_model():
-                raise ZeroDivisionError
+        async with adapter.frozen_flight_model(), adapter.frozen_flight_model():
+            raise ZeroDivisionError
 
     assert adapter.writes == [(OVERRIDE, 1), (OVERRIDE, 0)]
 

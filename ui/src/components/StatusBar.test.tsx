@@ -37,7 +37,9 @@ async function renderStatusBar(
 ) {
   const store = setupStore(preloadedState);
   if (run !== undefined) {
-    await store.dispatch(scenariosApi.util.upsertQueryData('getScenarioRun', undefined, run));
+    await store.dispatch(
+      scenariosApi.util.upsertQueryData('getScenarioRun', undefined, run),
+    );
   }
   render(
     <Provider store={store}>

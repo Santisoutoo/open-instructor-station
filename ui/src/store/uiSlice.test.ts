@@ -5,6 +5,8 @@ import reducer, {
   drawerToggled,
   initialUiState,
   isTabId,
+  moduleMenuClosed,
+  moduleMenuToggled,
   tabSelected,
   themeSet,
   themeToggled,
@@ -18,7 +20,16 @@ describe('uiSlice', () => {
       theme: 'dark',
       drawerOpen: false,
       demoFeed: false,
+      moduleMenuOpen: false,
     });
+  });
+
+  it('opens and closes the module menu, and selecting a module closes it', () => {
+    const open = reducer(initialUiState, moduleMenuToggled());
+    expect(open.moduleMenuOpen).toBe(true);
+    expect(reducer(open, moduleMenuToggled()).moduleMenuOpen).toBe(false);
+    expect(reducer(open, moduleMenuClosed()).moduleMenuOpen).toBe(false);
+    expect(reducer(open, tabSelected('weather')).moduleMenuOpen).toBe(false);
   });
 
   it('selects tabs and remembers every tab visited once', () => {

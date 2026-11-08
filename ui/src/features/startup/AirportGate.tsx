@@ -2,7 +2,7 @@
  * The startup airport-selection gate.
  *
  * A blocking, full-screen guard that mounts **before** the Instructor Panel shell (header,
- * tab bar, panel host, status bar) and stays up until an airport has been resolved against
+ * module menu, panel host, status bar) and stays up until an airport has been resolved against
  * the navigation index. Mounted from `App.tsx` in place of the whole shell (`gateOpen &&
  * <AirportGate />`), never as a `position: fixed` overlay on top of it.
  *
