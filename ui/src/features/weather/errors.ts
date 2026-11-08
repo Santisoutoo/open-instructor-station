@@ -18,6 +18,18 @@ export function errorMessage(error: unknown, fallback: string): string {
       if (typeof detail === 'string') {
         return detail;
       }
+      if (Array.isArray(detail)) {
+        const messages = detail.flatMap((entry: unknown) => {
+          if (typeof entry !== 'object' || entry === null || !('msg' in entry)) return [];
+          const issue = entry as { msg: unknown; loc?: unknown };
+          if (typeof issue.msg !== 'string') return [];
+          const path = Array.isArray(issue.loc)
+            ? issue.loc.filter((part: unknown) => part !== 'body').join('.')
+            : '';
+          return [path === '' ? issue.msg : `${path}: ${issue.msg}`];
+        });
+        if (messages.length > 0) return messages.join(' ');
+      }
     }
   }
   return fallback;

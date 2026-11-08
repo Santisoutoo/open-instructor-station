@@ -53,7 +53,13 @@ const CAPABLE: Capabilities = {
 
 const CURRENT: WeatherState = {
   wind_layers: [
-    { altitude_ft: 0, direction_deg: 270, speed_kt: 5, gust_increase_kt: 0, turbulence_ratio: 0 },
+    {
+      altitude_ft: 0,
+      direction_deg: 270,
+      speed_kt: 5,
+      gust_increase_kt: 0,
+      turbulence_ratio: 0,
+    },
   ],
   cloud_layers: [],
   visibility_m: 10000,
@@ -69,13 +75,55 @@ const MANIFEST: WeatherManifest = {
   supported: true,
   reason: null,
   presets: [
-    { id: 'cavok', label: 'CAVOK', description: 'Clear skies', requires_runway: false, requires_airport: false },
-    { id: 'cat_i', label: 'CAT I', description: '', requires_runway: false, requires_airport: true },
-    { id: 'cat_ii', label: 'CAT II', description: '', requires_runway: false, requires_airport: true },
-    { id: 'cat_iii', label: 'CAT III', description: '', requires_runway: false, requires_airport: true },
-    { id: 'storm', label: 'Storm', description: '', requires_runway: false, requires_airport: true },
-    { id: 'crosswind', label: 'Crosswind', description: '90° off the runway', requires_runway: true, requires_airport: true },
-    { id: 'mountain_wave', label: 'Mountain Wave', description: '', requires_runway: false, requires_airport: true },
+    {
+      id: 'cavok',
+      label: 'CAVOK',
+      description: 'Clear skies',
+      requires_runway: false,
+      requires_airport: false,
+    },
+    {
+      id: 'cat_i',
+      label: 'CAT I',
+      description: '',
+      requires_runway: false,
+      requires_airport: true,
+    },
+    {
+      id: 'cat_ii',
+      label: 'CAT II',
+      description: '',
+      requires_runway: false,
+      requires_airport: true,
+    },
+    {
+      id: 'cat_iii',
+      label: 'CAT III',
+      description: '',
+      requires_runway: false,
+      requires_airport: true,
+    },
+    {
+      id: 'storm',
+      label: 'Storm',
+      description: '',
+      requires_runway: false,
+      requires_airport: true,
+    },
+    {
+      id: 'crosswind',
+      label: 'Crosswind',
+      description: '90° off the runway',
+      requires_runway: true,
+      requires_airport: true,
+    },
+    {
+      id: 'mountain_wave',
+      label: 'Mountain Wave',
+      description: '',
+      requires_runway: false,
+      requires_airport: true,
+    },
   ],
 };
 
@@ -104,7 +152,14 @@ function json(payload: unknown, status = 200): Response {
 }
 
 function stubApi(
-  options: { capabilities?: Capabilities; current?: WeatherState; applyStatus?: number } = {},
+  options: {
+    capabilities?: Capabilities;
+    current?: WeatherState;
+    refreshed?: WeatherState;
+    applyStatus?: number;
+    applyDetail?: unknown;
+    disconnected?: boolean;
+  } = {},
 ) {
   calls = [];
   vi.stubGlobal(
@@ -115,7 +170,9 @@ function stubApi(
       const method = request?.method ?? init?.method ?? 'GET';
       const rawBody = request === null ? init?.body : await request.clone().text();
       const body =
-        typeof rawBody === 'string' && rawBody !== '' ? (JSON.parse(rawBody) as unknown) : undefined;
+        typeof rawBody === 'string' && rawBody !== ''
+          ? (JSON.parse(rawBody) as unknown)
+          : undefined;
       calls.push({ url, method, body });
 
       if (url.includes('/capabilities')) {
@@ -128,23 +185,39 @@ function stubApi(
         const preview: WeatherPreview = {
           request: body as WeatherRequest,
           setup: CAVOK_SETUP,
-          notes: ['visibility_m=20000 — the \'cavok\' preset states 20000.'],
+          notes: ["visibility_m=20000 — the 'cavok' preset states 20000."],
         };
         return json(preview);
       }
       if (url.includes('/weather/apply')) {
+        if (options.disconnected) throw new TypeError('Failed to fetch');
         const status = options.applyStatus ?? 200;
         if (status !== 200) {
           return json(
-            { detail: "Unavailable — the 'xplane' adapter does not declare can_set_weather." },
+            {
+              detail:
+                options.applyDetail ??
+                "Unavailable — the 'xplane' adapter does not declare can_set_weather.",
+            },
             status,
           );
         }
-        const result: WeatherApplyResult = { applied: CAVOK_SETUP, state: AFTER_CAVOK, notes: [] };
+        const result: WeatherApplyResult = {
+          applied: CAVOK_SETUP,
+          state: AFTER_CAVOK,
+          notes: [],
+        };
         return json(result);
       }
       if (url.includes('/weather')) {
-        return json(options.current ?? CURRENT);
+        const reads = calls.filter(
+          (call) => call.method === 'GET' && /\/weather$/.test(call.url),
+        );
+        return json(
+          reads.length > 1
+            ? (options.refreshed ?? options.current ?? CURRENT)
+            : (options.current ?? CURRENT),
+        );
       }
       return json({});
     }),
@@ -170,17 +243,16 @@ describe('WeatherPanel', () => {
     stubApi();
     renderPanel();
 
-    // Fail closed in the strongest sense: no preset tile exists before the data does.
-    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    // Refresh may render while loading, but writes and edits must remain unavailable.
+    expect(screen.queryByRole('button', { name: /CAVOK/ })).not.toBeInTheDocument();
+    for (const button of screen.queryAllByRole('button')) expect(button).toBeDisabled();
     expect(screen.getByText(/waiting for the adapter capabilities/i)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /CAVOK/ })).toBeEnabled();
     });
-    // 7 preset tiles + the field editors' own buttons, which now render as soon as the
-    // current weather is known (WS-1) — "Remove"/"Add wind layer" (CURRENT has one wind
-    // layer) and "Add cloud layer" (CURRENT has none). AtmosphereForm has no buttons.
-    expect(screen.getAllByRole('button')).toHaveLength(10);
+    expect(screen.getByRole('button', { name: 'Add wind layer' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Add cloud layer' })).toBeEnabled();
 
     // The relative preset stays disabled without a runway, with the reason stated.
     expect(screen.getByRole('button', { name: /Crosswind/ })).toBeDisabled();
@@ -268,7 +340,7 @@ describe('WeatherPanel', () => {
     // QNH moved to CAVOK's own figure...
     expect(screen.getByText('1013 hPa')).toBeInTheDocument();
     // ...but the wind — which CAVOK never touches — is exactly what it was before.
-    expect(screen.getByText('270° / 5 kt')).toBeInTheDocument();
+    expect(screen.getByText('270° / 5 kt', { selector: 'dd' })).toBeInTheDocument();
   });
 
   it('renders an apply failure inline instead of in a modal', async () => {
@@ -283,7 +355,9 @@ describe('WeatherPanel', () => {
     await screen.findByText('Staged: CAVOK');
     await user.click(screen.getByRole('button', { name: 'Apply weather' }));
 
-    expect(await screen.findByText(/does not declare can_set_weather/i)).toBeInTheDocument();
+    expect(
+      await screen.findByText(/does not declare can_set_weather/i),
+    ).toBeInTheDocument();
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
     // Staging survives a failed apply — nothing was cleared.
     expect(screen.getByText('Staged: CAVOK')).toBeInTheDocument();
@@ -322,7 +396,7 @@ describe('WeatherPanel', () => {
     );
   });
 
-  it('shows today\'s actual weather in the editors before anything is staged', async () => {
+  it("shows today's actual weather in the editors before anything is staged", async () => {
     stubApi();
     renderPanel();
     await waitFor(() => {
@@ -390,5 +464,120 @@ describe('WeatherPanel', () => {
       screen.getByText('No changes yet — edit a field to apply.'),
     ).toBeInTheDocument();
     expect(calls.some((call) => call.url.includes('/weather/apply'))).toBe(false);
+  });
+
+  it('permits a blank field while typing and blocks Apply until it is corrected', async () => {
+    stubApi();
+    const store = renderPanel();
+    const qnh = await screen.findByLabelText('QNH (hPa)');
+    fireEvent.change(qnh, { target: { value: '' } });
+
+    expect(qnh).toHaveValue(null);
+    expect(qnh).toHaveAttribute('aria-invalid', 'true');
+    expect(await screen.findByRole('button', { name: 'Apply weather' })).toBeDisabled();
+    expect(calls.some((call) => call.url.includes('/weather/apply'))).toBe(false);
+    expect(calls.some((call) => call.url.includes('/weather/preview'))).toBe(false);
+
+    fireEvent.change(qnh, { target: { value: '1007.5' } });
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Apply weather' })).toBeEnabled(),
+    );
+    expect(store.getState().weather.overrides.qnh_hpa).toBe(1007.5);
+  });
+
+  it('discards invalid and valid edits without writing, including the local blank draft', async () => {
+    const user = userEvent.setup();
+    stubApi();
+    const store = renderPanel();
+    fireEvent.change(await screen.findByLabelText('QNH (hPa)'), {
+      target: { value: '1005' },
+    });
+    fireEvent.change(screen.getByLabelText('Visibility (m)'), { target: { value: '' } });
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
+
+    expect(screen.getByLabelText('QNH (hPa)')).toHaveValue(1016);
+    expect(screen.getByLabelText('Visibility (m)')).toHaveValue(10000);
+    expect(store.getState().weather.staged).toBe(false);
+    expect(calls.filter((call) => call.method !== 'GET')).toEqual([]);
+  });
+
+  it('refreshes actual conditions while keeping pending overrides and blank fields', async () => {
+    const user = userEvent.setup();
+    stubApi({ refreshed: { ...CURRENT, qnh_hpa: 1020, visibility_m: 25000 } });
+    const store = renderPanel();
+    fireEvent.change(await screen.findByLabelText('QNH (hPa)'), {
+      target: { value: '1005' },
+    });
+    fireEvent.change(screen.getByLabelText('Temperature (°C)'), {
+      target: { value: '' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Refresh weather' }));
+
+    await waitFor(() =>
+      expect(screen.getByLabelText('Visibility (m)')).toHaveValue(25000),
+    );
+    expect(screen.getByLabelText('QNH (hPa)')).toHaveValue(1005);
+    expect(screen.getByLabelText('Temperature (°C)')).toHaveValue(null);
+    expect(screen.getByRole('button', { name: 'Apply weather' })).toBeDisabled();
+    expect(store.getState().weather.overrides).toEqual({ qnh_hpa: 1005 });
+    expect(calls.some((call) => call.method !== 'GET')).toBe(false);
+  });
+
+  it('blocks contradictory temperature and dewpoint instead of displaying a silent clamp', async () => {
+    stubApi();
+    renderPanel();
+    fireEvent.change(await screen.findByLabelText('Temperature (°C)'), {
+      target: { value: '5' },
+    });
+
+    expect(screen.getByLabelText('Dewpoint (°C)')).toHaveValue(7);
+    expect(await screen.findByRole('button', { name: 'Apply weather' })).toBeDisabled();
+    expect(screen.getByText(/Dewpoint must not exceed temperature/)).toBeInTheDocument();
+    expect(calls.some((call) => call.url.includes('/weather/apply'))).toBe(false);
+  });
+
+  it('shows structured 422 errors, keeps the draft and reads actual state after partial failure', async () => {
+    const user = userEvent.setup();
+    stubApi({
+      applyStatus: 422,
+      applyDetail: [
+        { loc: ['body', 'setup', 'qnh_hpa'], msg: 'Pressure rejected by simulator.' },
+      ],
+      refreshed: { ...CURRENT, visibility_m: 1234 },
+    });
+    const store = renderPanel();
+    fireEvent.change(await screen.findByLabelText('QNH (hPa)'), {
+      target: { value: '1005' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Apply weather' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'setup.qnh_hpa: Pressure rejected by simulator.',
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText('Visibility (m)')).toHaveValue(1234),
+    );
+    expect(store.getState().weather.overrides).toEqual({ qnh_hpa: 1005 });
+    expect(screen.getByLabelText('QNH (hPa)')).toHaveValue(1005);
+    expect(screen.getByRole('button', { name: 'Apply weather' })).toBeEnabled();
+  });
+
+  it('retains the draft after a disconnected apply and refreshes actual weather', async () => {
+    const user = userEvent.setup();
+    stubApi({ disconnected: true, refreshed: { ...CURRENT, visibility_m: 8000 } });
+    const store = renderPanel();
+    fireEvent.change(await screen.findByLabelText('QNH (hPa)'), {
+      target: { value: '1005' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Apply weather' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'The weather could not be applied.',
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText('Visibility (m)')).toHaveValue(8000),
+    );
+    expect(store.getState().weather.staged).toBe(true);
+    expect(screen.getByLabelText('QNH (hPa)')).toHaveValue(1005);
   });
 });

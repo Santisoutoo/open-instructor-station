@@ -57,8 +57,10 @@ export function WeatherStagingBar({
   const label = presetLabel === undefined ? 'Manual weather' : `Staged: ${presetLabel}`;
 
   return (
-    <section className="weather-staging" aria-label="Staged weather">
-      <p className="weather-staging__label">{label}</p>
+    <section className="weather-staging" aria-label="Staged weather" aria-busy={applying}>
+      <p className="weather-staging__label" aria-live="polite">
+        {applying ? 'Applying weather…' : label}
+      </p>
       <dl className="weather-staging__values">
         {values.map((entry) => (
           <div className="weather-staging__item" key={entry.label}>
@@ -67,8 +69,16 @@ export function WeatherStagingBar({
           </div>
         ))}
       </dl>
-      {errorText !== null && <p className="panel__error">{errorText}</p>}
-      {disabledReason !== null && <p className="panel__empty">{disabledReason}</p>}
+      {errorText !== null && (
+        <p className="panel__error" role="alert">
+          {errorText}
+        </p>
+      )}
+      {disabledReason !== null && (
+        <p className="panel__empty" aria-live="polite">
+          {disabledReason}
+        </p>
+      )}
       <div className="weather-staging__actions">
         <button
           type="button"
@@ -76,7 +86,7 @@ export function WeatherStagingBar({
           disabled={applying}
           onClick={onDismiss}
         >
-          Clear
+          Discard
         </button>
         <button
           type="button"

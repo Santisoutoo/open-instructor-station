@@ -13,7 +13,12 @@
  * `core.weather.presets.resolve_request`, which needs navdata this module never has.
  */
 
-import type { WeatherPresetId, WeatherRequest, WeatherSetup, WeatherState } from '../../api/models';
+import type {
+  WeatherPresetId,
+  WeatherRequest,
+  WeatherSetup,
+  WeatherState,
+} from '../../api/models';
 
 /** The request `preview`/`apply` share: a preset, the instructor's overlay, and the runway context. */
 export function buildWeatherRequest(
@@ -34,13 +39,15 @@ export function buildWeatherRequest(
  * What the staged weather would look like once applied: the current weather with every field
  * the resolved setup actually touched replacing it, everything else unchanged.
  *
- * Dewpoint is re-clamped to temperature after the merge — the same invariant
- * `core.weather.models.WeatherState` enforces server-side, needed here because the two can
- * arrive from different sources (a current dewpoint next to a newly staged, lower temperature).
+ * Preserve the actual draft values, including an inconsistent dewpoint, so validation
+ * can block the instruction instead of displaying a value different from the request.
  */
-export function mergeForDisplay(current: WeatherState, setup: WeatherSetup): WeatherState {
+export function mergeForDisplay(
+  current: WeatherState,
+  setup: WeatherSetup,
+): WeatherState {
   const temperature_c = setup.temperature_c ?? current.temperature_c;
-  const dewpoint_c = Math.min(setup.dewpoint_c ?? current.dewpoint_c, temperature_c);
+  const dewpoint_c = setup.dewpoint_c ?? current.dewpoint_c;
   return {
     wind_layers: setup.wind_layers ?? current.wind_layers,
     cloud_layers: setup.cloud_layers ?? current.cloud_layers,
