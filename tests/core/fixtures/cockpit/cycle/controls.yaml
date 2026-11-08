@@ -1,0 +1,19 @@
+controls:
+  - control_id: a
+    label: A
+    panel_id: p
+    kind: toggle
+    verified_on: 2026-09-02
+    preconditions:
+      - any_of: [{control_id: b, equals: true}]
+        hint: "needs b"
+    binding: {press: fake/a/press, read: fake/a/status}
+  - control_id: b
+    label: B
+    panel_id: p
+    kind: toggle
+    verified_on: 2026-09-02
+    preconditions:
+      - any_of: [{control_id: a, equals: true}]
+        hint: "needs a"
+    binding: {press: fake/b/press, read: fake/b/status}

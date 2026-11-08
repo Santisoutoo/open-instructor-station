@@ -1,0 +1,12 @@
+# Broken fixture: the directory name and aircraft.catalog_id disagree
+# (§8.1's "id-mismatch/" case: "directory foo, catalog id bar" — here,
+# directory "id-mismatch", catalog_id "not-id-mismatch").
+aircraft:
+  catalog_id: not-id-mismatch
+  label: Mismatch fixture
+detect:
+  dataref_exists: fake/mismatch/present
+panels:
+  - panel_id: p
+    label: P
+    order: 0

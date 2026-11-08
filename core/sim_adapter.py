@@ -14,12 +14,18 @@ Adding a feature to the station means adding a capability flag *and* a case to
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict
 
 from core.camera.models import CameraOffset, CameraSupportManifest, CameraViewId
+from core.cockpit.models import (
+    CockpitActuation,
+    CockpitActuationResult,
+    CockpitCatalog,
+    CockpitStateSnapshot,
+)
 from core.failures import ActiveFailure, FailureRef, FailureSupportManifest
 from core.models import AircraftSetup, AircraftState, AirframeInfo, GeoPosition, LoadoutState
 from core.pushback import PushbackRequest
@@ -66,6 +72,13 @@ class Capabilities(BaseModel):
     can_set_fuel_payload: bool = False
     can_control_camera: bool = False
     can_pushback: bool = False
+    #: The adapter carries the per-aircraft cockpit control catalog machinery
+    #: (docs/designs/cockpit-control-catalog.md D1): it can detect a catalogued
+    #: aircraft, read control states back and actuate controls by kind. A STATIC
+    #: declaration — which catalog (if any) is active for the loaded aircraft is
+    #: manifest state on get_cockpit_catalog(), never this flag: an aircraft swap
+    #: mid-session bumps the manifest's revision and leaves this untouched.
+    can_control_cockpit: bool = False
 
 
 class CapabilityNotSupported(RuntimeError):
@@ -357,6 +370,60 @@ class SimAdapter(Protocol):
     async def clear_all_traffic(self) -> None:
         """Despawn every entity this adapter is tracking. Idempotent.
         Requires can_spawn_traffic.
+        """
+        ...
+
+    async def get_cockpit_catalog(self) -> CockpitCatalog:
+        """The active per-aircraft control catalog, binding-free. A capability-free
+        read (the get_failure_support posture): an adapter without
+        can_control_cockpit answers supported=False with a reason and empty lists;
+        one WITH the flag but no catalog for the loaded aircraft answers
+        aircraft=None with a reason. "No" is an answer, never an exception.
+        Runs the adapter's aircraft-change check first (D7), so the answer is for
+        the aircraft loaded NOW.
+        """
+        ...
+
+    async def refresh_cockpit_catalog(self) -> CockpitCatalog:
+        """Force re-detection: re-probe, drop every cached binding id, bump the
+        revision even when the same catalog is detected again. Idempotent.
+        Requires can_control_cockpit.
+        """
+        ...
+
+    async def read_cockpit_states(
+        self, control_ids: Sequence[str] | None = None
+    ) -> CockpitStateSnapshot:
+        """Confirmed values of the readable controls named — or of every readable
+        control when None — read from the simulator now, never from a ledger of
+        what was asked for (the get_active_failures lesson). A control that is not
+        readable, or whose read fails, reports value=None rather than raising.
+        Raises CockpitControlUnknown for an id outside the active catalog. With no
+        active catalog returns catalog_id=None and no states. Requires
+        can_control_cockpit.
+        """
+        ...
+
+    async def actuate_cockpit_control(self, actuation: CockpitActuation) -> CockpitActuationResult:
+        """One actuation, by kind (D2), CONFIRMED by read-back before returning (D8):
+
+        * toggle  — read the status first; press only if it disagrees with the
+                    requested bool (research §1: these are edges, not sets);
+                    read back; actions_taken is 0 or 1.
+        * press   — fire once; actions_taken 1; state.value None.
+        * dial    — write, wait settle_s, read the designated read binding back
+                    within readback_tolerance.
+        * encoder — fire inc/dec |delta| times; read back when readable.
+        * selector — write the value, or step inc/dec towards it (bounded by the
+                    option count, never wrapping), reading back after each step.
+
+        Preconditions (D9) are evaluated against a fresh read of the referenced
+        controls immediately before acting; unmet → CockpitPreconditionUnmet,
+        nothing written. Raises CockpitCatalogInactive with no active catalog,
+        CockpitControlUnknown for an unknown/parked id, ValueError for a kind/
+        value mismatch (core.cockpit.actuation.validate_actuation), and
+        CockpitWriteRejected when the read-back disagrees after the adapter's
+        retry window. Requires can_control_cockpit.
         """
         ...
 

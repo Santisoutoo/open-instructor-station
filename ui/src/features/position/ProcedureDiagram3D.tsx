@@ -39,6 +39,7 @@ import {
   VERTICAL_EXAGGERATION,
   buildProcedureScene,
   buildRunwayQuad,
+  duplicateLabelSequences,
   groundPlaneFootprint,
   type ProcedureLayout,
   type ProcedureScene,
@@ -393,6 +394,9 @@ function ProcedureSceneContent({
   const compressedSegments = scene.segments.filter(
     (entry) => entry.segment.scale === 'compressed',
   );
+  // Labels only — markers and hit-spheres below render for every node regardless (#199).
+  // Unmemoized on purpose, matching this component's existing buildProcedureScene style.
+  const suppressedLabels = duplicateLabelSequences(scene.nodes, scene.extents.radiusNm);
 
   return (
     <group name="procdiagram3d-scene">
@@ -420,7 +424,9 @@ function ProcedureSceneContent({
             onSelect={onSelectLeg}
             onHoverChange={onHoverChange}
           />
-          <NodeLabel sceneNode={sceneNode} />
+          {!suppressedLabels.has(sceneNode.node.sequence) && (
+            <NodeLabel sceneNode={sceneNode} />
+          )}
         </group>
       ))}
       {compressedSegments.map((sceneSegment) => (

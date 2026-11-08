@@ -1,10 +1,10 @@
 /**
- * The 720×520 circuit diagram. Pure props → SVG, no store access.
+ * The 720×520 circuit diagram. Pure props → SVG + HTML overlay, no store access.
  *
  * The runway, centreline, ticks and downwind/base legs are drawn **unrotated**, in local
  * coordinates (`place(u, v, 0)`), inside one `<g transform="rotate(courseDeg CX CY)">` —
  * exactly like the source: the group's rotation is what orients the picture, not the maths.
- * The wind arrow rotates around its own anchor, outside that group; the north arrow never
+ * The wind arrow rotates around its own anchor, outside that group; the north tick mark never
  * rotates at all.
  *
  * Every marker dot is drawn twice: once as an SVG circle (visual, `aria-hidden`) inside the
@@ -14,18 +14,22 @@
  * button is what carries the click handler, the accessible name and the ≥44 px touch target
  * CLAUDE.md asks for; the SVG circle is what carries the visual ring and glow.
  *
- * **The buttons are positioned in percentages of the container, never in viewBox pixels.**
- * The SVG scales down (`.pos-circuit` is `width: 720px; max-width: 100%`), so on any viewport
- * narrower than 720 px of diagram — every tablet — a button placed at a raw viewBox
- * coordinate drifts away from the dot it is supposed to be over: at 1024 px the drawing is at
- * ~0.71 and the furthest marker's hit target sits ~88 px from its circle. `.pos-circuit` is
- * the positioning context and the SVG preserves its aspect ratio, so a percentage tracks the
- * scale for free.
+ * **Every text label — marker names, the wind readout, "N" — is an HTML overlay element, not
+ * SVG `<text>`, positioned in percentages exactly like the buttons above.** This was proven
+ * necessary, not stylistic: `.pos-circuit`'s box can legitimately shrink well below 720×520
+ * (e.g. a 1366×768 laptop screen, whose header/runway-strip/tabs/bottom-bar chrome can leave
+ * `.pos-main` under 300 px tall), and SVG `font-size` is a *user unit* — it is scaled down by
+ * the same viewBox→box transform as the geometry, so a label that reads fine at 720 px wide
+ * renders at a few physical pixels once the box is squeezed, however large its CSS `font-size`
+ * says. Measured live at 1366×768: a `font-size: 14px` SVG label painted at an **8 px** actual
+ * bounding-box height. Moving labels outside the SVG entirely decouples their legibility from
+ * how small the diagram itself is ever forced to become — `clamp()` on `vw` (viewport width,
+ * not the diagram's own box) is what requirement 5 asked for in the first place.
  */
 
 import { CX, CY, centrelineTicks, place, windArrowRotation } from './circuit';
-import { CIRCUIT_MARKERS, labelPlacement } from './markers';
-import { MARKER_IDS, type MarkerId } from './positionDesignSlice';
+import { CIRCUIT_MARKERS, DRAWN_MARKER_IDS, labelPlacement } from './markers';
+import type { MarkerId } from './positionDesignSlice';
 
 /**
  * The extended centreline's far end, in NM before the threshold.
@@ -42,21 +46,12 @@ const VIEWBOX_H = 520;
 const WIND_ANCHOR = { x: 664, y: 74 };
 const NORTH_ANCHOR = { x: 46, y: 470 };
 
-function labelOffset(anchor: ReturnType<typeof labelPlacement>): {
-  dx: number;
-  dy: number;
-  textAnchor: 'start' | 'middle' | 'end';
-} {
-  switch (anchor) {
-    case 'left':
-      return { dx: -12, dy: 4, textAnchor: 'end' };
-    case 'right':
-      return { dx: 12, dy: 4, textAnchor: 'start' };
-    case 'above':
-      return { dx: 0, dy: -12, textAnchor: 'middle' };
-    case 'below':
-      return { dx: 0, dy: 18, textAnchor: 'middle' };
-  }
+/** A `left`/`top` percentage pair for an HTML overlay element, from a viewBox point. */
+function overlayPosition(p: { x: number; y: number }): { left: string; top: string } {
+  return {
+    left: `${String((p.x / VIEWBOX_W) * 100)}%`,
+    top: `${String((p.y / VIEWBOX_H) * 100)}%`,
+  };
 }
 
 export function CircuitDiagram({
@@ -135,7 +130,7 @@ export function CircuitDiagram({
             className="pos-circuit__threshold"
           />
 
-          {MARKER_IDS.map((id) => {
+          {DRAWN_MARKER_IDS.map((id) => {
             const marker = CIRCUIT_MARKERS[id];
             const p = place(marker.u, marker.v, 0);
             const selected = id === selectedMarker;
@@ -156,73 +151,77 @@ export function CircuitDiagram({
           })}
         </g>
 
-        {/*
-         * The labels are deliberately **not** inside the rotated `<g>` above: an SVG `<text>`
-         * glyph rotates 1:1 with its ancestor's `transform`, so a label drawn there would
-         * read upside down for any runway course past ~90°/270°. `place(u, v, courseDeg)`
-         * already bakes the rotation into the *position* — the same trick the marker
-         * `<button>`s below use — so the glyphs themselves stay upright.
-         */}
-        <g aria-hidden="true">
-          {MARKER_IDS.map((id) => {
-            const marker = CIRCUIT_MARKERS[id];
-            const p = place(marker.u, marker.v, courseDeg);
-            const offset = labelOffset(labelPlacement(id, courseDeg));
-            return (
-              <text
-                key={id}
-                x={p.x + offset.dx}
-                y={p.y + offset.dy}
-                textAnchor={offset.textAnchor}
-                className="pos-circuit__marker-label"
-              >
-                {marker.label}
-              </text>
-            );
-          })}
-        </g>
-
         {windRotation !== null && windDeg !== null && windKt !== null && (
-          <>
-            <g
-              transform={`rotate(${String(windRotation)} ${String(WIND_ANCHOR.x)} ${String(WIND_ANCHOR.y)})`}
-              className="pos-circuit__wind-arrow"
-            >
-              <line
-                x1={WIND_ANCHOR.x}
-                y1={WIND_ANCHOR.y - 22}
-                x2={WIND_ANCHOR.x}
-                y2={WIND_ANCHOR.y + 22}
-              />
-              <polygon
-                points={`${String(WIND_ANCHOR.x - 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x + 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x)},${String(WIND_ANCHOR.y - 24)}`}
-              />
-            </g>
-            <text
-              x={WIND_ANCHOR.x}
-              y={WIND_ANCHOR.y + 40}
-              textAnchor="middle"
-              className="pos-circuit__wind-label"
-            >
-              {String(Math.round(windDeg)).padStart(3, '0')}°/{Math.round(windKt)} kt
-            </text>
-          </>
+          <g
+            transform={`rotate(${String(windRotation)} ${String(WIND_ANCHOR.x)} ${String(WIND_ANCHOR.y)})`}
+            className="pos-circuit__wind-arrow"
+          >
+            <line
+              x1={WIND_ANCHOR.x}
+              y1={WIND_ANCHOR.y - 22}
+              x2={WIND_ANCHOR.x}
+              y2={WIND_ANCHOR.y + 22}
+            />
+            <polygon
+              points={`${String(WIND_ANCHOR.x - 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x + 6)},${String(WIND_ANCHOR.y - 14)} ${String(WIND_ANCHOR.x)},${String(WIND_ANCHOR.y - 24)}`}
+            />
+          </g>
         )}
 
-        <g className="pos-circuit__north">
-          <line
-            x1={NORTH_ANCHOR.x}
-            y1={NORTH_ANCHOR.y}
-            x2={NORTH_ANCHOR.x}
-            y2={NORTH_ANCHOR.y - 24}
-          />
-          <text x={NORTH_ANCHOR.x} y={NORTH_ANCHOR.y + 14} textAnchor="middle">
-            N
-          </text>
-        </g>
+        <line
+          x1={NORTH_ANCHOR.x}
+          y1={NORTH_ANCHOR.y}
+          x2={NORTH_ANCHOR.x}
+          y2={NORTH_ANCHOR.y - 24}
+          className="pos-circuit__north"
+        />
       </svg>
 
-      {MARKER_IDS.map((id: MarkerId) => {
+      {/*
+       * Every label below is an HTML overlay (see the module docstring for why), positioned
+       * exactly like the marker buttons: a percentage of `.pos-circuit`, from the same
+       * `place(u, v, courseDeg)` point the corresponding SVG dot uses.
+       */}
+      {DRAWN_MARKER_IDS.map((id) => {
+        const marker = CIRCUIT_MARKERS[id];
+        const p = place(marker.u, marker.v, courseDeg);
+        const anchor = labelPlacement(id, courseDeg);
+        const selected = id === selectedMarker;
+        return (
+          <span
+            key={id}
+            aria-hidden="true"
+            className={
+              selected
+                ? `pos-circuit__marker-label pos-circuit__marker-label--${anchor} pos-circuit__marker-label--selected`
+                : `pos-circuit__marker-label pos-circuit__marker-label--${anchor}`
+            }
+            style={overlayPosition(p)}
+          >
+            {marker.label}
+          </span>
+        );
+      })}
+
+      {windDeg !== null && windKt !== null && (
+        <span
+          aria-hidden="true"
+          className="pos-circuit__wind-label"
+          style={overlayPosition({ x: WIND_ANCHOR.x, y: WIND_ANCHOR.y + 40 })}
+        >
+          {String(Math.round(windDeg)).padStart(3, '0')}°/{Math.round(windKt)} kt
+        </span>
+      )}
+
+      <span
+        aria-hidden="true"
+        className="pos-circuit__north-label"
+        style={overlayPosition({ x: NORTH_ANCHOR.x, y: NORTH_ANCHOR.y + 14 })}
+      >
+        N
+      </span>
+
+      {DRAWN_MARKER_IDS.map((id: MarkerId) => {
         const marker = CIRCUIT_MARKERS[id];
         const p = place(marker.u, marker.v, courseDeg);
         return (
@@ -230,10 +229,7 @@ export function CircuitDiagram({
             key={id}
             type="button"
             className="pos-circuit__marker-button"
-            style={{
-              left: `${String((p.x / VIEWBOX_W) * 100)}%`,
-              top: `${String((p.y / VIEWBOX_H) * 100)}%`,
-            }}
+            style={overlayPosition(p)}
             aria-pressed={id === selectedMarker}
             onClick={() => {
               onSelectMarker(id);

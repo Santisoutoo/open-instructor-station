@@ -1,0 +1,11 @@
+# Broken fixture: no aircraft.yaml at all (§8.1's "no-root/" case).
+#
+# `discover_catalog_dirs` never finds this directory — it only walks
+# subdirectories that DO contain aircraft.yaml — so this fixture is loaded
+# by calling `load_catalog_dir()` on it directly, never through discovery or
+# `load_all_catalogs()`. This file exists only so the directory is tracked
+# by git; its content is irrelevant to the failure under test.
+panels:
+  - panel_id: p
+    label: P
+    order: 0

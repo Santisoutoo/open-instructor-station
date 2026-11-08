@@ -264,6 +264,62 @@ export const NOMINAL_RUNWAY_WIDTH_M = 30;
  * `(0,1,2)/(0,2,3)` triangulation. All inputs are metres except `bearingDeg`; the returned
  * quad is in NM, this module's own unit.
  */
+/**
+ * Lateral (XZ) gate for label de-duplication (#199) — an *identity* test: "is this the same
+ * fix?" Absolute and tight: covers exact zero (an arrival leg followed by an `HM` hold at the
+ * same fix lands both `LayoutNode`s at identical coordinates) plus chain-walk loop-closure
+ * error for a non-consecutive revisit (order 0.01–0.03 NM), while staying far below
+ * `NOMINAL_LEG_NM` (2.0) and any real inter-fix spacing.
+ */
+export const LABEL_COINCIDENT_XZ_NM = 0.05;
+
+/**
+ * Vertical gate for label de-duplication (#199), as a fraction of the scene's fit radius — a
+ * *collision* test: "would the label boxes overlap at the fitted camera?" Derivation: the
+ * fitted camera sits at `distance = radiusNm / sin(fov/2)`, so the frustum's visible height at
+ * the target is `2·distance·tan(fov/2) = 2·radiusNm/cos(25°) ≈ 2.2×radiusNm`; the label box is
+ * ~28 px of a 380 px canvas ≈ 7.4% of that ≈ 0.16×radiusNm; rounded down to 0.15.
+ * Radius-relative sizing follows `NODE_RADIUS_FRACTION`'s own precedent. A climb-in-hold
+ * 1,000 ft above the arriving leg is ≈ 0.82 NM of world-y — beyond the gate on any but the
+ * very largest layouts, so both of those labels live, correctly.
+ */
+export const LABEL_STACK_Y_FRACTION = 0.15;
+
+/**
+ * Sequences whose ident/altitude label must not render because an earlier node's label
+ * occupies (visually) the same spot — see #199. Markers/hit-spheres are never filtered.
+ *
+ * A node's label is suppressed iff an *earlier* node (layout order = sequence order) is within
+ * both gates: XZ distance < `LABEL_COINCIDENT_XZ_NM` AND |Δy| < `LABEL_STACK_Y_FRACTION ×
+ * radiusNm`. Keep-first: the earliest node at a spot always keeps its label — in the canonical
+ * arrival-then-hold case the survivor is the arriving leg, the positionable, operationally
+ * primary occurrence. O(n²) pairwise over `SceneNode.position` — n is tens at most; a keyed
+ * map would fight the epsilon for no gain.
+ */
+export function duplicateLabelSequences(
+  nodes: readonly SceneNode[],
+  radiusNm: number,
+): ReadonlySet<number> {
+  const yGateNm = LABEL_STACK_Y_FRACTION * radiusNm;
+  const suppressed = new Set<number>();
+  const earlier: Vec3[] = [];
+  for (const sceneNode of nodes) {
+    const [x, y, z] = sceneNode.position;
+    const covered = earlier.some(
+      ([ex, ey, ez]) =>
+        Math.hypot(x - ex, z - ez) < LABEL_COINCIDENT_XZ_NM &&
+        Math.abs(y - ey) < yGateNm,
+    );
+    if (covered) {
+      suppressed.add(sceneNode.node.sequence);
+    }
+    // Every earlier node counts as a potential cover, suppressed or not — keep-first policy,
+    // not cluster machinery.
+    earlier.push(sceneNode.position);
+  }
+  return suppressed;
+}
+
 export function buildRunwayQuad(
   runwayNodePosition: Vec3,
   bearingDeg: number,

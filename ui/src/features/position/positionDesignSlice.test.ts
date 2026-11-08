@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
+import { CIRCUIT_LEG_OPTIONS_NM } from './circuitDistances';
 import reducer, {
   airportLoaded,
+  airportMenuOpened,
   approachFilterSelected,
+  circuitDistanceSelected,
+  CIRCUIT_LEG_KINDS,
   configChanged,
   coordinateHandoffReceived,
   designTabSelected,
@@ -12,7 +16,6 @@ import reducer, {
   procedureFamilySelected,
   procedureLegSelected,
   procedureSelected,
-  screenMenuToggled,
   situationReset,
   startAtToggled,
   startRunwaySelected,
@@ -76,15 +79,19 @@ describe('coordinateHandoffReceived', () => {
   });
 });
 
-describe('screenMenuToggled / startAtToggled', () => {
+describe('airportMenuOpened / startAtToggled', () => {
   it('opening one popover closes the other', () => {
-    const menuOpen = reducer(undefined, screenMenuToggled());
-    expect(menuOpen.screenMenuOpen).toBe(true);
+    const menuOpen = reducer(undefined, airportMenuOpened());
+    expect(menuOpen.airportMenuOpen).toBe(true);
 
     const startAtOpen = reducer(menuOpen, startAtToggled('header'));
     expect(startAtOpen.startAtOpen).toBe(true);
     expect(startAtOpen.startAtAnchor).toBe('header');
-    expect(startAtOpen.screenMenuOpen).toBe(false);
+    expect(startAtOpen.airportMenuOpen).toBe(false);
+
+    const reopened = reducer(startAtOpen, airportMenuOpened());
+    expect(reopened.airportMenuOpen).toBe(true);
+    expect(reopened.startAtOpen).toBe(false);
   });
 
   it('the other trigger moves the open Start-at popover instead of closing it', () => {
@@ -188,6 +195,31 @@ describe('finalPlacementSelected', () => {
     expect(reducer(undefined, finalPlacementSelected('final_10nm')).finalPlacement).toBe(
       'final_10nm',
     );
+  });
+});
+
+describe('circuitDistanceSelected', () => {
+  it('touches one leg kind only', () => {
+    const state = reducer(
+      undefined,
+      circuitDistanceSelected({ kind: 'base', distanceNm: 10 }),
+    );
+    expect(state.circuitDistanceNm).toEqual({ downwind: 4, base: 10, vectors: 6 });
+  });
+
+  it('starts every leg on a chip its own selector actually offers', () => {
+    for (const kind of CIRCUIT_LEG_KINDS) {
+      expect(CIRCUIT_LEG_OPTIONS_NM[kind]).toContain(
+        initialPositionDesignState.circuitDistanceNm[kind],
+      );
+    }
+  });
+
+  it('is not cleared by loading another airport — it is the instructor’s own preference', () => {
+    let state = reducer(undefined, airportLoaded('LFMN'));
+    state = reducer(state, circuitDistanceSelected({ kind: 'vectors', distanceNm: 3 }));
+    state = reducer(state, airportLoaded('LEMD'));
+    expect(state.circuitDistanceNm.vectors).toBe(3);
   });
 });
 

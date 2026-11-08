@@ -922,6 +922,152 @@ from come from the same navdata row, but they travel different queries — if th
 diverge (a navdata refresh between calls), the texture shifts by the divergence; accepted,
 same staleness class as every other paired query in this panel.
 
+#### 4.7.4 Design — #199: duplicate billboard label at a fix visited twice
+
+Bug-fix addendum to §4.7.2's node labels (item 3). Found via live manual browser
+verification, not guessed: both labels' text exists correctly in the accessibility tree —
+this is purely a paint-order overlap, not a missing-data or state bug.
+
+**Root cause — three layers, each individually correct:**
+
+1. **The layout deliberately produces coincident nodes.** `core/procedure_layout.py` walks
+   the leg chain; two consecutive legs sharing a fix — canonically an arrival leg at a fix
+   followed by an `HM` hold at that same fix — produce a zero-length edge (its own
+   `_EPSILON_NM` comment names exactly this case: "a hold's entry and its own fix"), so
+   `_vector(θ, 0.0)` advances the walk by exactly `(0, 0)` and the two `LayoutNode`s land at
+   identical `x_nm`/`y_nm`. Their altitudes may match (equal cumulative distance ⇒ identical
+   interpolation) or differ slightly (each leg's own published altitude). The layout is
+   *right*: both legs are real, and the leg list must keep showing both.
+2. **`NodeLabel` renders unconditionally.** `ProcedureSceneContent` maps every `SceneNode`
+   to a `<Billboard>`-wrapped `<Html>` label with no awareness of coincident positions.
+3. **The contrast box occludes.** `.pos-procdiagram3d__label` carries an opaque background
+   (`rgba(10, 14, 20, 0.75)` — needed in general, per its own comment, to stay legible over
+   the OSM texture), and drei `<Html>` siblings paint in DOM order, so the later node's box
+   paints over the earlier node's text. With a small vertical offset between the two
+   (published hold altitude ≠ the arriving leg's), the later box covers the earlier label's
+   ident row while its altitude row peeks out — the reported artifact: an altitude with no
+   ident above it.
+
+Note the exact-coincidence sub-case is *not* the reported artifact: when positions are
+bit-identical the two labels have provably identical text (same fix ⇒ same ident via
+`_leg_ident`; equal cumulative distance ⇒ identical interpolated altitude), so the later box
+covers the earlier one perfectly and the user sees one normal-looking label. Any fix keyed on
+exact position equality therefore suppresses only the invisible case and leaves #199 unfixed.
+The 2D view is unaffected: its SVG `<text>` labels have no background box, so a repeat
+overprints translucently instead of occluding — no change there.
+
+**Decision: suppress the *label* of a repeat node; touch nothing else.** Markers
+(`ProcedureNode3D`) and hit-spheres render for every node exactly as today — the repeat leg
+stays visible as geometry and, where positionable, selectable. (In the canonical case it is
+not: `HM` is not in the positionable set `IF/TF/CF/DF/AF/RF`, so the suppressed node has no
+hit-sphere and no click ambiguity arises.) The suppressed leg's data stays fully surfaced in
+the leg list and the 2D view. Alternatives rejected:
+
+- *Merge/stack overlapping labels visually* — offsetting a label in world space lies about
+  the node's altitude at other zooms, needs screen-space collision machinery, and buys
+  nothing the leg list doesn't already provide. Out of scope for a targeted fix.
+- *De-dup by ident* — wrong in both directions: a fix revisited non-consecutively lands at
+  *different* drawn coordinates (the chain is walked, not projected — cumulative drawn
+  vectors don't close loops), so both labels are separated and needed; and a climb-in-hold
+  at the same fix with a large altitude delta is visibly separated under ×5 exaggeration and
+  carries different information.
+- *De-dup in `core/procedure_layout.py`* — the layout is correct and shared with the 2D
+  view and leg list, which need both nodes. This is a 3D-rendering concern; it belongs in
+  the 3D scene layer.
+
+**The predicate — two axes, deliberately asymmetric.** A node's label is suppressed iff an
+*earlier* node (layout order = sequence order) satisfies both:
+
+- **Lateral (XZ) distance < `LABEL_COINCIDENT_XZ_NM = 0.05`** — an *identity* test: "is
+  this the same fix?" Absolute and tight. Covers exact zero (the consecutive shared-fix
+  case above) plus chain-walk loop-closure error for a non-consecutive revisit (order
+  0.01–0.03 NM), while staying far below `NOMINAL_LEG_NM` (2.0) and any real inter-fix
+  spacing.
+- **Vertical |Δy| < `LABEL_STACK_Y_FRACTION × radiusNm`, `LABEL_STACK_Y_FRACTION = 0.15`**
+  — a *collision* test: "would the boxes overlap at the fitted camera?" Derivation: the
+  fitted camera sits at `distance = radiusNm / sin(fov/2)`, so the frustum's visible height
+  at the target is `2·distance·tan(fov/2) = 2·radiusNm/cos(25°) ≈ 2.2×radiusNm`; the label
+  box is ~28 px of a 380 px canvas ≈ 7.4% of that ≈ 0.16×radiusNm; round down to 0.15.
+  Radius-relative sizing follows `NODE_RADIUS_FRACTION`'s own precedent. A climb-in-hold
+  1,000 ft above the arriving leg is `1000/6076.12 × 5 ≈ 0.82` NM of world-y — beyond the
+  gate on any but the very largest layouts, so both labels live, correctly.
+
+**Keep-first** (earliest sequence wins): stable, and in the canonical case the survivor is
+the arriving leg — the positionable, operationally primary occurrence.
+
+**Implementation — two files:**
+
+1. `procedureScene.ts` — new exported pure helper (the codebase's pattern: geometry
+   decisions live here, unit-tested with real math, no stubs):
+
+   ```ts
+   export const LABEL_COINCIDENT_XZ_NM = 0.05;
+   export const LABEL_STACK_Y_FRACTION = 0.15;
+
+   /** Sequences whose ident/altitude label must not render because an earlier node's label
+    *  occupies (visually) the same spot — see #199. Markers/hit-spheres are never filtered. */
+   export function duplicateLabelSequences(
+     nodes: readonly SceneNode[],
+     radiusNm: number,
+   ): ReadonlySet<number>;
+   ```
+
+   O(n²) pairwise over `SceneNode.position` — n is tens at most; a keyed map fights the
+   epsilon for no gain. `buildProcedureScene`'s contract is untouched.
+
+2. `ProcedureDiagram3D.tsx` — in `ProcedureSceneContent`, compute once
+   (`duplicateLabelSequences(scene.nodes, scene.extents.radiusNm)` — no memo, matching the
+   component's existing unmemoized `buildProcedureScene` style) and gate the label inside
+   the **existing** per-node `.map` (§4.7.2's own "extend that loop, don't add a second
+   one"): `{!suppressed.has(sceneNode.node.sequence) && <NodeLabel sceneNode={sceneNode} />}`.
+
+No CSS change, no API/schema change, no `core/` change, no `SimAdapter`/`Capabilities`
+change, no new files.
+
+**Edge cases, answered:**
+
+- *Same ident, different altitude beyond the vertical gate* (climb-in-hold): two labels,
+  both kept — different information, visibly separated. Correct.
+- *Same ident revisited non-consecutively far apart*: drawn positions differ laterally
+  (chain walk), both kept at their own positions. Correct.
+- *Different idents at coincident positions* (pathological, unobserved in real navdata):
+  first wins — two opaque boxes on one spot can't both be legible regardless of policy.
+- *Suppressed node's data surfaced elsewhere*: its marker dot still renders (coincident
+  spheres read as one), and its full row remains in the leg list and the 2D view. Nothing
+  further needed.
+- *Selection/hover*: unfiltered; sequence-keyed as before.
+
+**Test plan** (this is jsdom — no WebGL, no pixels; the split follows the established
+pattern: pure math in `procedureScene.test.ts`, DOM chrome through the `threeStub` in
+`ProcedureDiagram3D.test.tsx`):
+
+- `procedureScene.test.ts`, `duplicateLabelSequences` directly:
+  (a) two consecutive nodes, identical x/y/altitude → later sequence suppressed;
+  (b) same x/y, Δaltitude inside the vertical gate → later suppressed;
+  (c) same x/y, Δaltitude well beyond the gate (e.g. 2,000 ft on a compact layout) → none;
+  (d) distinct fixes ~1 NM apart, same altitude → none;
+  (e) three-way coincidence → the two later sequences suppressed, first kept.
+- `ProcedureDiagram3D.test.tsx`, new fixture layout with a hold-repeat node (mirroring
+  `ProcedureDiagram.test.tsx`'s `HM HLD` fixture, but coincident with its arriving leg):
+  - `screen.getAllByText('<ident>')` has length 1;
+  - both nodes' visual marker meshes still exist (`procdiagram3d-node-<seq>` for both);
+  - the *first* node's altitude text is the one present (pins keep-first — the only case
+    where the DOM can distinguish the survivor is the small-Δalt one, so the fixture gives
+    the repeat a slightly different altitude inside the gate);
+  - a variant with the repeat's altitude beyond the gate renders both labels.
+  No stub changes needed — labels are already real DOM via the `Html`/`Billboard` stubs.
+  The existing `LAYOUT`'s nodes are all well-separated, so every current test is unaffected.
+- Post-merge: one live browser re-check of the original repro procedure (the same manual
+  verification that found the bug), since jsdom cannot assert paint order.
+
+**Parallelisation:** single track, two files, one branch (`bug/…`) — nothing to split.
+
+**Open question (non-blocking):** the exact observed altitude delta in the repro procedure
+was not re-measured for this design; the artifact's geometry (partial occlusion requires a
+sub-box-height offset) is sufficient to fix against, and the live re-check above confirms.
+If a real procedure ever shows two *distinct* fixes inside 0.05 NM laterally, the lateral
+constant is the single knob to revisit.
+
 ---
 
 ## 5. Verification

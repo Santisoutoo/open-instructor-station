@@ -13,7 +13,7 @@ import { demoFeedToggled } from '../store/uiSlice';
 /**
  * The persistent strip along the bottom: the four numbers an instructor glances at
  * between actions, the demo-feed switch, and the sim link state. Always visible,
- * whatever module is open — the tab bar changes the workspace, never the situation.
+ * whatever module is open — the module menu changes the workspace, never the situation.
  */
 export function StatusBar() {
   const dispatch = useAppDispatch();
@@ -31,8 +31,9 @@ export function StatusBar() {
   const scenarioRun = useScenarioRunStatus();
   const scenarioName =
     scenarioRun !== null
-      ? (cachedManifest.data?.scenarios.find((scenario) => scenario.id === scenarioRun.scenario_id)
-          ?.name ?? formatScenarioId(scenarioRun.scenario_id))
+      ? (cachedManifest.data?.scenarios.find(
+          (scenario) => scenario.id === scenarioRun.scenario_id,
+        )?.name ?? formatScenarioId(scenarioRun.scenario_id))
       : null;
 
   const connected = connectionStatus === 'connected';

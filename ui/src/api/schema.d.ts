@@ -1306,6 +1306,86 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/cockpit/catalog": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Catalog
+         * @description The active catalog for the loaded aircraft. Always 200 (D1).
+         */
+        get: operations["get_catalog_api_cockpit_catalog_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cockpit/catalog/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Catalog
+         * @description Force re-detection and drop every cached binding id. Idempotent.
+         */
+        post: operations["refresh_catalog_api_cockpit_catalog_refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cockpit/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get State
+         * @description Confirmed values of the readable controls, optionally scoped to one panel.
+         */
+        get: operations["get_state_api_cockpit_state_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/cockpit/actuate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Actuate
+         * @description One actuation, confirmed by read-back.
+         */
+        post: operations["actuate_api_cockpit_actuate_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -2070,6 +2150,11 @@ export interface components {
              * @default false
              */
             can_pushback: boolean;
+            /**
+             * Can Control Cockpit
+             * @default false
+             */
+            can_control_cockpit: boolean;
         };
         /**
          * CgEnvelope
@@ -2139,6 +2224,222 @@ export interface components {
              * @enum {string}
              */
             cloud_type: "cirrus" | "stratus" | "cumulus" | "cumulonimbus";
+        };
+        /**
+         * CockpitActuation
+         * @description One instructor intent. ``value`` for toggle/dial/selector, ``delta`` for encoder,
+         *     neither for press.
+         */
+        CockpitActuation: {
+            /** Control Id */
+            control_id: string;
+            /** Value */
+            value?: boolean | number | string | null;
+            /**
+             * Delta
+             * @description Signed click count for an encoder.
+             */
+            delta?: number | null;
+        };
+        /**
+         * CockpitActuationResult
+         * @description The outcome of one actuation, confirmed by read-back (D8).
+         */
+        CockpitActuationResult: {
+            requested: components["schemas"]["CockpitActuation"];
+            /** @description The CONFIRMED state read back after the write. value=None only for press, or an encoder without a read binding. */
+            state: components["schemas"]["CockpitControlState"];
+            /**
+             * Actions Taken
+             * @description Presses/writes performed. 0 means the control was already in the requested state — the guarded-toggle rule made visible.
+             */
+            actions_taken: number;
+            /** Catalog Id */
+            catalog_id: string;
+            /** Revision */
+            revision: number;
+        };
+        /**
+         * CockpitAircraft
+         * @description One catalog's identity.
+         */
+        CockpitAircraft: {
+            /** Catalog Id */
+            catalog_id: string;
+            /** Label */
+            label: string;
+            /**
+             * Path Hints
+             * @description Substrings of the sim's aircraft path that suggest this aircraft is loaded. NEVER used for detection — only so a live test can fail loudly when the aircraft looks loaded but the probe is negative, and for the manifest's detection note.
+             */
+            path_hints?: string[];
+            /** Verified Against */
+            verified_against?: string | null;
+        };
+        /**
+         * CockpitCatalogManifest
+         * @description The REST shape: the catalog plus the adapter's name (the CameraManifest precedent).
+         */
+        CockpitCatalogManifest: {
+            /**
+             * Supported
+             * @description The adapter declares can_control_cockpit.
+             */
+            supported: boolean;
+            /**
+             * Reason
+             * @description Why nothing is actuable: no flag, or no catalog detected for the loaded aircraft. None when `aircraft` is set.
+             */
+            reason: string | null;
+            aircraft: components["schemas"]["CockpitAircraft"] | null;
+            /**
+             * Revision
+             * @description Bumped on every (re)detection. 0 before any detection.
+             */
+            revision: number;
+            /**
+             * Detection Note
+             * @description Human text: what was probed and what the sim's aircraft path currently reads.
+             */
+            detection_note: string | null;
+            /** Panels */
+            panels: components["schemas"]["CockpitPanel"][];
+            /** Controls */
+            controls: components["schemas"]["CockpitControlSpec"][];
+            /** Parked */
+            parked: components["schemas"]["ParkedControl"][];
+            /** Adapter */
+            adapter: string;
+        };
+        /**
+         * CockpitControlSpec
+         * @description The PUBLISHED half of a control — what the server and UI see. No binding (D3).
+         */
+        CockpitControlSpec: {
+            /** Control Id */
+            control_id: string;
+            /** Label */
+            label: string;
+            /** Panel Id */
+            panel_id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "toggle" | "press" | "dial" | "encoder" | "selector";
+            /** Hint */
+            hint?: string | null;
+            /** Preconditions */
+            preconditions?: components["schemas"]["PreconditionGroup"][];
+            /**
+             * Readable
+             * @description True when the adapter can report this control's state. Derived from the binding at load time: always True for toggle/dial/selector, False for press, binding-dependent for encoder.
+             */
+            readable: boolean;
+            /**
+             * On Label
+             * @default On
+             */
+            on_label: string;
+            /**
+             * Off Label
+             * @default Off
+             */
+            off_label: string;
+            /** Unit */
+            unit?: ("ft" | "kt" | "mach" | "deg" | "fpm" | "ratio" | "count" | "khz" | "mhz" | "psi" | "units") | null;
+            /** Min Value */
+            min_value?: number | null;
+            /** Max Value */
+            max_value?: number | null;
+            /**
+             * Step
+             * @description Dial: the UI stepper increment (NOT enforced on writes — X-Plane accepts any value; the sim rounds if it wants to). Encoder: the value change one click produces, in `unit`, for display.
+             */
+            step?: number | null;
+            /**
+             * Readback Tolerance
+             * @description Dial: |read_back - written| allowed, in `unit`.
+             * @default 0
+             */
+            readback_tolerance: number;
+            /**
+             * Max Delta
+             * @description Largest |delta| one actuation may request.
+             */
+            max_delta?: number | null;
+            /** Options */
+            options?: components["schemas"]["SelectorOption"][] | null;
+            /**
+             * Verified On
+             * Format: date
+             * @description Date the entry was read-back confirmed on a live sim.
+             */
+            verified_on: string;
+            /**
+             * Live Sweep
+             * @description False when the generic live sweep must not flip this control (battery off, start levers, TO/GA). Requires live_sweep_note.
+             * @default true
+             */
+            live_sweep: boolean;
+            /** Live Sweep Note */
+            live_sweep_note?: string | null;
+        };
+        /**
+         * CockpitControlState
+         * @description One control's confirmed state.
+         */
+        CockpitControlState: {
+            /** Control Id */
+            control_id: string;
+            /**
+             * Value
+             * @description None for a control that is not readable, or whose read failed — 'unknown' is an answer.
+             */
+            value: boolean | number | string | null;
+        };
+        /**
+         * CockpitPanel
+         * @description One group in the panel picker. Catalog-defined — different aircraft, different panels.
+         */
+        CockpitPanel: {
+            /** Panel Id */
+            panel_id: string;
+            /** Label */
+            label: string;
+            /**
+             * Order
+             * @description Display order, ascending.
+             */
+            order: number;
+        };
+        /**
+         * CockpitStateSnapshot
+         * @description ``GET /api/cockpit/state`` — confirmed values of the readable controls asked for.
+         */
+        CockpitStateSnapshot: {
+            /**
+             * Catalog Id
+             * @description None when no catalog is active.
+             */
+            catalog_id: string | null;
+            /** Revision */
+            revision: number;
+            /** States */
+            states: components["schemas"]["CockpitControlState"][];
+        };
+        /**
+         * ControlCondition
+         * @description One member of a :class:`PreconditionGroup`'s ``any_of``.
+         */
+        ControlCondition: {
+            /** Control Id */
+            control_id: string;
+            /**
+             * Equals
+             * @description The state the referenced control must be in.
+             */
+            equals: boolean | number | string;
         };
         /**
          * CoordinatePlacementRequest
@@ -2974,6 +3275,25 @@ export interface components {
             progress?: components["schemas"]["IndexProgress"] | null;
         };
         /**
+         * ParkedControl
+         * @description Exists on the aircraft, has no verified mapping (D10). Rendered disabled with the reason.
+         */
+        ParkedControl: {
+            /** Control Id */
+            control_id: string;
+            /** Label */
+            label: string;
+            /** Panel Id */
+            panel_id: string;
+            /** Reason */
+            reason: string;
+            /**
+             * Since
+             * Format: date
+             */
+            since: string;
+        };
+        /**
          * ParkingPlacementRequest
          * @description A gate, stand, tie-down or hangar position.
          *
@@ -3164,6 +3484,19 @@ export interface components {
              * @default []
              */
             points: components["schemas"]["SchematicPoint"][];
+        };
+        /**
+         * PreconditionGroup
+         * @description Satisfied when ANY condition holds. A control's list of groups must ALL hold (D9).
+         */
+        PreconditionGroup: {
+            /** Any Of */
+            any_of: components["schemas"]["ControlCondition"][];
+            /**
+             * Hint
+             * @description Shown to the instructor when the group is unmet.
+             */
+            hint: string;
         };
         /**
          * Procedure
@@ -4007,6 +4340,19 @@ export interface components {
              * @enum {string}
              */
             role: "threshold" | "runway_end" | "placement" | "glidepath" | "leg" | "fix";
+        };
+        /**
+         * SelectorOption
+         * @description One position of a ``selector`` control.
+         */
+        SelectorOption: {
+            /**
+             * Value
+             * @description The value the read binding reports / the write binding takes.
+             */
+            value: number | string;
+            /** Label */
+            label: string;
         };
         /**
          * SpeedAboveTrigger
@@ -6429,6 +6775,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["TrafficStatus"];
+                };
+            };
+        };
+    };
+    get_catalog_api_cockpit_catalog_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CockpitCatalogManifest"];
+                };
+            };
+        };
+    };
+    refresh_catalog_api_cockpit_catalog_refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CockpitCatalogManifest"];
+                };
+            };
+        };
+    };
+    get_state_api_cockpit_state_get: {
+        parameters: {
+            query?: {
+                panel?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CockpitStateSnapshot"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    actuate_api_cockpit_actuate_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CockpitActuation"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CockpitActuationResult"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

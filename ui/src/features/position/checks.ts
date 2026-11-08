@@ -16,7 +16,7 @@
 import { formatAltitudeFt, formatDistanceNm, formatSpeedKt } from './format';
 import type { FinalPlacementName } from './finals';
 import { markerDistanceNm } from './markers';
-import type { DesignTabId, MarkerId } from './positionDesignSlice';
+import type { CircuitLegKind, DesignTabId, MarkerId } from './positionDesignSlice';
 import { isAirborne, sustainableIasKt } from './speed';
 
 export type CheckDot = 'caution' | 'info' | 'accent';
@@ -52,6 +52,7 @@ export interface CheckInputs {
   readonly activeTab: DesignTabId;
   readonly marker: MarkerId;
   readonly finalPlacement: FinalPlacementName;
+  readonly circuitDistanceNm: Record<CircuitLegKind, number>;
   /** The gear as it will actually be applied — the merged setup, not the checkbox. */
   readonly gearDown: boolean | null;
   /** The speed as it will actually be applied. */
@@ -94,7 +95,7 @@ export function checks(inputs: CheckInputs): readonly Check[] {
   ) {
     result.push({
       dot: 'caution',
-      text: `Gear up ${formatDistanceNm(markerDistanceNm(inputs.marker, inputs.finalPlacement))} from the threshold`,
+      text: `Gear up ${formatDistanceNm(markerDistanceNm(inputs.marker, inputs.finalPlacement, inputs.circuitDistanceNm))} from the threshold`,
       note: 'Tick "Gear down" to spawn configured for landing',
     });
   }

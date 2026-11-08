@@ -14,7 +14,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CloudLayer, WeatherState, WindLayer } from '../../api/models';
 import { formatWind } from './format';
 import { altitudeToY } from './atmosphereProjection';
-import { AtmosphereProfile, type AtmosphereProfileProps, type AtmosphereSelection } from './AtmosphereProfile';
+import {
+  AtmosphereProfile,
+  type AtmosphereProfileProps,
+  type AtmosphereSelection,
+} from './AtmosphereProfile';
 
 function cloudLayer(overrides: Partial<CloudLayer> = {}): CloudLayer {
   return {
@@ -39,12 +43,32 @@ function windLayer(overrides: Partial<WindLayer> = {}): WindLayer {
 
 const FIXTURE_STATE: WeatherState = {
   wind_layers: [
-    windLayer({ altitude_ft: 2000, direction_deg: 270, speed_kt: 15, gust_increase_kt: 0 }),
-    windLayer({ altitude_ft: 6000, direction_deg: 300, speed_kt: 25, gust_increase_kt: 10 }),
+    windLayer({
+      altitude_ft: 2000,
+      direction_deg: 270,
+      speed_kt: 15,
+      gust_increase_kt: 0,
+    }),
+    windLayer({
+      altitude_ft: 6000,
+      direction_deg: 300,
+      speed_kt: 25,
+      gust_increase_kt: 10,
+    }),
   ],
   cloud_layers: [
-    cloudLayer({ base_ft: 3000, tops_ft: 5000, coverage_ratio: 0.75, cloud_type: 'cumulus' }),
-    cloudLayer({ base_ft: 7000, tops_ft: 8000, coverage_ratio: 1.0, cloud_type: 'stratus' }),
+    cloudLayer({
+      base_ft: 3000,
+      tops_ft: 5000,
+      coverage_ratio: 0.75,
+      cloud_type: 'cumulus',
+    }),
+    cloudLayer({
+      base_ft: 7000,
+      tops_ft: 8000,
+      coverage_ratio: 1.0,
+      cloud_type: 'stratus',
+    }),
   ],
   visibility_m: 10000,
   qnh_hpa: 1013,
@@ -295,5 +319,27 @@ describe('wind label text', () => {
       return;
     }
     expect(screen.getByText(formatWind(layer))).toBeInTheDocument();
+  });
+});
+
+describe('neighbor separation', () => {
+  it('clamps a dragged wind below the next layer and a cloud base above the previous base', () => {
+    const { onWindLayersChange, onCloudLayersChange } = renderProfile();
+    const wind = screen.getByRole('button', { name: /^Wind layer 1,/ });
+    fireEvent.pointerDown(wind, { clientY: 384, pointerId: 1 });
+    fireEvent.pointerMove(window, { clientY: 0, pointerId: 1 });
+    fireEvent.pointerUp(window, { pointerId: 1 });
+    expect(onWindLayersChange).toHaveBeenCalledWith([
+      { ...FIXTURE_STATE.wind_layers[0], altitude_ft: 5900 },
+      FIXTURE_STATE.wind_layers[1],
+    ]);
+    const base = screen.getByRole('button', { name: /^Cloud layer 2 base,/ });
+    fireEvent.pointerDown(base, { clientY: 144, pointerId: 2 });
+    fireEvent.pointerMove(window, { clientY: 480, pointerId: 2 });
+    fireEvent.pointerUp(window, { pointerId: 2 });
+    expect(onCloudLayersChange).toHaveBeenCalledWith([
+      FIXTURE_STATE.cloud_layers[0],
+      { ...FIXTURE_STATE.cloud_layers[1], base_ft: 3100 },
+    ]);
   });
 });

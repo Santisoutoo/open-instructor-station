@@ -42,13 +42,7 @@ describe('the configuration fields', () => {
     stubApi(positionRoutes());
     renderBar();
 
-    for (const label of [
-      'Gear down',
-      'Flaps',
-      'Override altitude',
-      'Course',
-      'ILS frequency',
-    ]) {
+    for (const label of ['Gear down', 'Flaps', 'Override altitude']) {
       expect(await screen.findByLabelText(label)).toBeInTheDocument();
     }
   });
@@ -146,16 +140,6 @@ describe('the configuration fields', () => {
     });
   });
 
-  it('says nothing about an ILS while the lookup is still in flight', () => {
-    // `useIls` is deliberately tri-state; collapsing it to `ils !== null` told the
-    // instructor an ILS runway had none for as long as the request took.
-    stubApi(positionRoutes());
-    renderBar();
-
-    expect(screen.getByLabelText(/ILS frequency/)).toBeDisabled();
-    expect(screen.queryByText('n/a')).not.toBeInTheDocument();
-  });
-
   it('shows the preview’s own speed and gear rather than a hard-coded default', async () => {
     stubApi(positionRoutes());
     renderBar();
@@ -188,28 +172,6 @@ describe('the configuration fields', () => {
     });
   });
 
-  it('disables Course and ILS frequency on a runway that publishes no ILS', async () => {
-    stubApi(positionRoutes());
-    renderBar({ positionDesign: designState({ selectedRunway: '22L' }) });
-
-    // "n/a" is the assertion that matters: `disabled` is also true while the lookup is in
-    // flight, so waiting on the text is what proves the 404 landed and was believed.
-    await waitFor(() => {
-      expect(screen.getAllByText('n/a')).toHaveLength(2);
-    });
-    expect(screen.getByLabelText(/ILS frequency/)).toBeDisabled();
-    expect(screen.getByLabelText(/Course/)).toBeDisabled();
-  });
-
-  it('enables them on a runway that does', async () => {
-    stubApi(positionRoutes());
-    renderBar();
-
-    await waitFor(() => {
-      expect(screen.getByLabelText(/ILS frequency/)).not.toBeDisabled();
-    });
-    expect(screen.queryByText('n/a')).not.toBeInTheDocument();
-  });
 });
 
 describe('the airborne speed gate', () => {
@@ -324,8 +286,8 @@ describe('staging onto the shared positionSlice', () => {
 
 describe('Set position', () => {
   it('posts the placement and only the fields the instructor changed', async () => {
-    // 22L publishes no ILS, so the two "sent with the position" switches add nothing and
-    // the body is the instructor's single edit. No switch has to be turned off to see it.
+    // 22L publishes no ILS, so course/ILS frequency (always sent, issue #229) add nothing
+    // and the body is the instructor's single edit.
     const { calls } = stubApi(positionRoutes());
     renderBar({
       positionDesign: designState({
@@ -401,12 +363,12 @@ describe('Set position', () => {
 });
 
 describe('the stand / gate picker (issue #166)', () => {
-  it('opens the Start-at popover above the bar, from the "Sent with the position" group', async () => {
+  it('opens the Start-at popover above the bar, from the Shortcuts group', async () => {
     stubApi(positionRoutes());
     const store = renderBar();
 
-    const trigger = screen.getByRole('button', { name: /^Pick stand \/ gate/ });
-    expect(trigger.closest('fieldset')?.textContent).toContain('Sent with the position');
+    const trigger = screen.getByRole('button', { name: 'Start at position' });
+    expect(trigger.closest('fieldset')?.textContent).toContain('Shortcuts');
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
 
     await userEvent.click(trigger);
@@ -418,23 +380,20 @@ describe('the stand / gate picker (issue #166)', () => {
     expect(store.getState().positionDesign.startAtAnchor).toBe('bottombar');
   });
 
-  it('picks a stand from the map and prints it on the trigger', async () => {
+  it('picks a stand from the map', async () => {
     stubApi(positionRoutes());
     const store = renderBar();
-    await userEvent.click(screen.getByRole('button', { name: /^Pick stand \/ gate/ }));
+    await userEvent.click(screen.getByRole('button', { name: 'Start at position' }));
 
     await userEvent.click(await screen.findByRole('button', { name: 'Stand A1' }));
 
     expect(store.getState().positionDesign.selectedStand).toBe('A1');
-    expect(
-      screen.getByRole('button', { name: /^Pick stand \/ gate/ }).textContent,
-    ).toContain('Stand A1');
   });
 
   it('Escape closes it and hands focus back to the bar’s own trigger', async () => {
     stubApi(positionRoutes());
     renderBar();
-    const trigger = screen.getByRole('button', { name: /^Pick stand \/ gate/ });
+    const trigger = screen.getByRole('button', { name: 'Start at position' });
     await userEvent.click(trigger);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
 
@@ -451,5 +410,18 @@ describe('the stand / gate picker (issue #166)', () => {
     });
 
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+});
+
+describe('the Aircraft-tab shortcut (issue #229)', () => {
+  it('jumps to the Aircraft tab', async () => {
+    stubApi(positionRoutes());
+    const store = renderBar();
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Open aircraft controls' }),
+    );
+
+    expect(store.getState().ui.activeTab).toBe('aircraft');
   });
 });

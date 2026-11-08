@@ -1,0 +1,8 @@
+controls:
+  - control_id: x
+    label: X
+    panel_id: p
+    kind: toggle
+    readable: true
+    verified_on: 2026-09-02
+    binding: {press: fake/x/press, read: fake/x/status}

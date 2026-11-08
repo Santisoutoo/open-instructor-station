@@ -1,0 +1,11 @@
+# Broken fixture: a control references a panel_id no panel declares
+# (§8.1's "bad-panel/" case).
+aircraft:
+  catalog_id: bad-panel
+  label: Bad panel fixture
+detect:
+  dataref_exists: fake/bad-panel/present
+panels:
+  - panel_id: mcp
+    label: MCP
+    order: 0

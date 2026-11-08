@@ -29,6 +29,7 @@ function capabilities(canControlCamera: boolean): Capabilities {
     can_set_fuel_payload: true,
     can_control_camera: canControlCamera,
     can_pushback: false,
+    can_control_cockpit: false,
   };
 }
 

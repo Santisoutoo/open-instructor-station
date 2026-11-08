@@ -20,6 +20,7 @@
 import { instructorApi } from '../../api/instructorApi';
 import type {
   WeatherApplyResult,
+  Airport,
   WeatherManifest,
   WeatherPreview,
   WeatherRequest,
@@ -28,6 +29,9 @@ import type {
 
 export const weatherApi = instructorApi.injectEndpoints({
   endpoints: (builder) => ({
+    getWeatherAirport: builder.query<Airport, string>({
+      query: (icao) => `navdata/airports/${icao}`,
+    }),
     getWeatherState: builder.query<WeatherState, void>({
       query: () => 'weather',
       // The cache *is* the applied weather; never let an unmounted panel expire it.
@@ -52,8 +56,14 @@ export const weatherApi = instructorApi.injectEndpoints({
             ),
           );
         } catch {
-          // A failed apply is rendered from the mutation's own error state
-          // (`WeatherPanel`'s `applyState.isError`); nothing to update here.
+          // Writes may have partially succeeded before rejection or disconnection.
+          // Keep the draft, but re-read the actual simulator state.
+          void dispatch(
+            weatherApi.endpoints.getWeatherState.initiate(undefined, {
+              subscribe: false,
+              forceRefetch: true,
+            }),
+          );
         }
       },
     }),
@@ -61,6 +71,7 @@ export const weatherApi = instructorApi.injectEndpoints({
 });
 
 export const {
+  useGetWeatherAirportQuery,
   useGetWeatherStateQuery,
   useGetWeatherManifestQuery,
   usePreviewWeatherQuery,

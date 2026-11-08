@@ -26,7 +26,7 @@ function renderHeader(preloadedState: Partial<RootState> = {}) {
   return store;
 }
 
-describe('the screen menu', () => {
+describe('the module menu', () => {
   it('lists every module tab', async () => {
     stubApi(positionRoutes());
     renderHeader();
@@ -46,6 +46,7 @@ describe('the screen menu', () => {
     await userEvent.click(screen.getByRole('menuitem', { name: 'Weather' }));
 
     expect(store.getState().ui.activeTab).toBe('weather');
+    expect(store.getState().ui.moduleMenuOpen).toBe(false);
   });
 });
 

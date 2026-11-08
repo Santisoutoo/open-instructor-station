@@ -61,7 +61,7 @@ describe('WeatherStagingBar', () => {
     const { onApply, onDismiss } = renderBar({ presetLabel: 'CAVOK' });
     await user.click(screen.getByRole('button', { name: 'Apply weather' }));
     expect(onApply).toHaveBeenCalledOnce();
-    await user.click(screen.getByRole('button', { name: 'Clear' }));
+    await user.click(screen.getByRole('button', { name: 'Discard' }));
     expect(onDismiss).toHaveBeenCalledOnce();
   });
 

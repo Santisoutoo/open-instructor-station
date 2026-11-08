@@ -1,18 +1,32 @@
 /**
  * `buildWeatherRequest` and `mergeForDisplay`: the two small pure functions between the
  * slice and the server. The interesting behaviour is what happens at the edges — no edits
- * must mean `setup: null`, never `setup: {}`, and the dewpoint invariant must hold across a
- * merge even when the current weather and the staged setup disagree about it.
+ * must mean `setup: null`, never `setup: {}`, and display must retain invalid draft values
+ * so validation can block the actual instruction instead of hiding it behind a clamp.
  */
 
 import { describe, expect, it } from 'vitest';
 import type { WeatherState } from '../../api/models';
-import { buildManualWeatherRequest, buildWeatherRequest, mergeForDisplay } from './resolve';
+import {
+  buildManualWeatherRequest,
+  buildWeatherRequest,
+  mergeForDisplay,
+} from './resolve';
 
 function currentFixture(overrides: Partial<WeatherState> = {}): WeatherState {
   return {
-    wind_layers: [{ altitude_ft: 0, direction_deg: 270, speed_kt: 5, gust_increase_kt: 0, turbulence_ratio: 0 }],
-    cloud_layers: [{ base_ft: 4000, tops_ft: 6000, coverage_ratio: 0.25, cloud_type: 'cumulus' }],
+    wind_layers: [
+      {
+        altitude_ft: 0,
+        direction_deg: 270,
+        speed_kt: 5,
+        gust_increase_kt: 0,
+        turbulence_ratio: 0,
+      },
+    ],
+    cloud_layers: [
+      { base_ft: 4000, tops_ft: 6000, coverage_ratio: 0.25, cloud_type: 'cumulus' },
+    ],
     visibility_m: 10000,
     qnh_hpa: 1016,
     temperature_c: 19,
@@ -81,7 +95,13 @@ describe('mergeForDisplay', () => {
   it('replaces a layer list wholesale, never merging entry by entry', () => {
     const current = currentFixture();
     const newWind = [
-      { altitude_ft: 0, direction_deg: 90, speed_kt: 20, gust_increase_kt: 5, turbulence_ratio: 0.2 },
+      {
+        altitude_ft: 0,
+        direction_deg: 90,
+        speed_kt: 20,
+        gust_increase_kt: 5,
+        turbulence_ratio: 0.2,
+      },
     ];
     const merged = mergeForDisplay(current, { wind_layers: newWind });
     expect(merged.wind_layers).toBe(newWind);
@@ -93,16 +113,16 @@ describe('mergeForDisplay', () => {
     expect(merged.cloud_layers).toEqual([]);
   });
 
-  it('re-clamps the dewpoint when the setup lowers the temperature under the current dewpoint', () => {
+  it('preserves the dewpoint when temperature is lowered so the contradiction remains visible', () => {
     const current = currentFixture({ temperature_c: 19, dewpoint_c: 17 });
     const merged = mergeForDisplay(current, { temperature_c: 10 });
     expect(merged.temperature_c).toBe(10);
-    expect(merged.dewpoint_c).toBe(10);
+    expect(merged.dewpoint_c).toBe(17);
   });
 
-  it('clamps an overridden dewpoint to the (possibly also overridden) temperature', () => {
+  it('preserves an overridden dewpoint above temperature for instruction validation', () => {
     const current = currentFixture();
     const merged = mergeForDisplay(current, { dewpoint_c: 30, temperature_c: 22 });
-    expect(merged.dewpoint_c).toBe(22);
+    expect(merged.dewpoint_c).toBe(30);
   });
 });

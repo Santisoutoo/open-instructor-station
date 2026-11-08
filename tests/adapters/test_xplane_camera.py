@@ -91,8 +91,20 @@ class _FakeWebApi:
         if url.path == "/api/v2/commands":
             wanted = parse_qs(url.query).get("filter[name]", [""])[0]
             command_id = self._command_ids.get(wanted)
-            data = [] if command_id is None else [{"name": wanted, "id": command_id}]
-            return httpx.Response(200, json={"data": data})
+            if command_id is None:
+                # The real Web API answers a name it does not publish with a
+                # bare 404, not `200 {"data": []}` — confirmed live with the
+                # Zibo 737 loaded (issue #217). The dataref sibling of this
+                # lookup documents the same shape:
+                # docs/research/zibo-737-autopilot-dataref-mapping.md §7.
+                return httpx.Response(
+                    404,
+                    json={
+                        "error_code": "invalid_command_name",
+                        "error_message": f"Command '{wanted}' doesn't exist",
+                    },
+                )
+            return httpx.Response(200, json={"data": [{"name": wanted, "id": command_id}]})
         if url.path.startswith("/api/v2/command/") and url.path.endswith("/activate"):
             self.activated.append(int(url.path.split("/")[-2]))
             return httpx.Response(200, json={"data": None})
@@ -215,6 +227,13 @@ async def test_a_build_publishing_no_camera_command_still_connects(
     Every view ships unsupported *with the candidate name in the reason*, so
     the instructor — and whoever runs the spike next — can see which name was
     tried instead of a bare "unavailable".
+
+    Regression for issue #217: ``_FakeWebApi`` answers every missing command
+    here with a real **404**, the same status the live Web API gave with the
+    Zibo 737 loaded — not the ``200 {"data": []}`` the fake used to fabricate,
+    which let ``_lookup_command_id``'s ``raise_for_status()`` bug through this
+    exact test unnoticed. ``connect()`` reaching this point at all is the
+    proof that the 404 is handled, not just the empty-list case.
     """
     adapter, _ = await _connected(monkeypatch, COMMANDS.values())
     try:
@@ -243,6 +262,50 @@ async def test_a_partially_publishing_build_degrades_view_by_view(
         assert supported == {"chase", "tower"}
     finally:
         await adapter.disconnect()
+
+
+async def test_lookup_command_id_returns_none_on_a_404() -> None:
+    """Regression for issue #217.
+
+    ``raise_for_status()`` used to run before the empty-``data`` check, so a
+    404 — the real Web API's answer to a command name it does not publish —
+    escaped as an unhandled ``httpx.HTTPStatusError`` instead of the
+    documented ``None``. This has been locally fixed and lost at least twice
+    before (per the issue), so this test proves the 404 path directly against
+    its own handler — deliberately *not* :class:`_FakeWebApi`, so that a
+    future revert of the fake back to ``200 {"data": []}`` (the exact drift
+    that hid this bug from CI) cannot make this test pass vacuously.
+    """
+
+    def miss(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            404,
+            json={
+                "error_code": "invalid_command_name",
+                "error_message": "Command doesn't exist",
+            },
+        )
+
+    async with httpx.AsyncClient(
+        base_url="http://x", transport=httpx.MockTransport(miss)
+    ) as client:
+        result = await XPlaneSimAdapter._lookup_command_id(client, "sim/view/does_not_exist")
+    assert result is None
+
+
+async def test_lookup_command_id_still_raises_on_a_server_error() -> None:
+    """The fix narrows to 404 specifically — a real failure must still propagate."""
+
+    def blow_up(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(500, json={"error_code": "internal", "error_message": "boom"})
+
+    async with httpx.AsyncClient(
+        base_url="http://x", transport=httpx.MockTransport(blow_up)
+    ) as client:
+        with pytest.raises(httpx.HTTPStatusError):
+            await XPlaneSimAdapter._lookup_command_id(client, "sim/view/chase")
 
 
 async def test_a_missing_required_command_still_fails_the_connect(
@@ -380,3 +443,20 @@ def test_the_fake_web_api_answers_the_filter_the_adapter_actually_sends() -> Non
     request = httpx.Request("GET", "http://x/api/v2/commands?filter%5Bname%5D=sim/view/chase")
     body = json.loads(api.handle(request).content)
     assert [entry["name"] for entry in body["data"]] == ["sim/view/chase"]
+
+
+def test_the_fake_web_api_answers_a_command_miss_with_a_404() -> None:
+    """Pins the fake's shape for a name it does not publish (issue #217).
+
+    The real Web API's answer to an unrecognised ``filter[name]`` is a bare
+    404, not ``200 {"data": []}`` — this is the exact behaviour the fake used
+    to get wrong, which is how ``_lookup_command_id``'s ``raise_for_status()``
+    bug survived every camera test in this file. If a future edit reverts the
+    fake to a 200, this is the test that must catch it.
+    """
+    api = _FakeWebApi(["sim/view/chase"])
+    request = httpx.Request(
+        "GET", "http://x/api/v2/commands?filter%5Bname%5D=sim/view/does_not_exist"
+    )
+    response = api.handle(request)
+    assert response.status_code == 404

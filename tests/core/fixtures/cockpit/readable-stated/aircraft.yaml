@@ -1,0 +1,12 @@
+# Broken fixture: a control file states `readable` explicitly, which is
+# forbidden — the loader derives it from the binding (§8.1's
+# "readable-stated/" case).
+aircraft:
+  catalog_id: readable-stated
+  label: Readable-stated fixture
+detect:
+  dataref_exists: fake/readable-stated/present
+panels:
+  - panel_id: p
+    label: P
+    order: 0

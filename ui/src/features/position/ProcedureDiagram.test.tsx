@@ -224,3 +224,91 @@ it('prints the exaggeration factor and the not-to-scale mark in the legend', () 
   expect(screen.getByText(/vertical ×5/)).toBeInTheDocument();
   expect(screen.getByText(/not to scale/)).toBeInTheDocument();
 });
+
+describe('labels are an HTML overlay, not SVG text', () => {
+  it('renders every label class outside the <svg>', () => {
+    // Altitude only renders for the selected node (it's hidden otherwise — see the "altitude"
+    // describe block below) — select one so every label class has at least one instance.
+    const { container } = renderDiagram(20);
+    const svg = container.querySelector('svg');
+    const labelSelectors = [
+      '.pos-procdiagram__node-label',
+      '.pos-procdiagram__node-altitude',
+      '.pos-procdiagram__break-label',
+      '.pos-procdiagram__airport-label',
+      '.pos-procdiagram__legend',
+    ];
+    for (const selector of labelSelectors) {
+      const labels = container.querySelectorAll(selector);
+      expect(labels.length).toBeGreaterThan(0);
+      for (const label of labels) {
+        expect(svg?.contains(label)).toBe(false);
+      }
+    }
+  });
+
+  it('positions each node label in percentages of the container', () => {
+    renderDiagram(20);
+    const ident = screen.getByText('FAF', { selector: '.pos-procdiagram__node-label' });
+    const altitude = screen.getByText('3247 ft', {
+      selector: '.pos-procdiagram__node-altitude',
+    });
+    // Both labels share the same anchor point as the node's own button.
+    const button = screen.getByRole('button', { name: 'FAF' });
+    expect(ident.style.left).toBe(button.style.left);
+    expect(ident.style.top).toBe(button.style.top);
+    expect(altitude.style.left).toBe(button.style.left);
+    expect(altitude.style.top).toBe(button.style.top);
+  });
+
+  it('shows a node’s altitude only while it is selected — every ident stays visible regardless', () => {
+    // Confirmed live against a real, densely-packed procedure: with every node's altitude
+    // always shown, ident and altitude labels collided extensively (measured — not just
+    // eyeballed) in a tight cluster of waypoints. Showing altitude only for the selected node
+    // halves the simultaneous label count there; the full detail for any node is one click
+    // away in the leg table regardless.
+    const { rerender } = render(
+      <ProcedureDiagram
+        layout={LAYOUT}
+        courseDeg={320}
+        selectedSequence={null}
+        onSelectLeg={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText('3247 ft')).not.toBeInTheDocument();
+    for (const ident of LAYOUT.nodes.map((n) => n.ident)) {
+      expect(screen.getByText(ident, { selector: '.pos-procdiagram__node-label' })).toBeInTheDocument();
+    }
+
+    rerender(
+      <ProcedureDiagram
+        layout={LAYOUT}
+        courseDeg={320}
+        selectedSequence={20}
+        onSelectLeg={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText('3247 ft', { selector: '.pos-procdiagram__node-altitude' }),
+    ).toBeInTheDocument();
+  });
+
+  it('gives the selected node’s ident label the prominent modifier, and no other', () => {
+    renderDiagram(20);
+    const selectedIdent = screen.getByText('FAF', {
+      selector: '.pos-procdiagram__node-label',
+    });
+    expect(selectedIdent.className).toContain('pos-procdiagram__node-label--selected');
+
+    const otherIdent = screen.getByText('NERAS', {
+      selector: '.pos-procdiagram__node-label',
+    });
+    expect(otherIdent.className).not.toContain('pos-procdiagram__node-label--selected');
+  });
+
+  it('marks the break-length and legend labels aria-hidden — they carry no accessible name', () => {
+    renderDiagram();
+    expect(screen.getByText(/30\.0 NM/)).toHaveAttribute('aria-hidden', 'true');
+    expect(screen.getByText(/vertical ×5/)).toHaveAttribute('aria-hidden', 'true');
+  });
+});

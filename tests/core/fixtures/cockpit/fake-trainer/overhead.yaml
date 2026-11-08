@@ -1,0 +1,56 @@
+# Overhead, pedestal and lights panel controls (docs/designs/
+# cockpit-control-catalog.md §4.1). Pedestal and lights entries live here
+# too, not in their own files: the design names exactly three files for this
+# fixture (aircraft.yaml, mcp.yaml, overhead.yaml — §8.1), and a document's
+# `panels`/`controls`/`parked`/`setup_overrides` sections may be spread
+# across files however the directory's author likes (§3.2).
+controls:
+  - control_id: battery
+    label: Battery
+    panel_id: overhead
+    kind: toggle
+    verified_on: 2026-09-02
+    live_sweep: false
+    live_sweep_note: "Cutting battery power breaks every later read-back."
+    binding: {press: fake/battery/press, read: fake/battery/status}
+  - control_id: irs_l
+    label: IRS L
+    panel_id: overhead
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ALIGN"}
+      - {value: 2, label: "NAV"}
+      - {value: 3, label: "ATT"}
+    verified_on: 2026-09-02
+    binding: {read: fake/irs_l/pos, write: fake/irs_l/pos}
+  - control_id: stab_trim
+    label: Stab trim
+    panel_id: pedestal
+    kind: encoder
+    unit: units
+    step: 0.5
+    max_delta: 20
+    verified_on: 2026-09-02
+    binding: {inc: fake/stab_trim/inc, dec: fake/stab_trim/dec, read: fake/stab_trim/pos}
+  - control_id: toga
+    label: TO/GA
+    panel_id: pedestal
+    kind: press
+    verified_on: 2026-09-02
+    live_sweep: false
+    live_sweep_note: "TO/GA arms thrust; not for a sweep on the ground."
+    binding: {press: fake/toga/press}
+  - control_id: landing_lights
+    label: Landing lights
+    panel_id: lights
+    kind: toggle
+    verified_on: 2026-09-02
+    binding: {press: fake/landing_lights/press, read: fake/landing_lights/status}
+  - control_id: chime_test
+    label: Chime test
+    panel_id: overhead
+    kind: press
+    verified_on: 2026-09-02
+    live_sweep: true
+    binding: {press: fake/chime_test/press}

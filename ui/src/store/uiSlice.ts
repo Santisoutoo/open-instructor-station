@@ -17,6 +17,7 @@ export const TAB_IDS = [
   'traffic',
   'camera',
   'pushback',
+  'cockpit',
 ] as const;
 
 export type TabId = (typeof TAB_IDS)[number];
@@ -46,6 +47,8 @@ export interface UiState {
    * are showing.
    */
   demoFeed: boolean;
+  /** The module dropdown (`ModuleMenu`) — one menu shared by every screen's header. */
+  moduleMenuOpen: boolean;
 }
 
 export const initialUiState: UiState = {
@@ -54,6 +57,7 @@ export const initialUiState: UiState = {
   theme: 'dark',
   drawerOpen: false,
   demoFeed: false,
+  moduleMenuOpen: false,
 };
 
 const uiSlice = createSlice({
@@ -62,6 +66,7 @@ const uiSlice = createSlice({
   reducers: {
     tabSelected(state, action: PayloadAction<TabId>) {
       state.activeTab = action.payload;
+      state.moduleMenuOpen = false;
       if (!state.visitedTabs.includes(action.payload)) {
         state.visitedTabs.push(action.payload);
       }
@@ -81,6 +86,12 @@ const uiSlice = createSlice({
     demoFeedToggled(state) {
       state.demoFeed = !state.demoFeed;
     },
+    moduleMenuToggled(state) {
+      state.moduleMenuOpen = !state.moduleMenuOpen;
+    },
+    moduleMenuClosed(state) {
+      state.moduleMenuOpen = false;
+    },
   },
 });
 
@@ -91,6 +102,8 @@ export const {
   drawerToggled,
   demoFeedSet,
   demoFeedToggled,
+  moduleMenuToggled,
+  moduleMenuClosed,
 } = uiSlice.actions;
 
 export default uiSlice.reducer;

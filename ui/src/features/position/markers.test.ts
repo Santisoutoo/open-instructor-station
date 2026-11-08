@@ -4,13 +4,21 @@ import {
   CIRCUIT_MARKERS,
   isFinalMarker,
   labelPlacement,
+  legKindOf,
   markerDistanceNm,
   markerLabel,
 } from './markers';
-import { MARKER_IDS, type MarkerId } from './positionDesignSlice';
+import { MARKER_IDS, type CircuitLegKind, type MarkerId } from './positionDesignSlice';
 
 /** A spread of real runway courses, including the cardinal ones that stress the rotation. */
 const COURSES = [0, 40, 90, 180, 220, 315];
+
+/** The values `CIRCUIT_PLACEMENTS` hard-coded before the per-leg distance selector existed. */
+const CIRCUIT_DISTANCES: Record<CircuitLegKind, number> = {
+  downwind: 4,
+  base: 6,
+  vectors: 6,
+};
 
 describe('CIRCUIT_MARKERS', () => {
   it('has 9 unique ids, each with a defined (u, v)', () => {
@@ -35,20 +43,40 @@ describe('markerDistanceNm / markerLabel', () => {
   it('reads the two final markers off the tab’s final selector', () => {
     for (const id of ['final-3nm', 'final-8nm'] as const) {
       expect(isFinalMarker(id)).toBe(true);
-      expect(markerDistanceNm(id, 'final_10nm')).toBe(10);
+      expect(markerDistanceNm(id, 'final_10nm', CIRCUIT_DISTANCES)).toBe(10);
       expect(markerLabel(id, 'final_10nm')).toBe('10 NM final');
       expect(markerLabel(id, 'short_final')).toBe('Short final');
     }
   });
 
-  it('keeps a circuit marker’s own geometry, whatever the final selector says', () => {
-    expect(markerDistanceNm('base-left', 'final_20nm')).toBe(6);
-    expect(markerDistanceNm('downwind-right', 'final_20nm')).toBe(4);
+  it('reads a circuit marker off its own leg’s selected distance, whatever the final selector says', () => {
+    expect(markerDistanceNm('base-left', 'final_20nm', CIRCUIT_DISTANCES)).toBe(6);
+    expect(markerDistanceNm('downwind-right', 'final_20nm', CIRCUIT_DISTANCES)).toBe(4);
+    expect(
+      markerDistanceNm('vectors-left', 'final_20nm', { ...CIRCUIT_DISTANCES, vectors: 8 }),
+    ).toBe(8);
     expect(markerLabel('downwind-right', 'final_20nm')).toBe('Downwind right');
   });
 
   it('puts the threshold at zero', () => {
-    expect(markerDistanceNm('takeoff', 'final_3nm')).toBe(0);
+    expect(markerDistanceNm('takeoff', 'final_3nm', CIRCUIT_DISTANCES)).toBe(0);
+  });
+});
+
+describe('legKindOf', () => {
+  it('is null for the threshold and the two finals', () => {
+    expect(legKindOf('takeoff')).toBeNull();
+    expect(legKindOf('final-3nm')).toBeNull();
+    expect(legKindOf('final-8nm')).toBeNull();
+  });
+
+  it('groups left/right the same way for every circuit leg', () => {
+    expect(legKindOf('downwind-left')).toBe('downwind');
+    expect(legKindOf('downwind-right')).toBe('downwind');
+    expect(legKindOf('base-left')).toBe('base');
+    expect(legKindOf('base-right')).toBe('base');
+    expect(legKindOf('vectors-left')).toBe('vectors');
+    expect(legKindOf('vectors-right')).toBe('vectors');
   });
 });
 

@@ -18,6 +18,7 @@ function inputs(overrides: Partial<PlacementInputs> = {}): PlacementInputs {
     activeTab: 'approach',
     marker: 'final-3nm',
     finalPlacement: 'final_3nm',
+    circuitDistanceNm: { downwind: 4, base: 6, vectors: 6 },
     procedure: null,
     airwork: {
       position: { latitude: 43.6584, longitude: 7.2159, altitude_ft: 10000 },
@@ -115,6 +116,61 @@ describe('the Approach tab markers', () => {
     for (const marker of MARKER_IDS) {
       expect(buildPlacementRequest(inputs({ marker }))).not.toBeNull();
     }
+  });
+});
+
+describe('issue #216 — a distance selector for every circuit marker', () => {
+  it('downwind’s selector moves the abeam offset, not a leg distance', () => {
+    expect(
+      buildPlacementRequest(
+        inputs({
+          marker: 'downwind-left',
+          circuitDistanceNm: { downwind: 5, base: 6, vectors: 6 },
+        }),
+      ),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'left_downwind',
+      pattern_width_nm: 5,
+    });
+  });
+
+  it('base’s selector moves the leg distance, and leaves its own width at 4 NM', () => {
+    expect(
+      buildPlacementRequest(
+        inputs({
+          marker: 'base-right',
+          circuitDistanceNm: { downwind: 4, base: 10, vectors: 6 },
+        }),
+      ),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'right_base',
+      pattern_width_nm: 4,
+      leg_distance_nm: 10,
+    });
+  });
+
+  it('vectors’ selector moves the leg distance, and leaves its own width at 2 NM', () => {
+    expect(
+      buildPlacementRequest(
+        inputs({
+          marker: 'vectors-right',
+          circuitDistanceNm: { downwind: 4, base: 6, vectors: 3 },
+        }),
+      ),
+    ).toEqual({
+      type: 'runway',
+      airport_icao: 'LFMN',
+      runway_ident: '04R',
+      placement: 'right_base',
+      pattern_width_nm: 2,
+      leg_distance_nm: 3,
+    });
   });
 });
 

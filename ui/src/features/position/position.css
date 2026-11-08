@@ -135,17 +135,6 @@
   position: relative;
 }
 
-.pos-header__menu-trigger {
-  min-height: 44px;
-  padding: 0 0.75rem;
-  background: transparent;
-  border: 1px solid var(--pos-line);
-  border-radius: 8px;
-  color: var(--pos-t1);
-  font-weight: 600;
-  cursor: pointer;
-}
-
 .pos-header__airport {
   display: flex;
   align-items: center;
@@ -241,39 +230,10 @@
   padding: 0.75rem;
 }
 
-.pos-screenmenu {
-  left: 1rem;
-  width: 220px;
-}
-
-.pos-screenmenu__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.pos-screenmenu__item {
-  min-height: 44px;
-  padding: 0 0.6rem;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--pos-t1);
-  text-align: left;
-  cursor: pointer;
-}
-
-.pos-screenmenu__item:hover {
-  background: var(--pos-hover);
-}
-
 .pos-startat {
   left: 12rem;
-  width: 716px;
   display: grid;
-  grid-template-columns: 186px auto 200px;
+  grid-template-columns: 160px auto 200px;
   gap: 1rem;
 }
 
@@ -286,21 +246,18 @@
 }
 
 /*
- * On a short viewport (1280×800 tablet) the bottom bar wraps taller and the full-height
- * sidebar pushes the popover's top edge past the top of the screen by a few pixels. The
- * sidebar is the only column without its own cap — the stand list and the diagram are both
- * 262px — so cap it and let it scroll, rather than shrinking the 44px touch rows.
+ * Some airports publish far more runway ends than the diagram and stand list have room
+ * for — LEMD alone has eight — and without its own cap the sidebar was the one column
+ * that grew to fit all of them, stretching the whole popover well past its neighbours
+ * and leaving the diagram and stand list stranded in a mostly empty row (issue #229
+ * follow-up). Capped to the same height as the diagram, it scrolls instead, and the two
+ * side-by-side columns stop wasting the space the sidebar isn't using.
  */
-@media (max-height: 820px) {
-  .pos-startat--above .pos-startat__sidebar {
-    max-height: 396px;
-    overflow-y: auto;
-  }
-}
-
 .pos-startat__sidebar {
   display: flex;
   flex-direction: column;
+  max-height: 300px;
+  overflow-y: auto;
   gap: 1rem;
 }
 
@@ -357,7 +314,9 @@
   list-style: none;
   margin: 0;
   padding: 0;
-  max-height: 262px;
+  /* The count line above it takes the rest, so the list still bottoms out level with the
+     300px diagram beside it rather than falling short by that line's own height. */
+  max-height: 276px;
   overflow-y: auto;
 }
 
@@ -572,8 +531,11 @@
 .pos-main {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
   overflow: auto;
   padding: 1rem;
+  container: pos-main / inline-size;
 }
 
 .pos-chip {
@@ -653,15 +615,52 @@
 
 /* -------------------------------------------------------- approach tab */
 
+/*
+ * `container: pos-approachtab / inline-size` lives on the tab's own root, but a `@container`
+ * rule can never match the element that establishes the container itself (confirmed live —
+ * Chrome silently no-ops a self-targeting `@container` rule rather than erroring). The actual
+ * two-column grid therefore lives one level down, on `.pos-approachtab__grid`, so the
+ * stacking fallback below can target it as an ordinary descendant.
+ */
 .pos-approachtab {
-  display: flex;
+  height: 100%;
+  min-height: 0;
+  container: pos-approachtab / inline-size;
+}
+
+/*
+ * The diagram gets most of the width (4fr vs. a 1fr column floored at 16rem so its facts stay
+ * readable), and `grid-template-rows: minmax(0, 1fr)` makes both columns stretch to
+ * `.pos-main`'s full available height rather than each other's content height.
+ */
+.pos-approachtab__grid {
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 4fr) minmax(16rem, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   gap: 1.5rem;
-  flex-wrap: wrap;
 }
 
 .pos-approachtab__selected {
-  flex: 1;
-  min-width: 240px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * The diagram's own sizing/query context (§2 of the design doc): a grid cell that centres
+ * whatever exact 720:520 box `.pos-circuit` computes for itself, and that gives `.pos-circuit`
+ * a `container-type: size` context so `.pos-circuit`'s own width/height maths below can read
+ * cqw/cqh — the *cell's* resolved box, not the whole tab's.
+ */
+.pos-approachtab__diagram {
+  container-type: size;
+  container-name: pos-circuit;
+  display: grid;
+  place-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
 .pos-approachtab__name {
@@ -679,16 +678,74 @@
 
 /* ------------------------------------------------------- circuit diagram */
 
+/*
+ * `.pos-circuit` is sized to the *exact* largest 720:520 box that fits its grid cell —
+ * `min(100cqw, 100cqh × 720/520)` picks whichever axis is the binding constraint, then
+ * `aspect-ratio` derives the other one to match. This matters because the marker `<button>`
+ * overlay below is positioned as a percentage of `.pos-circuit` itself, not of whatever the
+ * SVG's own `preserveAspectRatio` letterboxing draws inside it — if `.pos-circuit`'s box were
+ * simply `width:100%;height:100%` of a cell that isn't exactly 720:520, the buttons would
+ * drift off their dots. Sizing `.pos-circuit` to the fitted box first means the SVG (which
+ * shares that same 720:520 ratio) fills it with zero internal letterboxing, so the percentage
+ * math stays exact at every size.
+ */
 .pos-circuit {
   position: relative;
-  width: 720px;
-  max-width: 100%;
+  width: min(100cqw, calc(100cqh * 720 / 520));
+  aspect-ratio: 720 / 520;
 }
 
 .pos-circuit__svg {
   display: block;
   width: 100%;
-  height: auto;
+  height: 100%;
+}
+
+/*
+ * Below this, side-by-side would squeeze the diagram's own box short enough to crowd its 9
+ * labels into each other — verified live at 1366×768 (≈854px inline size): a side-by-side
+ * diagram column there is fit-to-height at only ~230px tall, and labels sized to stay legible
+ * at that resolution then collide, because dot-to-dot spacing shrinks with the box while label
+ * size (deliberately) does not. Stacking instead gives the diagram the tab's *full* width with
+ * `height: auto` (no height cap), which is what actually buys back the spacing labels need —
+ * switching layout without dropping the height cap would not have helped, since height, not
+ * width, was always the binding constraint here. The trade-off is `.pos-main`'s own scroll
+ * reappearing at this one resolution, same as it did before any of this diagram sizing work —
+ * not a new regression, and the honest cost of legible, non-overlapping labels within an
+ * unmovable header/tabs/bottom-bar chrome budget this task does not touch.
+ *
+ * This block must appear after `.pos-circuit`'s own base rule above: both declare `width` at
+ * equal specificity, and a `@container` rule's condition being true does not give it cascade
+ * priority over a later plain rule — source order still decides the tie exactly as it would
+ * outside any conditional block.
+ */
+@container pos-approachtab (max-width: 64rem) {
+  .pos-approachtab__grid {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto;
+    height: auto;
+    overflow-y: auto;
+  }
+
+  .pos-approachtab__selected {
+    overflow-y: visible;
+  }
+
+  /*
+   * `container-type: size` needs a size that does not itself depend on content — fine when
+   * the grid row is `minmax(0, 1fr)` (the row's height comes from the grid, not this element),
+   * but a paradox against this breakpoint's `auto` row: nothing but this box's own (contained,
+   * therefore unavailable) content would size it. Drop to `inline-size` here — width is still
+   * a definite grid-column measurement, and `.pos-circuit`'s height no longer needs `cqh` below
+   * because it is driven by `aspect-ratio` off the full-width box instead.
+   */
+  .pos-approachtab__diagram {
+    container-type: inline-size;
+  }
+
+  .pos-circuit {
+    width: 100%;
+  }
 }
 
 .pos-circuit__centreline {
@@ -726,10 +783,48 @@
   filter: drop-shadow(0 0 5px color-mix(in oklch, var(--pos-accent) 17%, transparent));
 }
 
+/*
+ * An HTML overlay, not SVG `<text>` — deliberately. SVG `font-size` is a *user unit*, already
+ * subject to the same viewBox→box scale transform `.pos-circuit`'s sizing above establishes,
+ * so a value tuned to look right at 720px display width silently shrinks to a few physical
+ * pixels once `.pos-circuit` is squeezed by a tall header/tabs/bottom-bar chrome budget (a
+ * measured 14px SVG label painted at 8px actual height at 1366×768). `clamp()` on `vw` — the
+ * viewport, not the diagram's own box — is what keeps legibility independent of how small the
+ * diagram itself is ever forced to become; this is `.pos-circuit`'s positioning context, same
+ * percentage math as the marker buttons.
+ */
 .pos-circuit__marker-label {
-  fill: var(--pos-t2);
-  font-size: 11px;
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--pos-t2);
+  font-size: clamp(0.85rem, 1vw, 1.15rem);
   font-family: 'Schibsted Grotesk', sans-serif;
+}
+
+.pos-circuit__marker-label--left {
+  transform: translate(calc(-100% - 8px), -50%);
+  text-align: right;
+}
+
+.pos-circuit__marker-label--right {
+  transform: translate(8px, -50%);
+  text-align: left;
+}
+
+.pos-circuit__marker-label--above {
+  transform: translate(-50%, calc(-100% - 6px));
+  text-align: center;
+}
+
+.pos-circuit__marker-label--below {
+  transform: translate(-50%, 6px);
+  text-align: center;
+}
+
+.pos-circuit__marker-label--selected {
+  font-weight: 700;
+  color: var(--pos-accent);
 }
 
 .pos-circuit__marker-button {
@@ -749,23 +844,49 @@
 }
 
 .pos-circuit__wind-label {
-  fill: var(--pos-t3);
-  font-size: 11px;
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  pointer-events: none;
+  color: var(--pos-t3);
+  font-size: clamp(0.75rem, 0.85vw, 1rem);
   font-family: 'Spline Sans Mono', monospace;
 }
 
+/* The small tick mark drawn inside the SVG — see .pos-circuit__north-label for the "N" text. */
 .pos-circuit__north {
   stroke: var(--pos-t3);
-  fill: var(--pos-t3);
-  font-size: 11px;
+}
+
+.pos-circuit__north-label {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  color: var(--pos-t3);
+  font-size: clamp(0.75rem, 0.85vw, 1rem);
+  font-weight: 600;
 }
 
 /* --------------------------------------------------------- procedure diagram */
 
 .pos-procdiagram {
   position: relative;
-  width: 600px;
-  max-width: 100%;
+  width: 100%;
+}
+
+/* Sizing stays width-driven even here — `width` (not `max-height`) is what's capped, derived
+   from the available height via `100cqh * 600/380` so the SVG's own `height:auto` still follows
+   from width exactly as it always has. Capping height directly would decouple the axes and let
+   the box drift off 600:380, which misaligns every percentage-positioned node overlay
+   (`ProcedureDiagram.tsx`) — a regression a screenshot wouldn't catch. `min(100%, ...)` means
+   the diagram is only ever narrower than its 1fr column when the height budget is the binding
+   constraint; `flex:none` on the `.pos-sidstartab__picture` flex row keeps it from stretching
+   back out once its own width is explicitly set. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) .pos-procdiagram {
+    width: min(100%, calc(100cqh * 600 / 380));
+    flex: none;
+  }
 }
 
 .pos-procdiagram__svg {
@@ -807,13 +928,6 @@
   stroke-width: 1.5;
 }
 
-.pos-procdiagram__break text {
-  fill: var(--pos-caution);
-  stroke: none;
-  font-size: 10px;
-  font-family: 'Spline Sans Mono', monospace;
-}
-
 .pos-procdiagram__node {
   fill: var(--pos-accent);
   stroke: var(--pos-bg);
@@ -828,18 +942,6 @@
 
 .pos-procdiagram__node--selected {
   filter: drop-shadow(0 0 5px color-mix(in oklch, var(--pos-accent) 17%, transparent));
-}
-
-.pos-procdiagram__node-label {
-  fill: var(--pos-t1);
-  font-size: 10px;
-  font-family: 'Spline Sans Mono', monospace;
-}
-
-.pos-procdiagram__node-altitude {
-  fill: var(--pos-t3);
-  font-size: 9px;
-  font-family: 'Spline Sans Mono', monospace;
 }
 
 .pos-procdiagram__node-button {
@@ -857,27 +959,107 @@
   fill: var(--pos-t1);
 }
 
-.pos-procdiagram__airport text {
-  fill: var(--pos-t2);
-  font-size: 11px;
+/*
+ * HTML overlays, not SVG `<text>` — same reason as `.pos-circuit__marker-label`: `font-size`
+ * inside the SVG is a user unit, scaled down by the same viewBox→box transform as the
+ * geometry, so it silently shrinks past legible once `.pos-procdiagram` is squeezed short.
+ * `clamp()` on `vw` (viewport width, not this diagram's own box) keeps every label legible
+ * regardless of how small the diagram itself is ever forced to become. Floors sit a notch
+ * below `.pos-circuit__marker-label`'s (0.85rem) because a busy procedure can carry 15+ nodes
+ * at once — far less room per label than the circuit diagram's fixed 8 markers — so the worst
+ * crowding case is a *squeezed* diagram with many nodes, and a smaller floor buys headroom
+ * there without touching legibility (a large ceiling is nearly free: it only applies when the
+ * diagram itself is already large). Verify against a real busy procedure, not just a simple
+ * fixture — if nodes still crowd, the fix is a container-query degradation, never a smaller
+ * floor (that just reintroduces the illegible-label bug this replaces).
+ */
+.pos-procdiagram__node-label,
+.pos-procdiagram__node-altitude,
+.pos-procdiagram__break-label,
+.pos-procdiagram__airport-label,
+.pos-procdiagram__legend {
+  position: absolute;
+  white-space: nowrap;
+  pointer-events: none;
   font-family: 'Spline Sans Mono', monospace;
 }
 
+.pos-procdiagram__node-label {
+  color: var(--pos-t1);
+  font-size: clamp(0.75rem, 0.85vw, 1.05rem);
+}
+
+.pos-procdiagram__node-label--selected {
+  font-weight: 700;
+  color: var(--pos-accent);
+}
+
+.pos-procdiagram__node-label--right {
+  transform: translate(8px, calc(-100% - 0.15em));
+}
+
+.pos-procdiagram__node-label--left {
+  transform: translate(calc(-100% - 8px), calc(-100% - 0.15em));
+}
+
+.pos-procdiagram__node-altitude {
+  color: var(--pos-t3);
+  font-size: clamp(0.7rem, 0.75vw, 0.9rem);
+}
+
+.pos-procdiagram__node-altitude--right {
+  transform: translate(8px, 0.15em);
+}
+
+.pos-procdiagram__node-altitude--left {
+  transform: translate(calc(-100% - 8px), 0.15em);
+}
+
+.pos-procdiagram__break-label {
+  color: var(--pos-caution);
+  font-size: clamp(0.75rem, 0.85vw, 1.05rem);
+  transform: translate(-50%, calc(-100% - 6px));
+}
+
+.pos-procdiagram__airport-label {
+  color: var(--pos-t2);
+  font-size: clamp(0.8rem, 0.95vw, 1.1rem);
+  /* A bigger gap than the other "above" labels — the airport reference point sits right next
+     to the runway threshold, so its label is the one most often fighting a node's own label
+     for the same few pixels; confirmed live on a real procedure (LFMN's BADO8A). */
+  transform: translate(-50%, calc(-100% - 14px));
+}
+
 .pos-procdiagram__legend {
-  fill: var(--pos-t3);
-  font-size: 10px;
-  font-family: 'Spline Sans Mono', monospace;
+  color: var(--pos-t3);
+  font-size: clamp(0.72rem, 0.8vw, 0.95rem);
+  transform: translateY(-100%);
 }
 
 /* ----------------------------------------------------------- procedure diagram, 3D */
 
 /* Sized explicitly, unlike the 2D SVG's viewBox: a WebGL canvas has no auto-scaling, and an
-   unset height collapses to 0. Same footprint as .pos-procdiagram so the 2D/3D toggle doesn't
-   jump the layout underneath it. */
+   unset height collapses to 0. Footprint parity with .pos-procdiagram is structural, not a
+   matched pixel value: both are 100% of the same capped grid column, and both share the
+   600:380 intrinsic ratio (2D via viewBox + height: auto, 3D via aspect-ratio below), so the
+   2D/3D toggle still can't jump the layout underneath it at any container width. */
 .pos-procdiagram3d {
   position: relative;
-  width: 600px;
-  max-width: 100%;
+  width: 100%;
+}
+
+/* Same width-driven-height-cap technique as `.pos-procdiagram` above, with one addition: this
+   wrapper's own height is canvas_height + `.pos-procdiagram3d__toolbar`'s height (they're
+   siblings stacked in normal block flow inside this element, not just the canvas alone) — the
+   canvas fills the wrapper's width via its own `width:100%`, so subtracting the toolbar's
+   ~26px (rounded up to 1.875rem/30px for a safety margin) from the cqh budget before deriving
+   width keeps `wrapper_height = canvas_height + toolbar_height <= 100cqh` by construction.
+   Verify live and tune the constant down if it visibly under-fills. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) .pos-procdiagram3d {
+    width: min(100%, calc((100cqh - 1.875rem) * 600 / 380));
+    flex: none;
+  }
 }
 
 /* Anchors the OSM attribution (#178) to the canvas itself — the component's own bottom edge
@@ -990,26 +1172,72 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 68rem;
 }
 
-/* The diagram and the leg list, side by side. `auto-fit` is what makes this collapse to one
-   column on a narrow panel without a media query — the deciding width is this grid's own,
-   which a viewport query cannot see because `ApplyRail` sits in the same row. When no layout
-   has loaded the empty track collapses and the leg list takes the full width by itself.
-   The 24rem floor is the diagram's, not the list's: the SVG scales its 600-unit viewBox to
-   the column, so a narrower one shrinks the 10px node labels below reading size — better one
-   wide column than two columns of unreadable waypoint idents. */
+/* The diagram and the leg list, side by side. The split queries `.pos-main` — a CSS container
+   — rather than the viewport, because the deciding width is the grid's own, which a viewport
+   media query cannot see: `ApplyRail` shares the row with `.pos-main`, so the viewport can stay
+   wide while the split's actual container is narrow. Below 52rem (and in browsers without
+   container-query support) the split stacks to one column via the default template; the
+   `--legs-only` modifier (SidStarTab.tsx) reproduces the old empty-track collapse when no
+   layout has loaded, forcing the full-width single column regardless of container size.
+   The diagram is the primary visualization, so it is the flexible (`1fr`) track: CSS Grid's
+   track-sizing algorithm maximizes every non-flexible track (the leg list, up to its 32rem cap)
+   before handing any remaining space to a flexible one, so the diagram is what grows into the
+   surplus. The 24rem floor on the diagram is about legibility, unchanged: the SVG scales its
+   600-unit viewBox to the column, and a narrower one shrinks the 10px node labels below reading
+   size — better one wide column than two columns of unreadable waypoint idents. The leg list is
+   a data table, not a visualization — it does not need to grow past a comfortable reading width,
+   so it caps at 32rem instead of absorbing surplus itself. `align-items: center` keeps the two
+   blocks centered on each other's cross axis when their heights differ (e.g. a short leg list
+   next to a taller 3D canvas) — the fallback for the single-column/`--legs-only` states below.
+   In the two-column state (`@container` block below) the row's height stops being auto-sized to
+   content: it is bound by the flex chain rooted at `.pos-main`, and `align-items` switches to
+   `stretch` there specifically so the leg list's own internal scroll — not `.pos-main`'s —
+   absorbs any overflow, and the diagram's height cap (`.pos-sidstartab__picture`, `cqh`-driven)
+   never forces the page to scroll. See `docs/designs/position-responsive-layout.md` for why a
+   `cqh`-based width-from-height formula is needed rather than a hand-typed viewport constant. */
 .pos-sidstartab__split {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(24rem, 1fr));
+  grid-template-columns: minmax(min(24rem, 100%), 1fr);
   gap: 1rem;
-  align-items: start;
+  align-items: center;
 }
 
-/* Without this the diagram's own 600px width refuses to shrink and blows the track out. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) {
+    /* The diagram (1fr) absorbs all surplus width; the leg list caps at a compact 32rem. */
+    grid-template-columns: minmax(24rem, 1fr) minmax(20rem, 32rem);
+    /* The row's height is now bound by the flex chain (below), not auto-sized to content —
+       `minmax(0, 1fr)` lets it shrink to fit and `stretch` hands that exact height to both
+       columns, so the diagram's cqh-derived cap and the leg list's own internal scroll are
+       both working against a real, definite number instead of "whatever the tallest content
+       wants to be". */
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+    flex: 1;
+    min-height: 0;
+  }
+}
+
+/* Without this the diagram's own 600px width refuses to shrink and blows the track out; the
+   height counterpart matters only once the two-column state below makes this row's height
+   definite instead of content-sized. */
 .pos-sidstartab__split > * {
   min-width: 0;
+  min-height: 0;
+}
+
+/* Claims .pos-main's full remaining height only once a two-column split exists to spend it on
+   (the `flex:1` below is unconditional, but its effect is inert — a `min-height:auto` block —
+   everywhere else). In the transient legs-only state at a wide container this leaves harmless
+   empty space below the single-column leg list rather than the list ending flush with its
+   content; not worth a `:has()` selector for a loading state. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab {
+    flex: 1;
+    min-height: 0;
+  }
 }
 
 .pos-sidstartab__legs {
@@ -1020,7 +1248,18 @@
 
 .pos-sidstartab__legs .pos-legs {
   margin: 0;
-  max-height: 22rem;
+  max-height: clamp(22rem, calc(100vh - 30rem), 44rem);
+  max-height: clamp(22rem, calc(100dvh - 30rem), 44rem);
+}
+
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__split:not(.pos-sidstartab__split--legs-only) .pos-sidstartab__legs .pos-legs {
+    /* The stretched row (above) now supplies the real cap; 44rem stays only as a ceiling so a
+       very long procedure can't blow past a comfortable reading height even on a tall monitor. */
+    flex: 1;
+    min-height: 0;
+    max-height: 44rem;
+  }
 }
 
 .pos-sidstartab__kind {
@@ -1063,6 +1302,22 @@
 .pos-sidstartab__view-toggle {
   display: flex;
   gap: 0.4rem;
+}
+
+/* Sizing seam for the height cap below: gives the picture (2D SVG or 3D canvas, whichever is
+   active) a genuinely definite height via the flex chain — `flex:1;min-height:0` inside
+   `.pos-sidstartab__diagram`'s own flex column takes exactly what's left after the toggle row's
+   natural height, no hand-typed "subtract the toggle row" constant needed — then exposes that
+   height to `.pos-procdiagram`/`.pos-procdiagram3d` as `100cqh` via `container-type: size`. */
+@container pos-main (min-width: 52rem) {
+  .pos-sidstartab__picture {
+    flex: 1;
+    min-height: 0;
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 .pos-sidstartab__diagram-loading {
@@ -1144,7 +1399,7 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 480px;
+  max-width: clamp(30rem, 55%, 44rem);
 }
 
 .pos-airworktab__ladder {
@@ -1192,7 +1447,7 @@
   display: flex;
   flex-direction: column;
   gap: 1rem;
-  max-width: 480px;
+  max-width: clamp(30rem, 55%, 44rem);
 }
 
 .pos-customtab__row {
@@ -1210,7 +1465,7 @@
 
 .pos-rail {
   flex: none;
-  width: 480px;
+  width: clamp(22.5rem, 30vw, 30rem);
   min-height: 0;
   padding: 15px 0; /* must equal the notch pseudo-elements' height below, or the punch band
     (z-index: 1, painted over .pos-rail__scroll) bleeds into the scrollable content instead of
@@ -1263,12 +1518,18 @@
    punched-through edge rather than a printed pattern. It is defined once, pre-transform, on the
    shared selector: `.pos-rail::after` mirrors it via `scaleY(-1)` (see below), which flips the
    `1px` offset too, so the shadow still falls toward the panel's *centre* on both edges instead
-   of one of them casting "backwards". */
+   of one of them casting "backwards".
+   The tile pattern is width-independent: `background-repeat: repeat-x` tiles the 30px pattern
+   left-anchored across whatever width `.pos-rail` resolves to (now a `clamp()`, previously a
+   fixed 480px), so the rightmost bite is clipped mid-tile at most widths — that was already true
+   at the old fixed 480px (481px painted span / 30px tile = 16.03 tiles) and is not a regression
+   introduced by making the rail's width fluid. */
 .pos-rail::before,
 .pos-rail::after {
   content: '';
   position: absolute;
-  left: -1px; /* compensates the 1px border-left so the strip spans exactly 480px, see below */
+  left: -1px; /* compensates the 1px border-left so the strip spans the rail's full width
+    edge-to-edge, see below */
   right: 0;
   height: 15px;
   background-image: radial-gradient(
@@ -1490,17 +1751,6 @@
   opacity: 0.85;
 }
 
-.pos-bottombar__na {
-  color: var(--pos-caution);
-}
-
-/* On its own row under Course / ILS frequency — the gap issue #166 points at. */
-.pos-bottombar__startat {
-  flex-basis: 100%;
-  padding-left: 0;
-  text-align: left;
-}
-
 /* ----------------------------------------------------------------- checkbox */
 
 .pos-checkbox {
@@ -1547,19 +1797,11 @@
   color: var(--pos-on-accent);
 }
 
-.pos-checkbox--disabled {
-  opacity: 0.55;
-}
-
-.pos-checkbox--disabled .pos-checkbox__input {
-  cursor: not-allowed;
-}
-
 /* ------------------------------------------------------- gates and states */
 
 /*
  * The navdata gate's card, and the "nothing loaded yet" prompt. Both replace the screen
- * body while the header stays put — this screen is full-bleed, so its screen menu is the
+ * body while the header stays put — this screen is full-bleed, so its module menu is the
  * only way off it and must never be gated away.
  */
 .pos-navdata {
@@ -1677,9 +1919,9 @@
   font-size: 0.78rem;
 }
 
-/* ------------------------------------------------- the final-distance rail */
+/* --------------------------------------------- the distance-selector chips */
 
-.pos-approachtab__finals {
+.pos-approachtab__distances {
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;

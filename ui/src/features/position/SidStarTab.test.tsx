@@ -289,6 +289,65 @@ describe('an open approach', () => {
   });
 });
 
+describe('the responsive split layout (#202)', () => {
+  it('marks the split legs-only while no layout has loaded for the open procedure', async () => {
+    // V04R has a procedure-detail stub but its layout route 404s explicitly, so `layout`
+    // stays undefined for the whole test — the split never leaves the legs-only state. The
+    // `/layout` route must come first: its URL contains the detail route's fragment as a
+    // substring, and `stubApi` matches on insertion order (see the comment on `routes()`
+    // above for the same gotcha with I04R/R04R).
+    stubApi({
+      [`airports/${ICAO}/procedures/approach/V04R/layout`]: {
+        status: 404,
+        detail: 'no layout for V04R',
+      },
+      [`airports/${ICAO}/procedures/approach/V04R`]: {
+        body: { ...PROCEDURE_I04R, ident: 'V04R', approach_type: 'vor' },
+      },
+      [`airports/${ICAO}/procedures?kind=approach`]: {
+        body: PROCEDURES.filter((procedure) => procedure.kind === 'approach'),
+      },
+      ...positionRoutes(),
+    });
+    const store = setupStore({
+      positionDesign: {
+        ...initialPositionDesignState,
+        icaoInput: ICAO,
+        loadedIcao: ICAO,
+        activeTab: 'sidstar',
+        procedureFamily: 'final',
+      },
+    });
+    render(
+      <Provider store={store}>
+        <SidStarTab />
+      </Provider>,
+    );
+    await screen.findByText('4 in navdata');
+    const list = await openIdentMenu();
+    await userEvent.click(within(list).getByRole('option', { name: /V04R/ }));
+
+    await waitFor(() => {
+      expect(document.querySelector('.pos-sidstartab__split')).toHaveClass(
+        'pos-sidstartab__split--legs-only',
+      );
+    });
+  });
+
+  it('drops the legs-only modifier once the layout arrives', async () => {
+    renderTab('final');
+    await screen.findByText('4 in navdata');
+    const list = await openIdentMenu();
+    await userEvent.click(within(list).getByRole('option', { name: /I04R/ }));
+
+    await screen.findByRole('img', { name: 'Procedure diagram for I04R' });
+
+    expect(document.querySelector('.pos-sidstartab__split')).not.toHaveClass(
+      'pos-sidstartab__split--legs-only',
+    );
+  });
+});
+
 describe('the 2D/3D diagram selector', () => {
   async function openI04R() {
     const store = renderTab('final');

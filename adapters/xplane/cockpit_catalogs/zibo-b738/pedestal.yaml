@@ -1,0 +1,497 @@
+# Zibo Mod B737-800X — Throttle quadrant + pedestal panel.
+#
+# Wave 2, issue #224. Phase 1 (docs/research/zibo-737-pedestal-lights-dataref-
+# mapping.md) discovered candidates from the add-on's static reference files
+# only, no live sim access. Phase 2 (this file) live-verified every entry
+# below against a running X-Plane 12.4.3 + Zibo 4.05.33 at LEMD, through the
+# real adapter code path (CockpitRuntime's binding resolver, exercised via
+# tests/sim/test_live_cockpit_catalog.py's generic sweep and a set of
+# dedicated tests) — never a hand-rolled HTTP call for the confirmed bindings
+# below (the LIVE DISCOVERY that preceded drafting them did use raw HTTP,
+# same technique #223 used: dumping the connected sim's own full dataref/
+# command index turned up an entire live-only namespace the static reference
+# files never mention, exactly like #223's electrical/* findings).
+#
+# Biggest correction versus Phase 1's hypotheses: several `_up`/`_dn` or
+# `_on`/`_off` COMMAND PAIRS the static files documented turned out to have a
+# companion `_pos` (or bare) DATAREF that is directly WRITABLE — the same
+# lesson #223's overhead.yaml records for gen1/gen2/iso_valve/pack_l/pack_r.
+# Where that was true here too, the binding below writes the position
+# directly rather than stepping a command pair.
+#
+# Two genuinely new subsystems, invisible to the Phase 1 reference files,
+# turned up in the live index: `laminar/B738/toggle_switch/el_trim_w_guard_*`
+# / `ap_trim_w_guard_*` (the two real stab trim cutout switches — Phase 1's
+# hardest gap) and `laminar/B738/flt_ctrls/flap_lever` (a directly-writable
+# Zibo flap lever dataref with a clean, live-mapped detent table — Phase 1
+# had zero flap-lever candidate at all).
+#
+# `hint` fields on entries below are kept short (schema max 120 chars); the
+# full live-test narrative for each control is in the comment directly above
+# it and in docs/research/zibo-737-pedestal-lights-dataref-mapping.md.
+#
+# Engines were RUNNING this session (N1 ~20% both, ground idle, on_ground).
+# Start levers were deliberately NOT actuated for exactly that reason — see
+# `parked:` below.
+controls:
+  # --- Throttle quadrant ----------------------------------------------------
+
+  # Live-mapped the full detent table: pressed every laminar/B738/
+  # push_button/flaps_<N> command in turn and read flap_lever back.
+  # detent index / 8 = 0, 0.125, 0.25 ... 1.0 for UP,1,2,5,10,15,25,30,40.
+  # Modelled as a `dial` (step 0.125), NOT a `selector`: SelectorOption.
+  # value is int|str only, and these detent values are genuinely float —
+  # the 9 real-world labels (UP/1/2/5/10/15/25/30/40) live in this hint,
+  # not as selectable options. The generic sim/cockpit2/controls/
+  # flap_ratio write is a confirmed no-op (before/after identical on a
+  # direct write) — AircraftSetup.flaps_ratio cannot be honestly
+  # overridden by this control either, despite the matching `dial` kind:
+  # placement-time flap requests need a value FROM this detent table, and
+  # the override mechanism has no way to snap an arbitrary requested
+  # ratio to the nearest valid detent, so it is left unmapped (see the
+  # setup_overrides note at the end of this file) rather than silently
+  # accepting an off-detent value X-Plane's own flight model may not
+  # honour cleanly.
+  - control_id: flaps_lever
+    label: Flaps lever
+    panel_id: pedestal
+    kind: dial
+    unit: ratio
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.125
+    readback_tolerance: 0.0
+    hint: "Detents (ratio=label): 0=UP .125=1 .25=2 .375=5 .5=10 .625=15 .75=25 .875=30 1=40."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/flt_ctrls/flap_lever
+      read: laminar/B738/flt_ctrls/flap_lever
+
+  # Generic sim/cockpit2/controls/speedbrake_ratio write is a confirmed
+  # no-op (accepted on the generic dataref, never crosses into the Zibo
+  # dataref, neither direction moves the other) — write Zibo's own
+  # dataref directly. Precision finding from the live sweep: 0/0.25/0.5/
+  # 0.75/1.0 all write and read back exactly, but 0.125 (an earlier draft
+  # step) read back as 0.0889 — the lever quantizes off-quarter values
+  # rather than holding them exactly. step=0.25 is the live-confirmed
+  # safe granularity, not an assumption.
+  - control_id: speedbrake_lever
+    label: Speedbrake lever
+    panel_id: pedestal
+    kind: dial
+    unit: ratio
+    min_value: 0.0
+    max_value: 1.0
+    step: 0.25
+    readback_tolerance: 0.01
+    hint: "Generic speedbrake_ratio write is a no-op; writes Zibo's dataref, quarter steps only (finer values quantize)."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/flt_ctrls/speedbrake_lever
+      read: laminar/B738/flt_ctrls/speedbrake_lever
+
+  # No press/toggle command found for ARM specifically — the position
+  # dataref is directly writable and holds the value on read-back (the
+  # gen1_pos-style direct-write pattern from #223's overhead.yaml).
+  - control_id: speedbrake_arm
+    label: Speedbrake ARM
+    panel_id: pedestal
+    kind: selector
+    options:
+      - {value: 0, label: "OFF"}
+      - {value: 1, label: "ARM"}
+    hint: "No press command found for ARM; the position dataref itself is directly writable."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      write: laminar/B738/flt_ctrls/speedbrake_arm
+      read: laminar/B738/flt_ctrls/speedbrake_arm
+
+  # Confirmed live: press flips parking_brake_pos 1<->0 cleanly.
+  # live_sweep=false out of caution, not doubt about the binding: an
+  # unattended sweep releasing the parking brake, even briefly, is the
+  # side-effect risk docs/architecture.md's named risk warns against.
+  - control_id: parking_brake
+    label: Parking brake
+    panel_id: pedestal
+    kind: toggle
+    on_label: SET
+    off_label: RELEASED
+    hint: "Confirmed live; not swept unattended because releasing the brake has a real side effect."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Releases the parking brake, even briefly — not for an unattended sweep."
+    binding:
+      press: laminar/B738/push_button/park_brake_on_off
+      read: laminar/B738/parking_brake_pos
+
+  # --- Stabilizer trim (issue #224: MUST be an encoder) ----------------------
+
+  # Confirmed live: laminar/B738/flight_controls/pitch_trim_up/down (Zibo-
+  # specific commands the Phase 1 static reference files never listed —
+  # only found by dumping the live command index) move
+  # laminar/B738/flight_model/stab_trim_units by a real, signed amount per
+  # single activate — measured +0.00434 then -0.00384 across two
+  # consecutive clicks (X-Plane does not repeat a command over one
+  # activate, so this is genuinely the per-click delta, not an
+  # approximation). `step`/`readback_tolerance` are set from that
+  # measurement, not a round illustrative number — the schema defines
+  # `step` as "the value change one click produces" (§3.1), not a display
+  # convenience. sim/cockpit2/controls/elevator_trim moves in lockstep
+  # (Zibo pushes its own trim into it one-way) but a DIRECT write to that
+  # generic dataref is a confirmed no-op (accepted on the generic
+  # dataref, stab_trim_units never moves) — AircraftSetup.
+  # elevator_trim_ratio cannot be overridden here either way (float field
+  # requires a `dial` target; this is correctly an encoder).
+  - control_id: stab_trim
+    label: Stabilizer trim
+    panel_id: pedestal
+    kind: encoder
+    unit: units
+    step: 0.004
+    max_delta: 100
+    readback_tolerance: 0.002
+    hint: "Confirmed live via Zibo's own pitch_trim commands; generic elevator_trim write is a no-op."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/flight_controls/pitch_trim_up
+      dec: laminar/B738/flight_controls/pitch_trim_down
+      read: laminar/B738/flight_model/stab_trim_units
+
+  # Confirmed live via the GENERIC (stock) commands AND generic read
+  # dataref — the one case here where "generic" is the right answer: 10x
+  # rudder_trim_right moved sim/cockpit2/controls/rudder_trim
+  # -0.0001->0.0070, 10x left brought it back down. The Zibo-specific
+  # laminar/B738/flt_ctrls/rudder_trim/sel_dial_pos never moved across the
+  # same presses — a live-verified dead end despite the plausible name.
+  - control_id: rudder_trim
+    label: Rudder trim
+    panel_id: pedestal
+    kind: encoder
+    unit: units
+    step: 0.0007
+    max_delta: 100
+    readback_tolerance: 0.0005
+    hint: "Confirmed live via the GENERIC commands+dataref; the Zibo-specific read binding is dead."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: sim/flight_controls/rudder_trim_right
+      dec: sim/flight_controls/rudder_trim_left
+      read: sim/cockpit2/controls/rudder_trim
+
+  # Same finding as rudder_trim: the GENERIC sim/cockpit2/controls/
+  # aileron_trim dataref is the confirmed live read; the Zibo-specific
+  # laminar/B738/flt_ctrls/aileron_trim/switch_pos never moved.
+  - control_id: aileron_trim
+    label: Aileron trim
+    panel_id: pedestal
+    kind: encoder
+    unit: units
+    step: 0.003
+    max_delta: 100
+    readback_tolerance: 0.001
+    hint: "Same finding as rudder_trim: confirmed via the GENERIC dataref, not the Zibo-specific one."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: sim/flight_controls/aileron_trim_right
+      dec: sim/flight_controls/aileron_trim_left
+      read: sim/cockpit2/controls/aileron_trim
+
+  # --- Stab trim cutout switches (issue #224's hardest Phase 1 gap) ---------
+
+  # Not in either Phase 1 static reference file (neither "trim" nor
+  # "cutout" nor "stab" matched) — found only by dumping the live command
+  # index. The bare laminar/B738/toggle_switch/el_trim command is a
+  # confirmed dead end (3 presses, el_trim_pos never moved); the guarded
+  # variants el_trim_w_guard_off/_on are the ones that work, confirmed
+  # 0<->1 clean round trip. "_off" sets the read value to 1 (CUTOUT) and
+  # "_on" sets it to 0 (NORMAL) — the commands name switching electric
+  # trim OFF/ON, hence the CUTOUT/NORMAL mapping direction.
+  - control_id: stab_trim_cutout_main
+    label: "Stab trim cutout — MAIN ELECTRIC"
+    panel_id: pedestal
+    kind: selector
+    options:
+      - {value: 0, label: "NORMAL"}
+      - {value: 1, label: "CUTOUT"}
+    hint: "Found live only (not in Phase 1's static docs); the bare el_trim command is dead, _w_guard works."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/toggle_switch/el_trim_w_guard_off
+      dec: laminar/B738/toggle_switch/el_trim_w_guard_on
+      read: laminar/B738/toggle_switch/el_trim_pos
+
+  - control_id: stab_trim_cutout_autopilot
+    label: "Stab trim cutout — AUTOPILOT"
+    panel_id: pedestal
+    kind: selector
+    options:
+      - {value: 0, label: "NORMAL"}
+      - {value: 1, label: "CUTOUT"}
+    hint: "Same finding and shape as stab_trim_cutout_main (ap_trim_w_guard_off/_on, ap_trim_pos)."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/toggle_switch/ap_trim_w_guard_off
+      dec: laminar/B738/toggle_switch/ap_trim_w_guard_on
+      read: laminar/B738/toggle_switch/ap_trim_pos
+
+  # --- Transponder ------------------------------------------------------------
+
+  # Live-mapped by firing every laminar/B738/knob/transponder_<name>
+  # absolute-set command in turn and reading transponder_pos back (1..5,
+  # confirmed floor/ceiling — mode_dn never went below 1, mode_up never
+  # above 5 across repeated presses). transponder_test did not move
+  # transponder_pos — a momentary function, not modelled as an option.
+  - control_id: transponder_mode
+    label: Transponder mode
+    panel_id: pedestal
+    kind: selector
+    options:
+      - {value: 1, label: "STBY"}
+      - {value: 2, label: "ALT OFF"}
+      - {value: 3, label: "ALT ON"}
+      - {value: 4, label: "TA ONLY"}
+      - {value: 5, label: "TA/RA"}
+    hint: "Live-mapped via each absolute-set command; range confirmed 1..5, clamped both ends."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      inc: laminar/B738/knob/transponder_mode_up
+      dec: laminar/B738/knob/transponder_mode_dn
+      read: laminar/B738/knob/transponder_pos
+
+  - control_id: transponder_ident
+    label: Transponder IDENT
+    panel_id: pedestal
+    kind: press
+    hint: "Momentary press, resolves without error. No read-back candidate exists for this kind."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/push_button/transponder_ident_dn
+
+  # Confirmed live (single press flips xpndr_atc_pos 0<->1). Exact
+  # real-world correspondence to a labelled panel switch is unconfirmed —
+  # included because the binding round-trips cleanly.
+  - control_id: transponder_atc
+    label: "Transponder ATC switch"
+    panel_id: pedestal
+    kind: toggle
+    hint: "Confirmed live; exact real-world function of this switch is not fully understood."
+    verified_on: 2026-09-03
+    live_sweep: true
+    binding:
+      press: laminar/B738/toggle_switch/xpndr_atc
+      read: laminar/B738/switch/xpndr_atc_pos
+
+  # --- Radio panels: NAV1/NAV2 swap (issue #224: "beyond the typed radio
+  # fields AircraftSetup already has" — AircraftSetup has NAV1/NAV2 freq +
+  # OBS but no swap semantics at all) ------------------------------------
+  # Confirmed live: swaps nav1_freq_hz <-> nav1_stdby_freq_hz cleanly.
+  # live_sweep=false, discovered the hard way: the generic sweep's `press`
+  # branch has no restore step at all (a one-shot activate + actions_taken
+  # assertion, the ap_disconnect precedent) — for a genuinely reversible
+  # command like SWAP that is fine only if something ELSE restores it, and
+  # nothing does. A full-suite run left NAV2's active/standby swapped
+  # afterward; fixed live and this flag corrected before landing, same
+  # risk class as the COM swap entries below.
+  - control_id: nav1_swap
+    label: NAV1 frequency swap
+    panel_id: pedestal
+    kind: press
+    hint: "Confirmed live; not swept unattended — a 'press' has no restore step, this changes real state."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Swaps the active NAV1 frequency and the generic sweep never restores a press; not for an unattended sweep."
+    binding:
+      press: laminar/B738/push_button/switch_freq_nav1_press
+
+  - control_id: nav2_swap
+    label: NAV2 frequency swap
+    panel_id: pedestal
+    kind: press
+    hint: "Same finding as nav1_swap, independently confirmed — and the one that got left swapped."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Swaps the active NAV2 frequency and the generic sweep never restores a press; not for an unattended sweep."
+    binding:
+      press: laminar/B738/push_button/switch_freq_nav2_press
+
+  # --- COM1/COM2 standby + swap (generic — no laminar/B738/* COM frequency
+  # dataref of ANY kind exists anywhere in the live index; this is the
+  # stock X-Plane radio path, confirmed to accept and round-trip writes.
+  # No Zibo-side echo exists to independently confirm the physical radio
+  # panel display follows this write — only that the sim's own state
+  # does.) -------------------------------------------------------------
+  - control_id: com1_standby_freq
+    label: COM1 standby frequency
+    panel_id: pedestal
+    kind: dial
+    unit: khz
+    min_value: 11800
+    max_value: 13697
+    step: 1
+    readback_tolerance: 0
+    hint: "Generic dataref, confirmed to persist. No Zibo-side echo exists to cross-check."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Changes an active radio frequency setting; not for an unattended sweep."
+    binding:
+      write: sim/cockpit/radios/com1_stdby_freq_hz
+      read: sim/cockpit/radios/com1_stdby_freq_hz
+
+  - control_id: com1_swap
+    label: COM1 frequency swap
+    panel_id: pedestal
+    kind: press
+    hint: "Confirmed live: swaps com1_freq_hz <-> com1_stdby_freq_hz. Same no-echo caveat."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Swaps the active COM1 frequency; not for an unattended sweep."
+    binding:
+      press: sim/radios/com1_standy_flip
+
+  - control_id: com2_standby_freq
+    label: COM2 standby frequency
+    panel_id: pedestal
+    kind: dial
+    unit: khz
+    min_value: 11800
+    max_value: 13697
+    step: 1
+    readback_tolerance: 0
+    hint: "Same finding as com1_standby_freq, independently confirmed."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Changes an active radio frequency setting; not for an unattended sweep."
+    binding:
+      write: sim/cockpit/radios/com2_stdby_freq_hz
+      read: sim/cockpit/radios/com2_stdby_freq_hz
+
+  - control_id: com2_swap
+    label: COM2 frequency swap
+    panel_id: pedestal
+    kind: press
+    hint: "Same finding as com1_swap, independently confirmed."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Swaps the active COM2 frequency; not for an unattended sweep."
+    binding:
+      press: sim/radios/com2_standy_flip
+
+  # Generic dataref, confirmed to accept and round-trip a write. No
+  # laminar/B738/* squawk-code dataref exists — the 3D cockpit's digit
+  # entry is presumably a manipulator-only path with no dataref backing.
+  - control_id: transponder_code
+    label: Transponder code (squawk)
+    panel_id: pedestal
+    kind: dial
+    unit: count
+    min_value: 0
+    max_value: 7777
+    step: 1
+    readback_tolerance: 0
+    hint: "Generic dataref, confirmed to round-trip. No laminar/B738/* squawk dataref exists at all."
+    verified_on: 2026-09-03
+    live_sweep: false
+    live_sweep_note: "Changes the squawk code; not for an unattended sweep."
+    binding:
+      write: sim/cockpit2/radios/actuators/transponder_code
+      read: sim/cockpit2/radios/actuators/transponder_code
+
+parked:
+  - control_id: start_lever_1
+    label: "Start lever 1 (ENG 1 fuel control)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: >-
+      Real binding found live (mixture1_toggle press, mixture_ratio1 read)
+      but NOT actuated: both engines running this session — CUTOFF shuts an
+      engine down and RUN cannot restart it.
+
+  - control_id: start_lever_2
+    label: "Start lever 2 (ENG 2 fuel control)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: "Same finding and risk as start_lever_1 (mixture2_toggle, mixture_ratio2)."
+
+  - control_id: toga_left
+    label: "TO/GA (captain)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: >-
+      Real binding found (left_toga_press, resolves) but not actuated: no
+      observable side effect was checked this session (A/T was off, no
+      annunciator read before/after) — a guess, not a verification.
+
+  - control_id: toga_right
+    label: "TO/GA (first officer)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: "Same finding and reason as toga_left (right_toga_press)."
+
+  - control_id: at_disconnect_left
+    label: "A/T disconnect (captain)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: >-
+      Real binding found (left_at_dis_press, resolves) but A/T was OFF this
+      session — no engaged state for a disconnect press to observably clear.
+
+  - control_id: at_disconnect_right
+    label: "A/T disconnect (first officer)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: "Same finding and reason as at_disconnect_left (right_at_dis_press)."
+
+  - control_id: horn_cutout
+    label: "Horn cutout"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: >-
+      Phase 1 flagged alt_horn_cutout as ambiguous (MCP altitude alert vs.
+      pedestal config horn); no warning was sounding to silence this
+      session, so firing it proved nothing about what it does.
+
+  - control_id: weather_radar_wxr
+    label: "Weather radar overlay (captain ND)"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: >-
+      wxr_press activates without error but is a display-overlay press with
+      no dataref read-back at all; no way to visually confirm the ND
+      changed from a dataref-only session.
+
+  - control_id: com_rtp_panel
+    label: "Radio Tuning Panel (rtp_L/rtp_R) — subsystem unconfirmed"
+    panel_id: pedestal
+    since: 2026-09-03
+    reason: >-
+      rtp_L/rtp_R commands and datarefs exist live but all belong to the
+      Audio Selector Panel (routing/volume/ident), not COM frequency
+      standby+swap as Phase 1 speculated — a different subsystem.
+
+# No setup_overrides block in this file, deliberately: flaps_ratio,
+# speedbrake_ratio and elevator_trim_ratio are all confirmed no-ops on Zibo's
+# generic dataref (the same "silently rejected" shape research §3/§4/§6
+# already found for the MCP dials), yet none of their live-verified
+# replacements above (a 9-option selector, and two encoders) can be targeted
+# by setup_overrides — the mechanism's own rule requires a float
+# AircraftSetup field to map to a `dial` control (README's setup_overrides
+# section), and flaps_lever/stab_trim structurally are not dials.
+# speedbrake_lever IS a dial and could in principle be overridden, but
+# speedbrake_arm has no AircraftSetup field to attach to and the two are one
+# physical lever — overriding only the ratio half without the ARM state
+# would be a half-fix, so it is left off pending a design decision, not
+# silently wired. Net effect, stated rather than hidden: on Zibo, an
+# AircraftSetup placement's flaps/speedbrake/trim fields currently do
+# nothing, and no override path here can fix that without extending the
+# setup_overrides mechanism itself (out of this issue's stated scope: "pure
+# catalog data + live validation — no new machinery").

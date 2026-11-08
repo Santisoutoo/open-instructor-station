@@ -27,6 +27,8 @@ Surface:
 * ``/api/camera/*`` — the Camera Manager, in :mod:`server.camera_routes`.
 * ``/api/traffic/*`` and ``WS /ws/traffic`` — the AI Traffic Manager, in
   :mod:`server.traffic_routes`.
+* ``/api/cockpit/*`` — the per-aircraft Cockpit Control Catalog, in
+  :mod:`server.cockpit_routes`.
 
 The UI (built separately into ``ui/dist``) is served from ``/`` when it exists;
 the server starts perfectly well without it.
@@ -50,6 +52,7 @@ from core.navdata.provider import NavdataUnavailable
 from core.sim_adapter import SimAdapter
 from server import (
     camera_routes,
+    cockpit_routes,
     failure_routes,
     fuel_payload_routes,
     geodesy_routes,
@@ -327,6 +330,7 @@ def create_app() -> FastAPI:
     app.include_router(profile_routes.router)
     app.include_router(camera_routes.router)
     app.include_router(traffic_routes.router)
+    app.include_router(cockpit_routes.router)
     app.add_exception_handler(NavdataUnavailable, navdata_routes.navdata_unavailable_handler)
 
     _mount_ui(app)

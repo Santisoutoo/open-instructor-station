@@ -20,9 +20,10 @@
  * "a placement now commands its own speed" note exists to prevent, only from the other
  * direction.
  *
- * Popover open/close state (`screenMenuOpen`, `startAtOpen`, `procedureMenuOpen`,
- * `airportMenuOpen`) is kept here rather than in component `useState`: several of them
- * close each other when one opens, which is easiest to guarantee from one reducer.
+ * Popover open/close state (`startAtOpen`, `procedureMenuOpen`, `airportMenuOpen`) is kept
+ * here rather than in component `useState`: the Start-at and airport popovers close each
+ * other when one opens, which is easiest to guarantee from one reducer. The module menu in
+ * the header is the shared one and keeps its state in `uiSlice`.
  */
 
 import { createSlice, type PayloadAction } from '@reduxjs/toolkit';
@@ -95,6 +96,14 @@ export const MARKER_IDS = [
 ] as const;
 export type MarkerId = (typeof MARKER_IDS)[number];
 
+/**
+ * The three circuit legs whose request geometry a distance selector drives — downwind's
+ * abeam offset, base's and vectors' distance out. `takeoff` has no distance to select and
+ * the two finals have their own selector (`FinalPlacementName`), so neither is a leg kind.
+ */
+export const CIRCUIT_LEG_KINDS = ['downwind', 'base', 'vectors'] as const;
+export type CircuitLegKind = (typeof CIRCUIT_LEG_KINDS)[number];
+
 /** Which procedure the SID & STAR tab has open, and which of its legs is the placement. */
 export interface ProcedureSelection {
   readonly ident: string;
@@ -132,16 +141,15 @@ export interface AircraftConfigState {
 }
 
 /**
- * The "sent with the position" switches.
+ * The "sent with the position" fields — course and ILS frequency, whenever the runway has
+ * them. There is no UI to turn these off any more (issue #229): both are always `true`, and
+ * `setup.ts` / `ApplyRail.tsx` still read them as the switch that used to sit in the bottom
+ * bar. Kept as a record rather than two booleans inline so those call sites did not need to
+ * change shape along with the UI.
  *
- * They **add** to what the placement already carries; they cannot subtract from it. The
- * server merges an override over the preview's setup field by field with `exclude_none`,
- * so there is no way to say "unset this" on the wire, and pretending otherwise would put a
- * lie on screen. Off therefore means "do not add it"; the rail shows the merged result.
- *
- * There is no `heading` switch, and there was never anything one could have done.
+ * There is no `heading` field, and there was never anything one could have done with it.
  * `Placement.to_setup()` sets `heading_deg` on every placement and `execute_placement`
- * writes it whatever the client sends, so the switch could only ever copy the preview's own
+ * writes it whatever the client sends, so a switch could only ever copy the preview's own
  * heading back over itself — while tagging the rail's Heading row "overridden" on a screen
  * where nothing had been overridden.
  */
@@ -161,7 +169,6 @@ export interface PositionDesignState {
   icaoInput: string;
   /** What "Load" last committed. Empty before the first load. */
   loadedIcao: string;
-  screenMenuOpen: boolean;
   startAtOpen: boolean;
   startAtAnchor: StartAtAnchor;
   airportMenuOpen: boolean;
@@ -173,6 +180,8 @@ export interface PositionDesignState {
   selectedMarker: MarkerId;
   /** Which of the server's seven finals the two final markers place on. */
   finalPlacement: FinalPlacementName;
+  /** The instructor's chosen distance for each circuit leg — see {@link CircuitLegKind}. */
+  circuitDistanceNm: Record<CircuitLegKind, number>;
   procedureFamily: ProcedureFamily;
   approachFilter: ApproachFilter;
   procedure: ProcedureSelection | null;
@@ -204,7 +213,6 @@ const initialConfig: AircraftConfigState = {
 export const initialPositionDesignState: PositionDesignState = {
   icaoInput: '',
   loadedIcao: '',
-  screenMenuOpen: false,
   startAtOpen: false,
   startAtAnchor: 'header',
   airportMenuOpen: false,
@@ -214,6 +222,8 @@ export const initialPositionDesignState: PositionDesignState = {
   activeTab: 'approach',
   selectedMarker: 'final-3nm',
   finalPlacement: DEFAULT_FINAL,
+  // The values `CIRCUIT_PLACEMENTS` hard-coded before this selector existed.
+  circuitDistanceNm: { downwind: 4, base: 6, vectors: 6 },
   procedureFamily: 'sid',
   approachFilter: 'all',
   procedure: null,
@@ -261,18 +271,10 @@ const positionDesignSlice = createSlice({
     },
     airportMenuOpened(state) {
       state.airportMenuOpen = true;
-      state.screenMenuOpen = false;
       state.startAtOpen = false;
     },
     airportMenuClosed(state) {
       state.airportMenuOpen = false;
-    },
-    screenMenuToggled(state) {
-      state.screenMenuOpen = !state.screenMenuOpen;
-      if (state.screenMenuOpen) {
-        state.startAtOpen = false;
-        state.airportMenuOpen = false;
-      }
     },
     startAtToggled(state, action: PayloadAction<StartAtAnchor>) {
       // Pressing the *other* trigger while open moves the popover rather than closing it:
@@ -284,7 +286,6 @@ const positionDesignSlice = createSlice({
       state.startAtAnchor = action.payload;
       state.startAtOpen = !state.startAtOpen;
       if (state.startAtOpen) {
-        state.screenMenuOpen = false;
         state.airportMenuOpen = false;
       }
     },
@@ -307,6 +308,12 @@ const positionDesignSlice = createSlice({
     },
     finalPlacementSelected(state, action: PayloadAction<FinalPlacementName>) {
       state.finalPlacement = action.payload;
+    },
+    circuitDistanceSelected(
+      state,
+      action: PayloadAction<{ kind: CircuitLegKind; distanceNm: number }>,
+    ) {
+      state.circuitDistanceNm[action.payload.kind] = action.payload.distanceNm;
     },
     procedureFamilySelected(state, action: PayloadAction<ProcedureFamily>) {
       state.procedureFamily = action.payload;
@@ -402,9 +409,6 @@ const positionDesignSlice = createSlice({
       const { field, value } = action.payload;
       Object.assign(state.config, { [field]: value });
     },
-    sendToggled(state, action: PayloadAction<keyof SendWithPositionState>) {
-      state.send[action.payload] = !state.send[action.payload];
-    },
     /**
      * "Reset situation": back to a blank screen, keeping the loaded airport — and the
      * 2D/3D diagram choice, which is a view preference rather than part of the situation.
@@ -425,7 +429,6 @@ export const {
   airportLoaded,
   airportMenuOpened,
   airportMenuClosed,
-  screenMenuToggled,
   startAtToggled,
   parkingFilterSelected,
   startRunwaySelected,
@@ -433,6 +436,7 @@ export const {
   designTabSelected,
   markerSelected,
   finalPlacementSelected,
+  circuitDistanceSelected,
   procedureFamilySelected,
   approachFilterSelected,
   procedureSelected,
@@ -444,7 +448,6 @@ export const {
   customFieldChanged,
   coordinateHandoffReceived,
   configChanged,
-  sendToggled,
   situationReset,
 } = positionDesignSlice.actions;
 

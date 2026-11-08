@@ -1,0 +1,10 @@
+# Broken fixture: a -> b -> a preconditions (§8.1's "cycle/" case).
+aircraft:
+  catalog_id: cycle
+  label: Cycle fixture
+detect:
+  dataref_exists: fake/cycle/present
+panels:
+  - panel_id: p
+    label: P
+    order: 0

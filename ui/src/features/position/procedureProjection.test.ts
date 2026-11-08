@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { LayoutNode, LayoutSegment, ProcedureLayout } from '../../api/models';
 import {
+  EDGE_FLIP_FRACTION,
   VERTICAL_EXAGGERATION,
   VIEWBOX_H,
   VIEWBOX_W,
   breakGlyph,
+  nodeLabelSide,
   projectLayout,
   rotate,
 } from './procedureProjection';
@@ -205,5 +207,23 @@ describe('breakGlyph', () => {
   it('never produces a NaN coordinate, even for coincident points', () => {
     const d = breakGlyph({ x: 50, y: 50 }, { x: 50, y: 50 });
     expect(d).not.toContain('NaN');
+  });
+});
+
+describe('nodeLabelSide', () => {
+  it('keeps the default "right" for a node nowhere near the edge', () => {
+    expect(nodeLabelSide({ x: 0, y: 0 })).toBe('right');
+    expect(nodeLabelSide({ x: VIEWBOX_W / 2, y: 0 })).toBe('right');
+  });
+
+  it('flips to "left" once a node crosses the edge-flip fraction of VIEWBOX_W', () => {
+    const justInside = VIEWBOX_W * EDGE_FLIP_FRACTION - 1;
+    const justOutside = VIEWBOX_W * EDGE_FLIP_FRACTION + 1;
+    expect(nodeLabelSide({ x: justInside, y: 0 })).toBe('right');
+    expect(nodeLabelSide({ x: justOutside, y: 0 })).toBe('left');
+  });
+
+  it('flips for a node at the diagram’s far right edge', () => {
+    expect(nodeLabelSide({ x: VIEWBOX_W, y: 0 })).toBe('left');
   });
 });

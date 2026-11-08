@@ -13,9 +13,14 @@
  * |---|---|
  * | `takeoff` | `runway_threshold` |
  * | `final-3nm`, `final-8nm` | `runway`, the tab's selected `final_*` / `short_final` |
- * | `downwind-left` / `-right` | `runway`, `left_downwind` / `right_downwind`, width 4 NM |
- * | `base-left` / `-right` | `runway`, `left_base` / `right_base`, width 4 NM, leg 6 NM |
- * | `vectors-left` / `-right` | `runway`, `left_base` / `right_base`, width 2 NM, leg 6 NM |
+ * | `downwind-left` / `-right` | `runway`, `left_downwind` / `right_downwind`, width = the leg's selected abeam offset |
+ * | `base-left` / `-right` | `runway`, `left_base` / `right_base`, width 4 NM, leg = the leg's selected distance out |
+ * | `vectors-left` / `-right` | `runway`, `left_base` / `right_base`, width 2 NM, leg = the leg's selected distance out |
+ *
+ * The three leg distances are the instructor's own choice — `positionDesign.circuitDistanceNm`,
+ * one value per {@link CircuitLegKind}, defaulting to the numbers this table hard-coded before
+ * the selector existed (issue #216). Only base's and vectors' fixed widths (4 NM, 2 NM) still
+ * come from this module; downwind has no fixed width left to keep.
  *
  * **The vectors rows are not an approximation, and are not to be "fixed".**
  * `core.geodesy.traffic_pattern_point` puts a base leg at `along = -leg_distance_nm`,
@@ -32,38 +37,32 @@
 
 import type { GeoPosition, PlacementRequest, ProcedureKind } from '../../api/models';
 import type { FinalPlacementName } from './finals';
-import type { DesignTabId, MarkerId } from './positionDesignSlice';
+import { MARKER_LEG_KIND, type CircuitLegMarkerId } from './markers';
+import type { CircuitLegKind, DesignTabId, MarkerId } from './positionDesignSlice';
 
-/** The circuit geometry a marker asks the server for. */
+/** The circuit geometry a marker asks the server for, besides its selected leg distance. */
 export interface CircuitPlacement {
   readonly placement: 'left_downwind' | 'right_downwind' | 'left_base' | 'right_base';
-  readonly patternWidthNm: number;
-  readonly legDistanceNm: number | null;
 }
 
 /**
  * The six circuit markers. `takeoff` and the two finals are handled separately: one is a
  * ground placement, the others are driven by the final-distance selector.
  */
-export const CIRCUIT_PLACEMENTS: Record<
-  Exclude<MarkerId, 'takeoff' | 'final-3nm' | 'final-8nm'>,
-  CircuitPlacement
-> = {
-  'downwind-left': {
-    placement: 'left_downwind',
-    patternWidthNm: 4,
-    legDistanceNm: null,
-  },
-  'downwind-right': {
-    placement: 'right_downwind',
-    patternWidthNm: 4,
-    legDistanceNm: null,
-  },
-  'base-left': { placement: 'left_base', patternWidthNm: 4, legDistanceNm: 6 },
-  'base-right': { placement: 'right_base', patternWidthNm: 4, legDistanceNm: 6 },
-  // 6 NM out, 2 NM off the centreline, intercept heading — see the module docstring.
-  'vectors-left': { placement: 'left_base', patternWidthNm: 2, legDistanceNm: 6 },
-  'vectors-right': { placement: 'right_base', patternWidthNm: 2, legDistanceNm: 6 },
+export const CIRCUIT_PLACEMENTS: Record<CircuitLegMarkerId, CircuitPlacement> = {
+  'downwind-left': { placement: 'left_downwind' },
+  'downwind-right': { placement: 'right_downwind' },
+  'base-left': { placement: 'left_base' },
+  'base-right': { placement: 'right_base' },
+  // 2 NM off the centreline, intercept heading — see the module docstring.
+  'vectors-left': { placement: 'left_base' },
+  'vectors-right': { placement: 'right_base' },
+};
+
+/** The lateral offset base's and vectors' selectors leave alone — only downwind's varies it. */
+const FIXED_PATTERN_WIDTH_NM: Record<Exclude<CircuitLegKind, 'downwind'>, number> = {
+  base: 4,
+  vectors: 2,
 };
 
 /** Everything the screen knows that a request can be built from. */
@@ -74,6 +73,7 @@ export interface PlacementInputs {
   readonly activeTab: DesignTabId;
   readonly marker: MarkerId;
   readonly finalPlacement: FinalPlacementName;
+  readonly circuitDistanceNm: Record<CircuitLegKind, number>;
   readonly procedure: {
     readonly kind: ProcedureKind;
     readonly ident: string;
@@ -185,12 +185,16 @@ function runwayRequest(inputs: PlacementInputs): PlacementRequest | null {
     };
   }
   const circuit = CIRCUIT_PLACEMENTS[inputs.marker];
+  const legKind = MARKER_LEG_KIND[inputs.marker];
+  const distanceNm = inputs.circuitDistanceNm[legKind];
+  const patternWidthNm = legKind === 'downwind' ? distanceNm : FIXED_PATTERN_WIDTH_NM[legKind];
+  const legDistanceNm = legKind === 'downwind' ? null : distanceNm;
   return {
     type: 'runway',
     airport_icao: inputs.icao,
     runway_ident: runwayIdent,
     placement: circuit.placement,
-    pattern_width_nm: circuit.patternWidthNm,
-    ...(circuit.legDistanceNm === null ? {} : { leg_distance_nm: circuit.legDistanceNm }),
+    pattern_width_nm: patternWidthNm,
+    ...(legDistanceNm === null ? {} : { leg_distance_nm: legDistanceNm }),
   };
 }

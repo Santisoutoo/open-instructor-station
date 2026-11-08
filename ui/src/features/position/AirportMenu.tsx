@@ -13,7 +13,7 @@
 import { useEffect, useState, type RefObject } from 'react';
 import { useSearchAirportsQuery } from '../../api/instructorApi';
 import { useAppDispatch, useAppSelector } from '../../store';
-import { Popover } from './Popover';
+import { Popover } from '../../components/Popover';
 import { formatRunwayLength } from './format';
 import { airportMenuClosed } from './positionDesignSlice';
 

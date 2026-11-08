@@ -1,0 +1,16 @@
+controls:
+  - control_id: fire_test
+    label: Fire test
+    panel_id: p
+    kind: press
+    verified_on: 2026-09-02
+    binding: {press: fake/fire_test/press}
+  - control_id: needs_fire_test
+    label: Needs fire test
+    panel_id: p
+    kind: toggle
+    verified_on: 2026-09-02
+    preconditions:
+      - any_of: [{control_id: fire_test, equals: true}]
+        hint: "needs fire test"
+    binding: {press: fake/needs/press, read: fake/needs/status}

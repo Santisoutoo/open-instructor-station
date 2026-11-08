@@ -69,16 +69,19 @@ flattened: the master switch and the flight director are one three-valued
 dataref, and the lateral modes are selected by command because their status
 datarefs are read-only. See :meth:`XPlaneSimAdapter._write_autopilot`.
 
-**Two capabilities here are declared without a live run, and say so.**
-``can_pushback`` and ``can_control_camera`` are ``True`` while weather,
-failures and fuel/payload each waited for ``pytest -m sim``, because the
-reasons differ and both are written out at :data:`_CAPABILITIES`: pushback
-writes no new dataref at all (it is :func:`core.pushback.pushback_target`
-plus the already-validated :meth:`XPlaneSimAdapter.set_position`), and the
-camera ships the *conservative manifest* camera-manager.md §5.2 prescribes —
-per-view support probed from the install's own command index, free
-positioning refused with a stated reason. Neither flag asserts anything has
-been flown.
+**Three capabilities here are declared without a live run, and say so.**
+``can_pushback``, ``can_control_camera`` and ``can_control_cockpit`` are
+``True`` while weather, failures and fuel/payload each waited for
+``pytest -m sim``, because the reasons differ and all three are written out at
+:data:`_CAPABILITIES`: pushback writes no new dataref at all (it is
+:func:`core.pushback.pushback_target` plus the already-validated
+:meth:`XPlaneSimAdapter.set_position`), the camera ships the *conservative
+manifest* camera-manager.md §5.2 prescribes — per-view support probed from the
+install's own command index, free positioning refused with a stated reason —
+and the cockpit catalog (:mod:`adapters.xplane.cockpit_controls`) ships with
+zero real aircraft catalogs in this track, so every probe on a real install is
+honestly negative until Wave 2 adds the Zibo's data. None of the three flags
+asserts anything has been flown.
 
 This module imports cleanly with no simulator present and opens no sockets
 until :meth:`XPlaneSimAdapter.connect` is awaited.
@@ -90,7 +93,7 @@ import asyncio
 import base64
 import binascii
 import math
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from itertools import pairwise
@@ -99,7 +102,7 @@ from uuid import uuid4
 
 import httpx
 
-from adapters.xplane import traffic_bridge
+from adapters.xplane import cockpit_controls, traffic_bridge
 from adapters.xplane.camera_commands import (
     CAMERA_COMMAND_PATHS,
     CAMERA_COMMANDS,
@@ -125,6 +128,13 @@ from core.camera.models import (
     CameraSupportManifest,
     CameraViewId,
     CameraViewSupport,
+)
+from core.cockpit.actuation import plan_setup_actuations
+from core.cockpit.models import (
+    CockpitActuation,
+    CockpitActuationResult,
+    CockpitCatalog,
+    CockpitStateSnapshot,
 )
 from core.failures import (
     FAILURE_CATALOGUE,
@@ -276,6 +286,13 @@ DATAREFS: dict[str, str] = {
 OPTIONAL_DATAREFS: dict[str, str] = {
     "acf_icao": "sim/aircraft/view/acf_ICAO",  # byte array, e.g. b"C172"
     "acf_vso": "sim/aircraft/overflow/acf_Vso",  # KIAS, landing configuration
+    # docs/designs/cockpit-control-catalog.md §5.2/D7: the cheap "did the
+    # aircraft change" signal the cockpit runtime checks before every catalog
+    # read/write. Decoded exactly like acf_icao (_decode_dataref_text) — same
+    # byte-array shape, unverified availability across 12.x builds (§10.3),
+    # same honest degradation: absent means "always re-probe the detection
+    # dataref instead", never a failed connect().
+    "acf_relative_path": "sim/aircraft/view/acf_relative_path",
     # --- Weather (X-Plane 12 "region" namespace, weather-manager.md §7) ----
     # Deliberately OPTIONAL rather than required, unlike the rest of this
     # module's mapping: repositioning is already live-validated and must not
@@ -424,6 +441,24 @@ _CAPABILITIES = Capabilities(
     #
     # Said plainly: this asserts the code is right, not that it has been flown.
     can_pushback=True,
+    # Flipped True WITHOUT a live run (docs/designs/cockpit-control-catalog.md
+    # §5.2, Wave 1 Track B) — deliberately, on the same reasoning as
+    # can_pushback above: the flag is a claim that the MACHINERY is right, not
+    # that it has been flown, and it is what lets pytest -m sim's live sweep
+    # (tests/sim/test_live_cockpit_catalog.py) run at all instead of skipping
+    # itself forever (the "capability flag that gates its own validation" trap
+    # CLAUDE.md warns about). What earns the flip: the detection probe and the
+    # binding resolver both reuse cockpit_controls._lookup_id, the exact
+    # per-name 404-tolerant helper _lookup_command_id already proved correct
+    # against the real Web API (issue #217); the per-kind executors issue the
+    # identical PATCH/activate calls this module already validated for
+    # repositioning and the autopilot; and Wave 1 Track B ships with ZERO real
+    # aircraft catalogs — adapters/xplane/cockpit_catalogs/zibo-b738/aircraft.yaml
+    # carries only the detection root, no controls — so a negative probe on
+    # every install degrades to an honest empty manifest (aircraft=None, a
+    # stated reason) rather than a guess. See
+    # adapters/xplane/cockpit_controls.py for the runtime this flag turns on.
+    can_control_cockpit=True,
 )
 
 #: §5.4 — rendered once in the Failures panel, verbatim. Study-level add-ons
@@ -805,12 +840,13 @@ class _TrafficMeta:
 class XPlaneWeatherRejected(WeatherRejected):
     """X-Plane refused to hold the commanded weather, or this build does not expose it.
 
-    Two distinct causes share this exception (weather-manager.md §2.2's 502
+    Three distinct causes share this exception (weather-manager.md §2.2's 502
     mapping, §7.1 step 4): the sim would not switch — or would not stay in —
     manual weather mode, so writing values it has announced it will overwrite
     would be dishonest; or the region weather datarefs this build needs are
     not in the dataref index at all (they are declared OPTIONAL on this
-    adapter, see :data:`OPTIONAL_DATAREFS`). Either way, ``set_weather``/
+    adapter, see :data:`OPTIONAL_DATAREFS`); or cloud layers did not confirm
+    within the bounded settling interval. In each case, ``set_weather``/
     ``get_weather`` must refuse rather than proceed on a guess.
 
     Subclasses :class:`core.sim_adapter.WeatherRejected`, the adapter-agnostic
@@ -854,6 +890,11 @@ class XPlaneSimAdapter:
         # again for that connection's lifetime. Before connect() the honest
         # answer is the bridge-less baseline.
         self._capabilities = _CAPABILITIES
+        # docs/designs/cockpit-control-catalog.md §5: one runtime per
+        # connection, loaded and detected at the end of connect() and reset on
+        # disconnect(). can_control_cockpit is static (D1); this is where the
+        # actual per-aircraft manifest state lives.
+        self._cockpit = cockpit_controls.CockpitRuntime()
 
     # -- Identity ---------------------------------------------------------
 
@@ -983,6 +1024,15 @@ class XPlaneSimAdapter:
         self._command_ids = commands
         self._failure_ids = failure_ids
 
+        # docs/designs/cockpit-control-catalog.md §5.2: load every catalog
+        # directory and run the first detection now, after _client/_ids are
+        # set — CockpitRuntime needs a connected host to probe with. Loading
+        # never fails the connect (one bad directory is logged and skipped);
+        # a negative probe is an honest aircraft=None with a reason, not a
+        # connect() failure either.
+        self._cockpit.load_catalogs(cockpit_controls.COCKPIT_CATALOGS_DIR)
+        await self._cockpit.ensure_current(self)
+
     @staticmethod
     async def _lookup_command_id(client: httpx.AsyncClient, path: str) -> int | None:
         """The numeric id X-Plane gives one command path, or ``None`` if it has none.
@@ -992,13 +1042,21 @@ class XPlaneSimAdapter:
         does. "This build does not publish that command" is answered with
         ``None``, never an exception: whether that is fatal is the caller's
         decision (:data:`COMMANDS` says yes, :data:`OPTIONAL_COMMANDS` no).
+
+        A thin wrapper over :func:`adapters.xplane.cockpit_controls._lookup_id`
+        (docs/designs/cockpit-control-catalog.md §5.2), which generalises this
+        exact 404-tolerant lookup to datarefs as well, for the cockpit
+        detection probe and binding resolver. A ``filter[name]`` miss on
+        ``/api/v2/commands`` is not always an empty ``{"data": []}`` —
+        X-Plane's real Web API answers a name it does not recognise with a
+        bare **404**, confirmed live with the Zibo 737 loaded
+        (docs/research/zibo-737-autopilot-dataref-mapping.md §7 shows the same
+        shape for the dataref sibling of this lookup). That 404 means exactly
+        the same thing an empty ``data`` list would, so it is handled here
+        rather than left to fail :meth:`connect`. Any other error status
+        (5xx, …) is a real failure and still propagates.
         """
-        response = await client.get("/api/v2/commands", params={"filter[name]": path})
-        response.raise_for_status()
-        entries = response.json().get("data", [])
-        if not entries:
-            return None
-        return int(entries[0]["id"])
+        return await cockpit_controls._lookup_id(client, "commands", path)
 
     async def _probe_bridge(self, client: httpx.AsyncClient) -> bool:
         """Is the optional ``bridge/`` plugin loaded and alive on this connection?
@@ -1022,6 +1080,10 @@ class XPlaneSimAdapter:
         self._failure_ids = {}
         self._bridge = None
         self._traffic_meta = {}
+        # A fresh CockpitRuntime rather than mutating the old one: revision
+        # resets to 0 ("0 before any detection", CockpitCatalog's own
+        # contract) and the next connect() detects from scratch.
+        self._cockpit = cockpit_controls.CockpitRuntime()
         if client is not None:
             await client.aclose()
 
@@ -1070,12 +1132,36 @@ class XPlaneSimAdapter:
 
     async def _activate(self, key: str) -> None:
         """Fire one X-Plane command by its short :data:`COMMANDS` key."""
+        await self._activate_by_id(self._command_ids[key])
+
+    async def _activate_by_id(self, command_id: int) -> None:
+        """Fire one command by its already-resolved numeric id. See :meth:`_read_by_id`.
+
+        The escape hatch :meth:`_activate` uses under a short :data:`COMMANDS`
+        key, and the one :mod:`adapters.xplane.cockpit_controls` uses directly
+        — cockpit bindings resolve an id per control name (§5.3), never
+        through a fixed short-key table.
+        """
         client = self._require_client()
         response = await client.post(
-            f"/api/v2/command/{self._command_ids[key]}/activate",
+            f"/api/v2/command/{command_id}/activate",
             json={"duration": 0},
         )
         response.raise_for_status()
+
+    async def _read_acf_relative_path(self) -> str | None:
+        """The loaded aircraft's relative path, decoded, or ``None`` when unavailable.
+
+        docs/designs/cockpit-control-catalog.md §5.2/D7's cheap change signal.
+        Decoded exactly like ``acf_icao`` — the same byte-array shape — via
+        :func:`_decode_dataref_text`, so this degrades to ``None`` on a build
+        that lacks the dataref or reports a value that will not decode, rather
+        than failing the cockpit runtime that reads it.
+        """
+        raw = await self._read_optional("acf_relative_path")
+        if raw is None:
+            return None
+        return _decode_dataref_text(raw)
 
     # -- Reads ------------------------------------------------------------
 
@@ -1441,7 +1527,7 @@ class XPlaneSimAdapter:
         await self._await_cloud_layers_settled(layers)
 
     async def _await_cloud_layers_settled(self, layers: list[CloudLayer]) -> None:
-        """Best-effort wait for every touched slot's commanded base/coverage to land.
+        """Wait for active layers and cleared slots to match, or reject the write.
 
         **Confirmed against a live X-Plane 12.4.3 install, and a stranger
         shape than "gradual transition" this docstring originally guessed**:
@@ -1451,10 +1537,8 @@ class XPlaneSimAdapter:
         write — for up to ~55s, then every slot snaps to its own correct,
         distinct commanded value in the same instant. See
         :data:`_CLOUD_SETTLE_TIMEOUT_S`'s own docstring for the full
-        measurement. This method waits, but never raises, even once the
-        timeout passes — a caller wanting the fully-settled value should
-        treat the first `get_weather()` after a cloud-bearing `set_weather()`
-        as provisional if it returns before the observed ~55s cycle boundary.
+        measurement. A timeout raises ``WeatherRejected`` so the apply route
+        cannot report success while the simulator still holds stale weather.
 
         **Checks every slot this write touched, not only slot 0** — an
         earlier version of this method checked slot 0 alone, so a
@@ -1463,27 +1547,44 @@ class XPlaneSimAdapter:
         length) was declared "settled" the instant slot 0 landed, without
         ever confirming the omitted slot actually reached zero.
         """
-        count = len(layers)
-        targets: list[tuple[float, float]] = [
-            (
-                (layers[slot].base_ft * _METRES_PER_FOOT, layers[slot].coverage_ratio)
-                if slot < count
-                else (0.0, 0.0)
-            )
-            for slot in range(_WEATHER_CLOUD_LAYERS)
-        ]
         deadline = asyncio.get_running_loop().time() + _CLOUD_SETTLE_TIMEOUT_S
         while asyncio.get_running_loop().time() < deadline:
-            base_array = await self._read("cloud_base_msl_m")
-            coverage_array = await self._read("cloud_coverage_percent")
-            if all(
-                abs(float(base_array[slot]) - target_base_m) <= _CLOUD_SETTLE_BASE_TOLERANCE_M
-                and abs(float(coverage_array[slot]) - target_coverage)
-                <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
-                for slot, (target_base_m, target_coverage) in enumerate(targets)
-            ):
+            bases, tops, coverages, types = await asyncio.gather(
+                self._read("cloud_base_msl_m"),
+                self._read("cloud_tops_msl_m"),
+                self._read("cloud_coverage_percent"),
+                self._read("cloud_type"),
+            )
+            settled = True
+            for slot in range(_WEATHER_CLOUD_LAYERS):
+                layer = layers[slot] if slot < len(layers) else None
+                coverage = float(coverages[slot])
+                if layer is None or layer.coverage_ratio == 0:
+                    # The reader hides exactly zero-coverage slots. Retained base,
+                    # tops and type in an inactive slot do not describe a cloud.
+                    settled = settled and coverage <= 0.0
+                    continue
+                # Match the reader's interpretation of X-Plane's blendable enum;
+                # the raw float need not equal an integer for its type to agree.
+                type_index = max(
+                    0, min(round(float(types[slot])), len(_CLOUD_TYPE_FROM_XPLANE) - 1)
+                )
+                settled = (
+                    settled
+                    and abs(float(bases[slot]) - layer.base_ft * _METRES_PER_FOOT)
+                    <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                    and abs(float(tops[slot]) - layer.tops_ft * _METRES_PER_FOOT)
+                    <= _CLOUD_SETTLE_BASE_TOLERANCE_M
+                    and abs(coverage - layer.coverage_ratio) <= _CLOUD_SETTLE_COVERAGE_TOLERANCE
+                    and _CLOUD_TYPE_FROM_XPLANE[type_index] == layer.cloud_type
+                )
+            if settled:
                 return
             await asyncio.sleep(_CLOUD_SETTLE_POLL_INTERVAL_S)
+        raise XPlaneWeatherRejected(
+            "X-Plane did not confirm the requested cloud layers "
+            "before the weather update timed out."
+        )
 
     async def _read_wind_level_altitudes_ft(self) -> list[float]:
         """The 13 region wind levels' altitudes, in feet MSL."""
@@ -2550,6 +2651,17 @@ class XPlaneSimAdapter:
                 carrying no autopilot field at all costs nothing — not even a
                 read.
         """
+        # docs/designs/cockpit-control-catalog.md §5.6/D11: when the active
+        # catalog declares setup_overrides, route the fields it covers through
+        # the catalog's own controls (§5.5's executors, in precondition order)
+        # BEFORE the generic path below sees them — never after, and never
+        # both: `setup` is rewritten to drop whatever the catalog just wrote.
+        # Wave 1 Track B ships this mechanism data-independent (the Zibo
+        # catalog declares no overrides yet); on the stock 737, or any
+        # aircraft with no matching catalog, this is a no-op cheaper than one
+        # read.
+        setup = await self._apply_cockpit_setup_overrides(setup)
+
         if setup.autopilot_master is not None or setup.flight_director is not None:
             current = int(await self._read("autopilot_mode"))
             await self._write(
@@ -2577,6 +2689,53 @@ class XPlaneSimAdapter:
             await self._write("autopilot_heading_dial_deg", setup.target_heading_deg % 360.0)
         if setup.target_vertical_speed_fpm is not None:
             await self._write("autopilot_vvi_dial_fpm", setup.target_vertical_speed_fpm)
+
+    async def _apply_cockpit_setup_overrides(self, setup: AircraftSetup) -> AircraftSetup:
+        """§5.6/D11: route ``AircraftSetup`` fields through the active catalog first.
+
+        Runs :func:`core.cockpit.actuation.plan_setup_actuations` against the
+        currently-detected catalog (re-checked here via
+        :meth:`~adapters.xplane.cockpit_controls.CockpitRuntime.ensure_current`,
+        so a swap immediately before ``apply_setup`` is not missed) and
+        executes the resulting actuations, in the returned precondition order
+        (FD/master before lateral modes — research §2), through the same §5.5
+        executors :meth:`actuate_cockpit_control` uses. Returns ``setup`` with
+        every field the catalog just covered set back to ``None``, so the
+        generic path below only ever touches what the catalog left alone —
+        never both write the same field twice.
+
+        A no-op, costing nothing but the aircraft-change check, when there is
+        no active catalog or its ``setup_overrides`` is empty — the case for
+        every aircraft this track ships (the Zibo's ``aircraft.yaml`` declares
+        no controls yet; Wave 2 supplies the data). Also a no-op while not
+        connected — the same "no catalog can be active" reasoning
+        :meth:`get_cockpit_catalog` applies, and what lets a test stub
+        ``_read``/``_write``/``_activate`` directly without ever calling
+        :meth:`connect` (``tests/adapters/test_xplane_autopilot.py`` and
+        ``tests/adapters/test_xplane_freeze_protocol.py``'s own pattern) keep
+        exercising the generic autopilot path unmodified: a subclass that
+        overrides ``is_connected`` without ever populating ``_ids`` still
+        degrades honestly here, because the failure mode caught is
+        :meth:`_require_client`'s own exception, not this method's own guess
+        at connectedness.
+        """
+        if not self.capabilities.can_control_cockpit:
+            return setup
+        try:
+            await self._cockpit.ensure_current(self)
+        except XPlaneNotReachable:
+            return setup
+        document = self._cockpit.active_document
+        if document is None or not document.setup_overrides:
+            return setup
+        plan = plan_setup_actuations(document, setup)
+        if not plan:
+            return setup
+        for actuation in plan:
+            await self._cockpit.actuate(self, actuation)
+        provided = setup.model_dump(exclude_none=True)
+        covered = {field_name for field_name in document.setup_overrides if field_name in provided}
+        return setup.model_copy(update=dict.fromkeys(covered, None))
 
     @staticmethod
     def _autopilot_mode_for(current: int, flight_director: bool | None, master: bool | None) -> int:
@@ -2982,6 +3141,59 @@ class XPlaneSimAdapter:
             raise CapabilityNotSupported(self.name, "can_spawn_traffic")
         await self._bridge.send_command({"op": "clear_all"})
         self._traffic_meta.clear()
+
+    # -- Cockpit control catalog (docs/designs/cockpit-control-catalog.md §5) --
+    #
+    # The real implementation lives in adapters/xplane/cockpit_controls.py —
+    # one CockpitRuntime per connection (self._cockpit), loaded and detected
+    # at the end of connect() (§5.2) and reset on disconnect(). Every method
+    # here does only two things: the capability gate, and delegate.
+
+    async def get_cockpit_catalog(self) -> CockpitCatalog:
+        """Capability-free (D1): "unsupported"/"not connected" with a reason, never an exception."""
+        if not self.capabilities.can_control_cockpit:
+            return CockpitCatalog(
+                supported=False,
+                reason=f"{self.name!r} does not declare can_control_cockpit.",
+                aircraft=None,
+                revision=0,
+                detection_note=None,
+                panels=[],
+                controls=[],
+                parked=[],
+            )
+        if not self.is_connected:
+            # The get_camera_support() precedent (§9.1): nothing has been
+            # probed yet, and the reason must say so rather than blaming the
+            # install for a probe that never ran.
+            return CockpitCatalog(
+                supported=True,
+                reason="Not connected to X-Plane, so no aircraft has been detected yet.",
+                aircraft=None,
+                revision=0,
+                detection_note=None,
+                panels=[],
+                controls=[],
+                parked=[],
+            )
+        return await self._cockpit.get_catalog(self)
+
+    async def refresh_cockpit_catalog(self) -> CockpitCatalog:
+        if not self.capabilities.can_control_cockpit:
+            raise CapabilityNotSupported(self.name, "can_control_cockpit")
+        return await self._cockpit.force_refresh(self)
+
+    async def read_cockpit_states(
+        self, control_ids: Sequence[str] | None = None
+    ) -> CockpitStateSnapshot:
+        if not self.capabilities.can_control_cockpit:
+            raise CapabilityNotSupported(self.name, "can_control_cockpit")
+        return await self._cockpit.read_states(self, control_ids)
+
+    async def actuate_cockpit_control(self, actuation: CockpitActuation) -> CockpitActuationResult:
+        if not self.capabilities.can_control_cockpit:
+            raise CapabilityNotSupported(self.name, "can_control_cockpit")
+        return await self._cockpit.actuate(self, actuation)
 
     # -- Streaming --------------------------------------------------------
 
