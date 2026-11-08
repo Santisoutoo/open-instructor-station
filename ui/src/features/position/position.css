@@ -135,17 +135,6 @@
   position: relative;
 }
 
-.pos-header__menu-trigger {
-  min-height: 44px;
-  padding: 0 0.75rem;
-  background: transparent;
-  border: 1px solid var(--pos-line);
-  border-radius: 8px;
-  color: var(--pos-t1);
-  font-weight: 600;
-  cursor: pointer;
-}
-
 .pos-header__airport {
   display: flex;
   align-items: center;
@@ -239,34 +228,6 @@
   border-radius: 10px;
   box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
   padding: 0.75rem;
-}
-
-.pos-screenmenu {
-  left: 1rem;
-  width: 220px;
-}
-
-.pos-screenmenu__list {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.pos-screenmenu__item {
-  min-height: 44px;
-  padding: 0 0.6rem;
-  background: transparent;
-  border: 0;
-  border-radius: 6px;
-  color: var(--pos-t1);
-  text-align: left;
-  cursor: pointer;
-}
-
-.pos-screenmenu__item:hover {
-  background: var(--pos-hover);
 }
 
 .pos-startat {
