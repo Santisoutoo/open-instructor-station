@@ -87,11 +87,9 @@
   outline-offset: -2px;
 }
 
-/* The current module: a tinted fill that stays distinct from hover, and the accent bar —
-   the accent's only placement in the menu. */
+/* The current module: a neutral fill and bold weight — no accent, the menu stays quiet. */
 .modulemenu__item[aria-current='page'] {
-  background: color-mix(in oklch, var(--accent) 12%, var(--bg-raised));
-  box-shadow: inset 3px 0 0 var(--accent);
+  background: var(--bg-hover);
   font-weight: 600;
 }
 
