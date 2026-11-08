@@ -92,8 +92,8 @@ h2 {
 /* ---------------------------------------------------------------- layout */
 
 /*
- * The shell is a fixed chrome around one scrolling module: header with the module tab
- * bar on top, persistent status bar at the bottom, optional context drawer on the right.
+ * The shell is a fixed chrome around one scrolling module: header with the module menu
+ * on top, persistent status bar at the bottom, optional context drawer on the right.
  * Full viewport height — the map module wants every pixel, and an instructor station is
  * an application surface, not a document.
  */
@@ -109,7 +109,7 @@ h2 {
   flex-wrap: wrap;
   align-items: center;
   gap: 0.25rem 1rem;
-  padding: 0.4rem 1rem 0;
+  padding: 0.4rem 1rem;
   background: var(--bg-panel);
   border-bottom: 1px solid var(--border);
 }
@@ -124,8 +124,8 @@ h2 {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  /* Pushes the actions to the far right, past the module menu beside the title. */
   margin-left: auto;
-  padding-bottom: 0.4rem;
 }
 
 .app__body {
@@ -175,48 +175,6 @@ h2 {
 .app__loading {
   margin: 0;
   color: var(--text-dim);
-}
-
-/* ---------------------------------------------------------------- tab bar */
-
-.tabbar {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  gap: 2px;
-  overflow-x: auto;
-  scroll-snap-type: x proximity;
-  scrollbar-width: none;
-}
-
-.tabbar__tab {
-  min-height: 44px;
-  padding: 0 1rem;
-  background: transparent;
-  border: none;
-  /* The accent underline on the active tab is one of the accent's few placements. */
-  border-bottom: 2px solid transparent;
-  color: var(--text-dim);
-  font-size: 0.95rem;
-  font-weight: 600;
-  white-space: nowrap;
-  scroll-snap-align: start;
-  cursor: pointer;
-}
-
-.tabbar__tab:hover {
-  color: var(--text);
-  transition: color 80ms ease-out;
-}
-
-.tabbar__tab[aria-selected='true'] {
-  color: var(--text);
-  border-bottom-color: var(--accent);
-}
-
-.tabbar__tab:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
 }
 
 /* ----------------------------------------------------------- ghost button */
